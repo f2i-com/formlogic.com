@@ -200,6 +200,9 @@ describe('getReferenceSyntax + formatChipInsert (chip-insert must match the exec
       ['browser_action', 'text'],
       ['image_gen', 'prompt'],
       ['tts_speak', 'text'],
+      ['native_app_request', 'path'],
+      ['native_record_action', 'table'],
+      ['native_record_action', 'q'],
     ];
     for (const [type, key] of expected) {
       const spec = getNodeSpec(type)!;

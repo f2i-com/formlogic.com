@@ -1,0 +1,48 @@
+{
+    "id": "counterflow-retail-ops-softn",
+    "slug": "counterflow-retail-ops-softn",
+    "name": "CounterFlow — SoftN App & Linked Forms",
+    "shortName": "CounterFlow",
+    "description": "Turnkey retail store operations hub around the till: product catalogue with live margins and quick stock adjustments, audited stock ledger, floor tasks, suppliers, staff roster, and customer returns desk. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Store",
+    "category": "Business apps",
+    "tags": [
+        "retail",
+        "stock",
+        "store-ops",
+        "suppliers",
+        "tasks",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "counterflow-retail-ops-softn.softn",
+    "softnPackAppId": "counterflow-retail-ops-softn-app",
+    "formsPackAppId": "counterflow-retail-ops-softn-forms",
+    "companionPackSlug": "counterflow-retail-ops",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "suppliers",
+        "products",
+        "staff_roster",
+        "stock_movements",
+        "store_tasks",
+        "returns_issues"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/counterflow-retail-ops.png"
+        }
+    ]
+}

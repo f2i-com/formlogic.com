@@ -6,7 +6,7 @@
 // /api/forms/{formId}/flow-bindings.
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, FileText, Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { Check, Code2, Copy, ExternalLink, FileText, KeyRound, Loader2, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { api } from '../../lib/api';
 import { demoCreateFormBinding, demoDeleteFormBinding, demoUpdateFormBinding, isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
@@ -309,10 +309,12 @@ export function TriggersPanel({
             {!loadError && bindings.length === 0 && !adding && (
               <p className="px-1 py-3 text-xs leading-5 text-gray-500 dark:text-slate-400">
                 {isWorkspaceFlow
-                  ? 'No triggers yet. Add one so this flow starts by itself when a form is submitted.'
-                  : 'No triggers yet. Add one so this flow starts by itself: on a call, an SMS, a form submission or a changed record.'}
+                  ? 'No event triggers yet. Add one so this flow runs automatically when a form is submitted, or trigger it programmatically below.'
+                  : 'No event triggers yet. Add one so this flow starts on a changed database row, a form submission, a call, or trigger it from code below.'}
               </p>
             )}
+
+            <ProgrammaticTriggerCard flow={flow} onOpenApiKeys={() => navigate('/settings#api-keys')} />
           </div>
         )}
       </div>
@@ -326,6 +328,80 @@ export function TriggersPanel({
         confirmLabel="Delete"
         variant="danger"
       />
+    </div>
+  );
+}
+
+function ProgrammaticTriggerCard({ flow, onOpenApiKeys }: { flow: FlowDefinition; onOpenApiKeys: () => void }) {
+  const [tab, setTab] = useState<'curl' | 'app'>('curl');
+  const [copied, setCopied] = useState(false);
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://formlogic.com';
+  const curlSnippet = `curl -X POST "${origin}/api/v1/flows/${flow.id}/run" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"inputs": {}}'`;
+  const appSnippet = flow.appId
+    ? `// From a PHP / Rust / JS / Python SoftN backend response:\nheader("X-FormLogic-Trigger-Flow: ${flow.slug}");\nheader("X-FormLogic-Trigger-Input: " . json_encode(["id" => $id]));\n\n// Or return in a .logic JSON response:\n// { ok: true, __formlogicTriggerFlows: [{ flow: "${flow.slug}", inputs: {} }] }`
+    : `// Call via FormLogic API key (scope: flows:run):\nfetch("${origin}/api/v1/flows/${flow.id}/run", {\n  method: "POST",\n  headers: {\n    "Authorization": "Bearer flk_YOUR_API_KEY",\n    "Content-Type": "application/json"\n  },\n  body: JSON.stringify({ inputs: {} })\n});`;
+  const activeCode = tab === 'curl' ? curlSnippet : appSnippet;
+
+  const copySnippet = () => {
+    void navigator.clipboard?.writeText(activeCode).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => undefined);
+  };
+
+  return (
+    <div className="mt-4 rounded-xl border border-gray-200/90 bg-gray-50/70 p-3 dark:border-slate-700/70 dark:bg-slate-800/40">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <Code2 className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400" />
+          <p className="text-xs font-semibold text-gray-900 dark:text-white">Trigger from API or App Code</p>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenApiKeys}
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400"
+        >
+          <KeyRound className="h-3 w-3" />
+          API Keys
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] leading-4 text-gray-500 dark:text-slate-400">
+        Invoke this flow programmatically using an API key with the <span className="font-mono">flows:run</span> scope, or trigger it directly from any SoftN backend.
+      </p>
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="inline-flex rounded-lg bg-gray-200/70 p-0.5 dark:bg-slate-900/70">
+          <button
+            type="button"
+            onClick={() => setTab('curl')}
+            className={cn(
+              'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+              tab === 'curl'
+                ? 'bg-white text-gray-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white',
+            )}
+          >
+            cURL API
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('app')}
+            className={cn(
+              'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+              tab === 'app'
+                ? 'bg-white text-gray-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                : 'text-gray-600 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white',
+            )}
+          >
+            {flow.appId ? 'From SoftN App' : 'JS fetch'}
+          </button>
+        </div>
+        <Button variant="ghost" size="sm" onClick={copySnippet} className="h-7 px-2 text-xs" leftIcon={copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}>
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+      <pre className="mt-2 overflow-x-auto rounded-lg bg-gray-900 p-2.5 font-mono text-[11px] leading-relaxed text-gray-100 dark:bg-slate-950">
+        {activeCode}
+      </pre>
     </div>
   );
 }

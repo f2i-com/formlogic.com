@@ -1,0 +1,1483 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "mechanic-workshop-softn",
+        "name": "Mechanic Workshop (SoftN + Forms)",
+        "description": "Turnkey automotive workshop and bay manager: live bay pipeline board, job card workbench with inline parts used, vehicle garage with rego/VIN & odometer auto-update, and 1-click workshop invoicing. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "mechanic",
+            "automotive",
+            "workshop",
+            "repairs",
+            "vehicles",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "customers",
+            "title": "Customers",
+            "icon": "Car",
+            "description": "Live FormLogic form synced directly to SQLite table \"customers\" in Mechanic Workshop.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Customers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:mechanic-workshop-softn-app",
+                    "table": "customers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "address": "address",
+                        "customer_type": "customer_type",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Customers",
+                    "description": "Connected live to SQLite table \"customers\" in Mechanic Workshop.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_type",
+                    "type": "dropdown",
+                    "label": "Customer Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "private_retail",
+                                "label": "Private / Retail",
+                                "value": "Private / Retail"
+                            },
+                            {
+                                "id": "fleet",
+                                "label": "Fleet",
+                                "value": "Fleet"
+                            },
+                            {
+                                "id": "business",
+                                "label": "Business",
+                                "value": "Business"
+                            },
+                            {
+                                "id": "dealer_trade",
+                                "label": "Dealer / Trade",
+                                "value": "Dealer / Trade"
+                            },
+                            {
+                                "id": "insurance",
+                                "label": "Insurance",
+                                "value": "Insurance"
+                            }
+                        ],
+                        "defaultValue": "Private / Retail"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Customers by Customer Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "customer_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:customers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "address"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "vehicles",
+            "title": "Vehicles",
+            "icon": "Car",
+            "description": "Live FormLogic form synced directly to SQLite table \"vehicles\" in Mechanic Workshop.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Vehicles",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:mechanic-workshop-softn-app",
+                    "table": "vehicles",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "make": "make",
+                        "model": "model",
+                        "year": "year",
+                        "registration": "registration",
+                        "odometer": "odometer",
+                        "fuel": "fuel",
+                        "vin": "vin"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Vehicles",
+                    "description": "Connected live to SQLite table \"vehicles\" in Mechanic Workshop.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "make",
+                    "type": "short_text",
+                    "label": "Make",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "model",
+                    "type": "short_text",
+                    "label": "Model",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "year",
+                    "type": "number",
+                    "label": "Year",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "registration",
+                    "type": "short_text",
+                    "label": "Registration",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "odometer",
+                    "type": "number",
+                    "label": "Odometer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fuel",
+                    "type": "dropdown",
+                    "label": "Fuel",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "petrol",
+                                "label": "Petrol",
+                                "value": "Petrol"
+                            },
+                            {
+                                "id": "diesel",
+                                "label": "Diesel",
+                                "value": "Diesel"
+                            },
+                            {
+                                "id": "hybrid",
+                                "label": "Hybrid",
+                                "value": "Hybrid"
+                            },
+                            {
+                                "id": "electric",
+                                "label": "Electric",
+                                "value": "Electric"
+                            },
+                            {
+                                "id": "lpg",
+                                "label": "LPG",
+                                "value": "LPG"
+                            }
+                        ],
+                        "defaultValue": "Petrol"
+                    }
+                },
+                {
+                    "id": "vin",
+                    "type": "short_text",
+                    "label": "Vin",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Vehicles",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Vehicles by Fuel",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "fuel",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Vehicles",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:vehicles",
+                                "titleField": "registration",
+                                "limit": 10,
+                                "subtitleField": "fuel"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "job-cards",
+            "title": "Job CARds",
+            "icon": "Car",
+            "description": "Live FormLogic form synced directly to SQLite table \"job_cards\" in Mechanic Workshop.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Job CARds",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:mechanic-workshop-softn-app",
+                    "table": "job_cards",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "card_number": "card_number",
+                        "vehicle_id": "vehicle_id",
+                        "customer_id": "customer_id",
+                        "bay_number": "bay_number",
+                        "complaint": "complaint",
+                        "diagnosis": "diagnosis",
+                        "status": "status",
+                        "technician": "technician",
+                        "labour_hours": "labour_hours",
+                        "odometer_in": "odometer_in",
+                        "priority": "priority",
+                        "date_in": "date_in"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Job CARds",
+                    "description": "Connected live to SQLite table \"job_cards\" in Mechanic Workshop.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "card_number",
+                    "type": "short_text",
+                    "label": "CARd Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle_id",
+                    "type": "linked_record",
+                    "label": "Vehicle",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:vehicles",
+                        "displayFieldIds": [
+                            "registration"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "bay_number",
+                    "type": "short_text",
+                    "label": "Bay Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "complaint",
+                    "type": "short_text",
+                    "label": "Complaint",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "diagnosis",
+                    "type": "short_text",
+                    "label": "Diagnosis",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booked_in",
+                                "label": "Booked In",
+                                "value": "Booked In"
+                            },
+                            {
+                                "id": "diagnosing",
+                                "label": "Diagnosing",
+                                "value": "Diagnosing"
+                            },
+                            {
+                                "id": "waiting_parts",
+                                "label": "Waiting Parts",
+                                "value": "Waiting Parts"
+                            },
+                            {
+                                "id": "on_hoist",
+                                "label": "On Hoist",
+                                "value": "On Hoist"
+                            },
+                            {
+                                "id": "ready_for_pickup",
+                                "label": "Ready for Pickup",
+                                "value": "Ready for Pickup"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Booked In"
+                    }
+                },
+                {
+                    "id": "technician",
+                    "type": "short_text",
+                    "label": "Technician",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_hours",
+                    "type": "number",
+                    "label": "Labour Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "odometer_in",
+                    "type": "number",
+                    "label": "Odometer In",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "date_in",
+                    "type": "short_text",
+                    "label": "Date In",
+                    "required": true,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Job CARds",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:job-cards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Job CARds by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:job-cards",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Job CARds",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:job-cards",
+                                "titleField": "card_number",
+                                "limit": 10,
+                                "subtitleField": "bay_number"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "parts-used",
+            "title": "Parts Used",
+            "icon": "Car",
+            "description": "Live FormLogic form synced directly to SQLite table \"parts_used\" in Mechanic Workshop.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Parts Used",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:mechanic-workshop-softn-app",
+                    "table": "parts_used",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_card_id": "job_card_id",
+                        "part_name": "part_name",
+                        "part_number": "part_number",
+                        "quantity": "quantity",
+                        "unit_cost_cents": "unit_cost_cents",
+                        "supplier": "supplier"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Parts Used",
+                    "description": "Connected live to SQLite table \"parts_used\" in Mechanic Workshop.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_card_id",
+                    "type": "linked_record",
+                    "label": "Job CARd",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:job-cards",
+                        "displayFieldIds": [
+                            "card_number",
+                            "bay_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "part_name",
+                    "type": "short_text",
+                    "label": "Part Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "part_number",
+                    "type": "short_text",
+                    "label": "Part Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "quantity",
+                    "type": "number",
+                    "label": "Quantity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit_cost_cents",
+                    "type": "number",
+                    "label": "Unit Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Parts Used",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:parts-used",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Parts Used",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:parts-used",
+                                "titleField": "part_name",
+                                "limit": 10,
+                                "subtitleField": "part_number"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "invoices",
+            "title": "Invoices",
+            "icon": "Car",
+            "description": "Live FormLogic form synced directly to SQLite table \"invoices\" in Mechanic Workshop.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Invoices",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:mechanic-workshop-softn-app",
+                    "table": "invoices",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "invoice_number": "invoice_number",
+                        "job_card_id": "job_card_id",
+                        "customer_id": "customer_id",
+                        "vehicle_id": "vehicle_id",
+                        "issue_date": "issue_date",
+                        "labour_hours": "labour_hours",
+                        "labour_rate_cents": "labour_rate_cents",
+                        "labour_cents": "labour_cents",
+                        "parts_cents": "parts_cents",
+                        "subtotal_cents": "subtotal_cents",
+                        "tax_rate": "tax_rate",
+                        "tax_cents": "tax_cents",
+                        "total_cents": "total_cents",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Invoices",
+                    "description": "Connected live to SQLite table \"invoices\" in Mechanic Workshop.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "invoice_number",
+                    "type": "short_text",
+                    "label": "Invoice Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_card_id",
+                    "type": "linked_record",
+                    "label": "Job CARd",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:job-cards",
+                        "displayFieldIds": [
+                            "card_number",
+                            "bay_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "vehicle_id",
+                    "type": "linked_record",
+                    "label": "Vehicle",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:vehicles",
+                        "displayFieldIds": [
+                            "registration"
+                        ]
+                    }
+                },
+                {
+                    "id": "issue_date",
+                    "type": "date",
+                    "label": "Issue Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_hours",
+                    "type": "number",
+                    "label": "Labour Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_rate_cents",
+                    "type": "number",
+                    "label": "Labour Rate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_cents",
+                    "type": "number",
+                    "label": "Labour (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "parts_cents",
+                    "type": "number",
+                    "label": "Parts (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subtotal_cents",
+                    "type": "number",
+                    "label": "Subtotal (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_rate",
+                    "type": "number",
+                    "label": "Tax Rate",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_cents",
+                    "type": "number",
+                    "label": "Tax (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booked_in",
+                                "label": "Booked In",
+                                "value": "Booked In"
+                            },
+                            {
+                                "id": "diagnosing",
+                                "label": "Diagnosing",
+                                "value": "Diagnosing"
+                            },
+                            {
+                                "id": "waiting_parts",
+                                "label": "Waiting Parts",
+                                "value": "Waiting Parts"
+                            },
+                            {
+                                "id": "on_hoist",
+                                "label": "On Hoist",
+                                "value": "On Hoist"
+                            },
+                            {
+                                "id": "ready_for_pickup",
+                                "label": "Ready for Pickup",
+                                "value": "Ready for Pickup"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Draft"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Invoices by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:invoices",
+                                "titleField": "invoice_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "mechanic-workshop-softn-app",
+            "name": "Mechanic Workshop",
+            "description": "Turnkey automotive workshop and bay manager: live bay pipeline board, job card workbench with inline parts used, vehicle garage with rego/VIN & odometer auto-update, and 1-click workshop invoicing.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "mechanic-workshop-softn-forms",
+            "name": "Mechanic Workshop Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Mechanic Workshop's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:mechanic-workshop-softn-app",
+                "linkedSoftnAppId": "@packApp:mechanic-workshop-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "customers",
+                    "displayName": "Customers",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "vehicles",
+                    "displayName": "Vehicles",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "job-cards",
+                    "displayName": "Job CARds",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "parts-used",
+                    "displayName": "Parts Used",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "invoices",
+                    "displayName": "Invoices",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_customers",
+                    "name": "Total Customers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_customers",
+                    "name": "Customers by Customer Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "customer_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_vehicles",
+                    "name": "Total Vehicles",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:vehicles",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_vehicles",
+                    "name": "Vehicles by Fuel",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:vehicles",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "fuel",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_job_cards",
+                    "name": "Total Job CARds",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:job-cards",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_parts_used",
+                    "name": "Total Parts Used",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:parts-used",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Customers by Customer Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "customer_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Vehicles",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Vehicles by Fuel",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "fuel",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Job CARds",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:job-cards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Parts Used",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:parts-used",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

@@ -1,0 +1,51 @@
+{
+    "id": "hr-people-softn",
+    "slug": "hr-people-softn",
+    "name": "People Hub — SoftN App & Linked Forms",
+    "shortName": "People Hub",
+    "description": "Turnkey HR & people operations desk with actionable approvals inbox, recruitment pipeline & interview scorecards, interactive onboarding checklists, leave, performance reviews, expenses, training, and exit interviews. Includes the full-stack SoftN application (PHP + SQLite) plus 8 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Users",
+    "category": "Business apps",
+    "tags": [
+        "hr",
+        "people",
+        "recruitment",
+        "onboarding",
+        "leave",
+        "performance",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "hr-people-softn.softn",
+    "softnPackAppId": "hr-people-softn-app",
+    "formsPackAppId": "hr-people-softn-forms",
+    "companionPackSlug": "hr-people",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "candidates",
+        "interview_scorecards",
+        "onboardings",
+        "leave_requests",
+        "performance_reviews",
+        "expense_claims",
+        "training_requests",
+        "exit_interviews"
+    ],
+    "formCount": 8,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/hr-people.png"
+        }
+    ]
+}

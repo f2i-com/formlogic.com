@@ -1,0 +1,2168 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "event-management-softn",
+        "name": "Event Hub (SoftN + Forms)",
+        "description": "Turnkey event operations command center with 1-tap attendee check-in desk, dietary & accessibility alerts, speaker program, vendor booths, volunteer roster, live budget variance, incident log, and post-event feedback. Includes the full-stack SoftN application plus 7 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "events",
+            "registration",
+            "speakers",
+            "vendors",
+            "volunteers",
+            "feedback",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "attendees",
+            "title": "Attendees",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"attendees\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Attendees",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "attendees",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "attendee_name": "attendee_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "organization": "organization",
+                        "ticket_type": "ticket_type",
+                        "dietary_json": "dietary_json",
+                        "accessibility_needs": "accessibility_needs",
+                        "emergency_contact_name": "emergency_contact_name",
+                        "emergency_contact_phone": "emergency_contact_phone",
+                        "checked_in": "checked_in",
+                        "checked_in_at": "checked_in_at"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Attendees",
+                    "description": "Connected live to SQLite table \"attendees\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "attendee_name",
+                    "type": "short_text",
+                    "label": "Attendee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "organization",
+                    "type": "short_text",
+                    "label": "Organization",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ticket_type",
+                    "type": "dropdown",
+                    "label": "Ticket Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "general_admission",
+                                "label": "General Admission",
+                                "value": "General Admission"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "early_bird",
+                                "label": "Early Bird",
+                                "value": "Early Bird"
+                            },
+                            {
+                                "id": "student",
+                                "label": "Student",
+                                "value": "Student"
+                            },
+                            {
+                                "id": "speaker",
+                                "label": "Speaker",
+                                "value": "Speaker"
+                            },
+                            {
+                                "id": "press",
+                                "label": "Press",
+                                "value": "Press"
+                            }
+                        ],
+                        "defaultValue": "General Admission"
+                    }
+                },
+                {
+                    "id": "dietary_json",
+                    "type": "long_text",
+                    "label": "Dietary Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "accessibility_needs",
+                    "type": "short_text",
+                    "label": "Accessibility Needs",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_name",
+                    "type": "short_text",
+                    "label": "Emergency Contact Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_phone",
+                    "type": "phone",
+                    "label": "Emergency Contact Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "checked_in",
+                    "type": "number",
+                    "label": "Checked In",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "checked_in_at",
+                    "type": "number",
+                    "label": "Checked In At",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Attendees",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:attendees",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Attendees by Ticket Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:attendees",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "ticket_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Attendees",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:attendees",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "speakers",
+            "title": "Speakers",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"speakers\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Speakers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "speakers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "speaker_name": "speaker_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "bio": "bio",
+                        "topic_title": "topic_title",
+                        "abstract": "abstract",
+                        "presentation_type": "presentation_type",
+                        "equipment_json": "equipment_json",
+                        "session_slot": "session_slot",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Speakers",
+                    "description": "Connected live to SQLite table \"speakers\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "speaker_name",
+                    "type": "short_text",
+                    "label": "Speaker Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "bio",
+                    "type": "long_text",
+                    "label": "Bio",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "topic_title",
+                    "type": "short_text",
+                    "label": "Topic Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "abstract",
+                    "type": "short_text",
+                    "label": "Abstract",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "presentation_type",
+                    "type": "dropdown",
+                    "label": "Presentation Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "keynote",
+                                "label": "Keynote",
+                                "value": "Keynote"
+                            },
+                            {
+                                "id": "breakout_session",
+                                "label": "Breakout Session",
+                                "value": "Breakout Session"
+                            },
+                            {
+                                "id": "workshop",
+                                "label": "Workshop",
+                                "value": "Workshop"
+                            },
+                            {
+                                "id": "panel_discussion",
+                                "label": "Panel Discussion",
+                                "value": "Panel Discussion"
+                            },
+                            {
+                                "id": "lightning_talk",
+                                "label": "Lightning Talk",
+                                "value": "Lightning Talk"
+                            }
+                        ],
+                        "defaultValue": "Breakout Session"
+                    }
+                },
+                {
+                    "id": "equipment_json",
+                    "type": "short_text",
+                    "label": "Equipment Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "session_slot",
+                    "type": "short_text",
+                    "label": "Session Slot",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "applied",
+                                "label": "Applied",
+                                "value": "Applied"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "booth_assigned",
+                                "label": "Booth Assigned",
+                                "value": "Booth Assigned"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Submitted"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Speakers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:speakers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Speakers by Presentation Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:speakers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "presentation_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Speakers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:speakers",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "vendors",
+            "title": "Vendors",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"vendors\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Vendors",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "vendors",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "company_name": "company_name",
+                        "contact_name": "contact_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "website": "website",
+                        "products_services": "products_services",
+                        "booth_size": "booth_size",
+                        "power_json": "power_json",
+                        "booth_number": "booth_number",
+                        "insurance_verified": "insurance_verified",
+                        "special_requests": "special_requests",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Vendors",
+                    "description": "Connected live to SQLite table \"vendors\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "company_name",
+                    "type": "short_text",
+                    "label": "Company Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_name",
+                    "type": "short_text",
+                    "label": "Contact Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "website",
+                    "type": "url",
+                    "label": "Website",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "products_services",
+                    "type": "short_text",
+                    "label": "Products Services",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booth_size",
+                    "type": "dropdown",
+                    "label": "Booth Size",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "small_6x6_",
+                                "label": "Small (6x6)",
+                                "value": "Small (6x6)"
+                            },
+                            {
+                                "id": "medium_10x10_",
+                                "label": "Medium (10x10)",
+                                "value": "Medium (10x10)"
+                            },
+                            {
+                                "id": "large_10x20_",
+                                "label": "Large (10x20)",
+                                "value": "Large (10x20)"
+                            },
+                            {
+                                "id": "premium_20x20_",
+                                "label": "Premium (20x20)",
+                                "value": "Premium (20x20)"
+                            }
+                        ],
+                        "defaultValue": "Medium (10x10)"
+                    }
+                },
+                {
+                    "id": "power_json",
+                    "type": "short_text",
+                    "label": "Power Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booth_number",
+                    "type": "short_text",
+                    "label": "Booth Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "insurance_verified",
+                    "type": "number",
+                    "label": "Insurance Verified",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "special_requests",
+                    "type": "short_text",
+                    "label": "Special Requests",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "applied",
+                                "label": "Applied",
+                                "value": "Applied"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "booth_assigned",
+                                "label": "Booth Assigned",
+                                "value": "Booth Assigned"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Applied"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Vendors",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vendors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Vendors by Booth Size",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vendors",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "booth_size",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Vendors",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:vendors",
+                                "titleField": "company_name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "volunteers",
+            "title": "Volunteers",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"volunteers\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Volunteers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "volunteers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "volunteer_name": "volunteer_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "availability_json": "availability_json",
+                        "skills_json": "skills_json",
+                        "t_shirt_size": "t_shirt_size",
+                        "assigned_shift": "assigned_shift",
+                        "emergency_contact_name": "emergency_contact_name",
+                        "emergency_contact_phone": "emergency_contact_phone",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Volunteers",
+                    "description": "Connected live to SQLite table \"volunteers\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "volunteer_name",
+                    "type": "short_text",
+                    "label": "Volunteer Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "availability_json",
+                    "type": "short_text",
+                    "label": "Availability Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "skills_json",
+                    "type": "short_text",
+                    "label": "Skills Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "t_shirt_size",
+                    "type": "dropdown",
+                    "label": "T Shirt Size",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "xs",
+                                "label": "XS",
+                                "value": "XS"
+                            },
+                            {
+                                "id": "s",
+                                "label": "S",
+                                "value": "S"
+                            },
+                            {
+                                "id": "m",
+                                "label": "M",
+                                "value": "M"
+                            },
+                            {
+                                "id": "l",
+                                "label": "L",
+                                "value": "L"
+                            },
+                            {
+                                "id": "xl",
+                                "label": "XL",
+                                "value": "XL"
+                            },
+                            {
+                                "id": "xxl",
+                                "label": "XXL",
+                                "value": "XXL"
+                            }
+                        ],
+                        "defaultValue": "M"
+                    }
+                },
+                {
+                    "id": "assigned_shift",
+                    "type": "short_text",
+                    "label": "Assigned Shift",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_name",
+                    "type": "short_text",
+                    "label": "Emergency Contact Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_phone",
+                    "type": "phone",
+                    "label": "Emergency Contact Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Volunteers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:volunteers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Volunteers by T Shirt Size",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:volunteers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "t_shirt_size",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Volunteers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:volunteers",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "budget-items",
+            "title": "Budget Items",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"budget_items\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Budget Items",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "budget_items",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "item_name": "item_name",
+                        "category": "category",
+                        "estimated_cents": "estimated_cents",
+                        "actual_cents": "actual_cents",
+                        "vendor": "vendor",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Budget Items",
+                    "description": "Connected live to SQLite table \"budget_items\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "item_name",
+                    "type": "short_text",
+                    "label": "Item Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "venue",
+                                "label": "Venue",
+                                "value": "Venue"
+                            },
+                            {
+                                "id": "catering",
+                                "label": "Catering",
+                                "value": "Catering"
+                            },
+                            {
+                                "id": "av_equipment",
+                                "label": "AV Equipment",
+                                "value": "AV Equipment"
+                            },
+                            {
+                                "id": "marketing",
+                                "label": "Marketing",
+                                "value": "Marketing"
+                            },
+                            {
+                                "id": "speaker_fees",
+                                "label": "Speaker Fees",
+                                "value": "Speaker Fees"
+                            },
+                            {
+                                "id": "decorations",
+                                "label": "Decorations",
+                                "value": "Decorations"
+                            },
+                            {
+                                "id": "transportation",
+                                "label": "Transportation",
+                                "value": "Transportation"
+                            },
+                            {
+                                "id": "staffing",
+                                "label": "Staffing",
+                                "value": "Staffing"
+                            },
+                            {
+                                "id": "insurance",
+                                "label": "Insurance",
+                                "value": "Insurance"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Venue"
+                    }
+                },
+                {
+                    "id": "estimated_cents",
+                    "type": "number",
+                    "label": "Estimated (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "actual_cents",
+                    "type": "number",
+                    "label": "Actual (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vendor",
+                    "type": "short_text",
+                    "label": "Vendor",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Budget Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:budget-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Budget Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:budget-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Budget Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:budget-items",
+                                "titleField": "item_name",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "incidents",
+            "title": "Incidents",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"incidents\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Incidents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "incidents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "reporter_name": "reporter_name",
+                        "incident_date": "incident_date",
+                        "incident_time": "incident_time",
+                        "location": "location",
+                        "incident_type": "incident_type",
+                        "description": "description",
+                        "severity": "severity",
+                        "actions_taken": "actions_taken",
+                        "witnesses": "witnesses",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Incidents",
+                    "description": "Connected live to SQLite table \"incidents\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reporter_name",
+                    "type": "short_text",
+                    "label": "Reporter Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_date",
+                    "type": "date",
+                    "label": "Incident Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_time",
+                    "type": "time",
+                    "label": "Incident Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "location",
+                    "type": "short_text",
+                    "label": "Location",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_type",
+                    "type": "dropdown",
+                    "label": "Incident Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "medical_emergency",
+                                "label": "Medical Emergency",
+                                "value": "Medical Emergency"
+                            },
+                            {
+                                "id": "safety_hazard",
+                                "label": "Safety Hazard",
+                                "value": "Safety Hazard"
+                            },
+                            {
+                                "id": "security_issue",
+                                "label": "Security Issue",
+                                "value": "Security Issue"
+                            },
+                            {
+                                "id": "property_damage",
+                                "label": "Property Damage",
+                                "value": "Property Damage"
+                            },
+                            {
+                                "id": "weather_related",
+                                "label": "Weather Related",
+                                "value": "Weather Related"
+                            },
+                            {
+                                "id": "attendee_complaint",
+                                "label": "Attendee Complaint",
+                                "value": "Attendee Complaint"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Safety Hazard"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "actions_taken",
+                    "type": "short_text",
+                    "label": "Actions Taken",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witnesses",
+                    "type": "short_text",
+                    "label": "Witnesses",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "applied",
+                                "label": "Applied",
+                                "value": "Applied"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "booth_assigned",
+                                "label": "Booth Assigned",
+                                "value": "Booth Assigned"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:incidents",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "incident_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "event-feedback",
+            "title": "Event Feedback",
+            "icon": "Ticket",
+            "description": "Live FormLogic form synced directly to SQLite table \"event_feedback\" in Event Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Event Feedback",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:event-management-softn-app",
+                    "table": "event_feedback",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "attendee_id": "attendee_id",
+                        "attendee_name": "attendee_name",
+                        "overall_rating": "overall_rating",
+                        "venue_rating": "venue_rating",
+                        "speakers_rating": "speakers_rating",
+                        "organization_rating": "organization_rating",
+                        "food_rating": "food_rating",
+                        "what_enjoyed": "what_enjoyed",
+                        "suggestions": "suggestions",
+                        "would_attend_again": "would_attend_again",
+                        "would_recommend": "would_recommend"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Event Feedback",
+                    "description": "Connected live to SQLite table \"event_feedback\" in Event Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "attendee_id",
+                    "type": "linked_record",
+                    "label": "Attendee",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:attendees",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "attendee_name",
+                    "type": "short_text",
+                    "label": "Attendee Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "overall_rating",
+                    "type": "number",
+                    "label": "Overall Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "venue_rating",
+                    "type": "number",
+                    "label": "Venue Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "speakers_rating",
+                    "type": "number",
+                    "label": "Speakers Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "organization_rating",
+                    "type": "number",
+                    "label": "Organization Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "food_rating",
+                    "type": "number",
+                    "label": "Food Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "what_enjoyed",
+                    "type": "short_text",
+                    "label": "What Enjoyed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "suggestions",
+                    "type": "short_text",
+                    "label": "Suggestions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "would_attend_again",
+                    "type": "dropdown",
+                    "label": "Would Attend Again",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "definitely",
+                                "label": "Definitely",
+                                "value": "Definitely"
+                            },
+                            {
+                                "id": "probably",
+                                "label": "Probably",
+                                "value": "Probably"
+                            },
+                            {
+                                "id": "unsure",
+                                "label": "Unsure",
+                                "value": "Unsure"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Definitely"
+                    }
+                },
+                {
+                    "id": "would_recommend",
+                    "type": "dropdown",
+                    "label": "Would Recommend",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "maybe",
+                                "label": "Maybe",
+                                "value": "Maybe"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Event Feedback",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:event-feedback",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Event Feedback by Would Attend Again",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:event-feedback",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "would_attend_again",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Event Feedback",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:event-feedback",
+                                "titleField": "attendee_name",
+                                "limit": 10,
+                                "subtitleField": "overall_rating"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "event-management-softn-app",
+            "name": "Event Hub",
+            "description": "Turnkey event operations command center with 1-tap attendee check-in desk, dietary & accessibility alerts, speaker program, vendor booths, volunteer roster, live budget variance, incident log, and post-event feedback.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "event-management-softn-forms",
+            "name": "Event Hub Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Event Hub's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:event-management-softn-app",
+                "linkedSoftnAppId": "@packApp:event-management-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "attendees",
+                    "displayName": "Attendees",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "speakers",
+                    "displayName": "Speakers",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "vendors",
+                    "displayName": "Vendors",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "volunteers",
+                    "displayName": "Volunteers",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "budget-items",
+                    "displayName": "Budget Items",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "incidents",
+                    "displayName": "Incidents",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "event-feedback",
+                    "displayName": "Event Feedback",
+                    "sortOrder": 6,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_attendees",
+                    "name": "Total Attendees",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:attendees",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_attendees",
+                    "name": "Attendees by Ticket Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:attendees",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "ticket_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_speakers",
+                    "name": "Total Speakers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:speakers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_speakers",
+                    "name": "Speakers by Presentation Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:speakers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "presentation_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_vendors",
+                    "name": "Total Vendors",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:vendors",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_volunteers",
+                    "name": "Total Volunteers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:volunteers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Attendees",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:attendees",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Attendees by Ticket Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:attendees",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "ticket_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Speakers",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:speakers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Speakers by Presentation Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:speakers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "presentation_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Vendors",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:vendors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Volunteers",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:volunteers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

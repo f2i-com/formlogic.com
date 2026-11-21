@@ -194,6 +194,22 @@ class AppService
                 $settings['signInPage'] = $page;
             }
         }
+        // settings.sharedDatabaseAppId: another app of the same owner whose SQLite database this app shares.
+        if (array_key_exists('sharedDatabaseAppId', $settings)) {
+            $sharedId = $settings['sharedDatabaseAppId'];
+            if (!is_string($sharedId) || preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $sharedId) !== 1) {
+                unset($settings['sharedDatabaseAppId']);
+            }
+        }
+        // settings.sourceProtected / marketplace*: set server-side on private Marketplace installs.
+        if (array_key_exists('sourceProtected', $settings) && !is_bool($settings['sourceProtected'])) {
+            unset($settings['sourceProtected']);
+        }
+        foreach (['marketplaceCatalogId', 'marketplaceSlug', 'marketplaceLicenseId'] as $mktKey) {
+            if (array_key_exists($mktKey, $settings) && (!is_string($settings[$mktKey]) || strlen($settings[$mktKey]) > 120)) {
+                unset($settings[$mktKey]);
+            }
+        }
         return $settings;
     }
 
@@ -878,9 +894,18 @@ class AppService
         if (isset($data['settings'])) {
             $updates[] = "settings = :settings";
             // Same write-time gate as createApp: an invalid settings.appKind is dropped.
-            $params['settings'] = json_encode(
-                is_array($data['settings']) ? $this->sanitizeAppSettings($data['settings']) : []
-            );
+            $incoming = is_array($data['settings']) ? $this->sanitizeAppSettings($data['settings']) : [];
+            // Immutable server-owned marketplace source protection flags cannot be stripped by the buyer.
+            $existingSettings = is_array($existing['settings'] ?? null) ? $existing['settings'] : [];
+            if (!empty($existingSettings['sourceProtected'])) {
+                $incoming['sourceProtected'] = true;
+                foreach (['marketplaceCatalogId', 'marketplaceSlug', 'marketplaceLicenseId'] as $mktKey) {
+                    if (isset($existingSettings[$mktKey])) {
+                        $incoming[$mktKey] = $existingSettings[$mktKey];
+                    }
+                }
+            }
+            $params['settings'] = json_encode($incoming);
         }
 
         if (isset($data['theme'])) {
@@ -1101,6 +1126,90 @@ class AppService
             $this->mysql->rollBack();
             throw $e;
         }
+    }
+
+    /**
+     * All apps owned by `$ownerId` (lightweight formatted list) whose `settings.sharedDatabaseAppId`
+     * points at `$databaseAppId`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listSharedDatabaseConsumers(string $ownerId, string $databaseAppId): array
+    {
+        if (!(new \ReflectionProperty(self::class, 'mysql'))->isInitialized($this)) return [];
+        $stmt = $this->mysql->prepare('SELECT * FROM apps WHERE owner_id = :owner ORDER BY created_at ASC');
+        $stmt->execute(['owner' => $ownerId]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $app = App::fromArray($row)->toArray();
+            if (($app['settings']['sharedDatabaseAppId'] ?? null) === $databaseAppId) {
+                $out[] = $app;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Return every app ID sharing the same canonical SQLite database as `$appId` (always includes
+     * the canonical DB owner app ID plus every consumer app of the same owner linked to it).
+     *
+     * @return list<string>
+     */
+    public function sharedDatabaseGroupAppIds(string $appId): array
+    {
+        $app = $this->getApp($appId);
+        if (!$app) return [$appId];
+        $ownerId = (string) ($app['ownerId'] ?? '');
+        $canonical = is_string($app['settings']['sharedDatabaseAppId'] ?? null) && $app['settings']['sharedDatabaseAppId'] !== ''
+            ? (string) $app['settings']['sharedDatabaseAppId']
+            : $appId;
+        $ids = [$canonical];
+        if ($ownerId !== '') {
+            foreach ($this->listSharedDatabaseConsumers($ownerId, $canonical) as $consumer) {
+                $cid = (string) ($consumer['id'] ?? '');
+                if ($cid !== '' && !in_array($cid, $ids, true)) {
+                    $ids[] = $cid;
+                }
+            }
+        }
+        if (!in_array($appId, $ids, true)) {
+            $ids[] = $appId;
+        }
+        return $ids;
+    }
+
+    /**
+     * Link or unlink `$appId` to share `$targetAppId`'s SQLite database (same owner, single-hop,
+     * no self-link, cannot link an app that already has other apps sharing its own database).
+     *
+     * @return array<string, mixed> updated app
+     */
+    public function setSharedDatabase(string $ownerId, string $appId, ?string $targetAppId): array
+    {
+        $app = $this->getApp($appId);
+        if (!$app || ($app['ownerId'] ?? null) !== $ownerId) {
+            throw new \RuntimeException('App not found or access denied', 404);
+        }
+        $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+        if ($targetAppId === null || $targetAppId === '') {
+            unset($settings['sharedDatabaseAppId']);
+            return $this->updateApp($appId, ['settings' => $settings]) ?? $app;
+        }
+        if ($targetAppId === $appId) {
+            throw new \InvalidArgumentException('An app cannot link to its own database.');
+        }
+        $target = $this->getApp($targetAppId);
+        if (!$target || ($target['ownerId'] ?? null) !== $ownerId) {
+            throw new \InvalidArgumentException('Choose a target app owned by your account.');
+        }
+        if (!empty($target['settings']['sharedDatabaseAppId'])) {
+            throw new \InvalidArgumentException('That target app already shares another app\'s database. Link directly to the primary database app instead.');
+        }
+        if ($this->listSharedDatabaseConsumers($ownerId, $appId) !== []) {
+            throw new \InvalidArgumentException('Other apps currently share this app\'s database. Unlink them before linking this app to another database.');
+        }
+        $settings['sharedDatabaseAppId'] = $targetAppId;
+        return $this->updateApp($appId, ['settings' => $settings]) ?? $app;
     }
 
     // Form management

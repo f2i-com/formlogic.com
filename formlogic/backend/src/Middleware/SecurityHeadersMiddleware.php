@@ -24,6 +24,9 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
     /** The addresses a JavaScript app's built site is served under (SiteAppController): /api/app/<slug>/site/<ticket>/… */
     public const SITE_FRAME_PATH = '~^(/api/app/[A-Za-z0-9_.\~-]+/site/[a-z0-9-]+/)~D';
 
+    /** The addresses a Marketplace sandbox demo iframe is served under: /api/packs/catalog/<slug>/demo/frame/<token>/… */
+    public const MARKETPLACE_DEMO_FRAME_PATH = '~^(/api/packs/catalog/[A-Za-z0-9_.\~-]+/demo/)(frame/sbx[a-f0-9]{24}-\d{10}-[a-f0-9]{32}/)~D';
+
     /**
      * What a built site's page may do in its sandbox: run scripts, show its own dialogs, open a
      * link in a new tab (which is then an ordinary tab), hand the person a file, take the pointer
@@ -101,6 +104,11 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
      * is held to the shape of an address, so nothing read from the environment can add a
      * directive. Empty for the usual installation, where 'self' says it all.
      */
+    public static function siteFramersPublic(): string
+    {
+        return self::siteFramers();
+    }
+
     private static function siteFramers(): string
     {
         $named = array_merge([(string) Environment::get('CORS_ORIGIN', '')], explode(',', (string) Environment::get('CORS_ALLOWED_ORIGINS', '')));
@@ -294,6 +302,19 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
         if ($siteFrame !== null && $response->getHeaderLine('Content-Security-Policy') === $siteFrame) {
             $csp = $siteFrame;
             $response = $response->withoutHeader('X-Frame-Options')->withHeader('Referrer-Policy', 'no-referrer');
+        }
+        // Marketplace live sandbox demo iframe: strict opaque-origin sandbox, frame-ancestors 'self' + siteFramers,
+        // connect-src pinned strictly to that listing's own demo API endpoints.
+        if (preg_match(self::MARKETPLACE_DEMO_FRAME_PATH, $request->getUri()->getPath(), $mktMatch) === 1) {
+            $mktPolicy = \FormLogic\Services\MarketplaceSandboxService::demoFramePolicy(
+                \FormLogic\Services\McpOAuthService::publicOrigin($request),
+                $mktMatch[1] . $mktMatch[2],
+                $mktMatch[1]
+            );
+            if ($response->getHeaderLine('Content-Security-Policy') === $mktPolicy) {
+                $csp = $mktPolicy;
+                $response = $response->withoutHeader('X-Frame-Options')->withHeader('Referrer-Policy', 'no-referrer');
+            }
         }
         $response = $response->withHeader('Content-Security-Policy', $csp);
 

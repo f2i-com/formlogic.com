@@ -1,0 +1,1762 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "cleanshift-cleaning-softn",
+        "name": "CleanShift (SoftN + Forms)",
+        "description": "Turnkey cleaning business scheduler: crew dispatch board, client access instructions, teams roster, quality checklists & star ratings, supply par stock, and client issues desk. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "cleaning",
+            "scheduling",
+            "teams",
+            "quality",
+            "field-service",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_name": "client_name",
+                        "client_type": "client_type",
+                        "email": "email",
+                        "phone": "phone",
+                        "address": "address",
+                        "access_instructions": "access_instructions",
+                        "billing_status": "billing_status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "client_type",
+                    "type": "dropdown",
+                    "label": "Client Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "residential",
+                                "label": "Residential",
+                                "value": "Residential"
+                            },
+                            {
+                                "id": "commercial",
+                                "label": "Commercial",
+                                "value": "Commercial"
+                            },
+                            {
+                                "id": "airbnb",
+                                "label": "Airbnb",
+                                "value": "Airbnb"
+                            },
+                            {
+                                "id": "office",
+                                "label": "Office",
+                                "value": "Office"
+                            }
+                        ],
+                        "defaultValue": "Residential"
+                    }
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "access_instructions",
+                    "type": "long_text",
+                    "label": "Access Instructions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "billing_status",
+                    "type": "dropdown",
+                    "label": "Billing Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "up_to_date",
+                                "label": "Up to date",
+                                "value": "Up to date"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            }
+                        ],
+                        "defaultValue": "Up to date"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Client Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "client_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "address",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "cleaning-teams",
+            "title": "Cleaning Teams",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"cleaning_teams\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Cleaning Teams",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "cleaning_teams",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "team_name": "team_name",
+                        "lead_cleaner": "lead_cleaner",
+                        "members": "members",
+                        "vehicle": "vehicle",
+                        "service_areas_json": "service_areas_json",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Cleaning Teams",
+                    "description": "Connected live to SQLite table \"cleaning_teams\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "team_name",
+                    "type": "short_text",
+                    "label": "Team Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "lead_cleaner",
+                    "type": "short_text",
+                    "label": "Lead Cleaner",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "members",
+                    "type": "short_text",
+                    "label": "Members",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle",
+                    "type": "short_text",
+                    "label": "Vehicle",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "service_areas_json",
+                    "type": "short_text",
+                    "label": "Service Areas Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Cleaning Teams",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-teams",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Cleaning Teams by Active",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-teams",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Cleaning Teams",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:cleaning-teams",
+                                "titleField": "team_name",
+                                "limit": 10,
+                                "subtitleField": "lead_cleaner"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "cleaning-jobs",
+            "title": "Cleaning Jobs",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"cleaning_jobs\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Cleaning Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "cleaning_jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "team_id": "team_id",
+                        "job_type": "job_type",
+                        "scheduled_date": "scheduled_date",
+                        "start_time": "start_time",
+                        "duration_hours": "duration_hours",
+                        "status": "status",
+                        "price_cents": "price_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Cleaning Jobs",
+                    "description": "Connected live to SQLite table \"cleaning_jobs\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "team_id",
+                    "type": "linked_record",
+                    "label": "Team",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:cleaning-teams",
+                        "displayFieldIds": [
+                            "team_name",
+                            "lead_cleaner"
+                        ]
+                    }
+                },
+                {
+                    "id": "job_type",
+                    "type": "dropdown",
+                    "label": "Job Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "regular_clean",
+                                "label": "Regular clean",
+                                "value": "Regular clean"
+                            },
+                            {
+                                "id": "deep_clean",
+                                "label": "Deep clean",
+                                "value": "Deep clean"
+                            },
+                            {
+                                "id": "end_of_lease",
+                                "label": "End-of-lease",
+                                "value": "End-of-lease"
+                            },
+                            {
+                                "id": "office",
+                                "label": "Office",
+                                "value": "Office"
+                            },
+                            {
+                                "id": "airbnb_turnover",
+                                "label": "Airbnb turnover",
+                                "value": "Airbnb turnover"
+                            }
+                        ],
+                        "defaultValue": "Regular clean"
+                    }
+                },
+                {
+                    "id": "scheduled_date",
+                    "type": "date",
+                    "label": "Scheduled Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "duration_hours",
+                    "type": "number",
+                    "label": "Duration Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "complete",
+                                "label": "Complete",
+                                "value": "Complete"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "price_cents",
+                    "type": "number",
+                    "label": "Price (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Cleaning Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Cleaning Jobs by Job Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "job_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Cleaning Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:cleaning-jobs",
+                                "titleField": "job_type",
+                                "limit": 10,
+                                "subtitleField": "scheduled_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "quality-checks",
+            "title": "Quality Checks",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"quality_checks\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Quality Checks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "quality_checks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "checklist_json": "checklist_json",
+                        "rating": "rating",
+                        "issues_found": "issues_found",
+                        "follow_up": "follow_up",
+                        "checked_by": "checked_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Quality Checks",
+                    "description": "Connected live to SQLite table \"quality_checks\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:cleaning-jobs",
+                        "displayFieldIds": [
+                            "job_type",
+                            "scheduled_date"
+                        ]
+                    }
+                },
+                {
+                    "id": "checklist_json",
+                    "type": "short_text",
+                    "label": "Checklist Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "rating",
+                    "type": "number",
+                    "label": "Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issues_found",
+                    "type": "short_text",
+                    "label": "Issues Found",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "follow_up",
+                    "type": "dropdown",
+                    "label": "Follow Up",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "checked_by",
+                    "type": "short_text",
+                    "label": "Checked By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Quality Checks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quality-checks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Quality Checks by Follow Up",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quality-checks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "follow_up",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Quality Checks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:quality-checks",
+                                "titleField": "checklist_json",
+                                "limit": 10,
+                                "subtitleField": "rating"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "cleaning-supplies",
+            "title": "Cleaning Supplies",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"cleaning_supplies\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Cleaning Supplies",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "cleaning_supplies",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "supply_item": "supply_item",
+                        "category": "category",
+                        "current_stock": "current_stock",
+                        "reorder_point": "reorder_point",
+                        "unit": "unit",
+                        "supplier": "supplier",
+                        "status": "status"
+                    },
+                    "createdAtColumn": null,
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Cleaning Supplies",
+                    "description": "Connected live to SQLite table \"cleaning_supplies\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "supply_item",
+                    "type": "short_text",
+                    "label": "Supply Item",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "chemicals",
+                                "label": "Chemicals",
+                                "value": "Chemicals"
+                            },
+                            {
+                                "id": "cloths_and_pads",
+                                "label": "Cloths and pads",
+                                "value": "Cloths and pads"
+                            },
+                            {
+                                "id": "equipment",
+                                "label": "Equipment",
+                                "value": "Equipment"
+                            },
+                            {
+                                "id": "consumables",
+                                "label": "Consumables",
+                                "value": "Consumables"
+                            }
+                        ],
+                        "defaultValue": "Chemicals"
+                    }
+                },
+                {
+                    "id": "current_stock",
+                    "type": "number",
+                    "label": "Current Stock",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reorder_point",
+                    "type": "number",
+                    "label": "Reorder Point",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "bottles",
+                                "label": "bottles",
+                                "value": "bottles"
+                            },
+                            {
+                                "id": "packs",
+                                "label": "packs",
+                                "value": "packs"
+                            },
+                            {
+                                "id": "units",
+                                "label": "units",
+                                "value": "units"
+                            },
+                            {
+                                "id": "boxes",
+                                "label": "boxes",
+                                "value": "boxes"
+                            }
+                        ],
+                        "defaultValue": "bottles"
+                    }
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "complete",
+                                "label": "Complete",
+                                "value": "Complete"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Cleaning Supplies",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-supplies",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Cleaning Supplies by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaning-supplies",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Cleaning Supplies",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:cleaning-supplies",
+                                "titleField": "supply_item",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "client-issues",
+            "title": "Client Issues",
+            "icon": "Sparkles",
+            "description": "Live FormLogic form synced directly to SQLite table \"client_issues\" in CleanShift.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Client Issues",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:cleanshift-cleaning-softn-app",
+                    "table": "client_issues",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "job_id": "job_id",
+                        "issue_type": "issue_type",
+                        "severity": "severity",
+                        "description": "description",
+                        "resolution": "resolution",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Client Issues",
+                    "description": "Connected live to SQLite table \"client_issues\" in CleanShift.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:cleaning-jobs",
+                        "displayFieldIds": [
+                            "job_type",
+                            "scheduled_date"
+                        ]
+                    }
+                },
+                {
+                    "id": "issue_type",
+                    "type": "dropdown",
+                    "label": "Issue Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "complaint",
+                                "label": "Complaint",
+                                "value": "Complaint"
+                            },
+                            {
+                                "id": "damage",
+                                "label": "Damage",
+                                "value": "Damage"
+                            },
+                            {
+                                "id": "access_issue",
+                                "label": "Access issue",
+                                "value": "Access issue"
+                            },
+                            {
+                                "id": "missed_item",
+                                "label": "Missed item",
+                                "value": "Missed item"
+                            },
+                            {
+                                "id": "payment_issue",
+                                "label": "Payment issue",
+                                "value": "Payment issue"
+                            }
+                        ],
+                        "defaultValue": "Missed item"
+                    }
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "resolution",
+                    "type": "short_text",
+                    "label": "Resolution",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "complete",
+                                "label": "Complete",
+                                "value": "Complete"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Client Issues",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:client-issues",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Client Issues by Issue Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:client-issues",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "issue_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Client Issues",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:client-issues",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "issue_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "cleanshift-cleaning-softn-app",
+            "name": "CleanShift",
+            "description": "Turnkey cleaning business scheduler: crew dispatch board, client access instructions, teams roster, quality checklists & star ratings, supply par stock, and client issues desk.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "cleanshift-cleaning-softn-forms",
+            "name": "CleanShift Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to CleanShift's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:cleanshift-cleaning-softn-app",
+                "linkedSoftnAppId": "@packApp:cleanshift-cleaning-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "cleaning-teams",
+                    "displayName": "Cleaning Teams",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "cleaning-jobs",
+                    "displayName": "Cleaning Jobs",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "quality-checks",
+                    "displayName": "Quality Checks",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "cleaning-supplies",
+                    "displayName": "Cleaning Supplies",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "client-issues",
+                    "displayName": "Client Issues",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_clients",
+                    "name": "Clients by Client Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "client_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_cleaning_teams",
+                    "name": "Total Cleaning Teams",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cleaning-teams",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_cleaning_teams",
+                    "name": "Cleaning Teams by Active",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cleaning-teams",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "active",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_cleaning_jobs",
+                    "name": "Total Cleaning Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cleaning-jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_quality_checks",
+                    "name": "Total Quality Checks",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:quality-checks",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Client Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "client_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Cleaning Teams",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:cleaning-teams",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Cleaning Teams by Active",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:cleaning-teams",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Cleaning Jobs",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:cleaning-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Quality Checks",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:quality-checks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

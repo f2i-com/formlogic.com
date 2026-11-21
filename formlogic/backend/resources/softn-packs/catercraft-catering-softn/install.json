@@ -1,0 +1,1837 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "catercraft-catering-softn",
+        "name": "CaterCraft (SoftN + Forms)",
+        "description": "Turnkey catering & event orders hub: visual event pipeline with automatic per-head quote calculation and HTML run-sheets, multi-station kitchen production board, delivery dispatch runs, dietary requirements matrix with kitchen sign-off, menu packages and client directory. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "catering",
+            "events",
+            "kitchen",
+            "delivery",
+            "hospitality",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_name": "client_name",
+                        "organisation": "organisation",
+                        "email": "email",
+                        "phone": "phone",
+                        "billing_address": "billing_address",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "organisation",
+                    "type": "short_text",
+                    "label": "Organisation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "billing_address",
+                    "type": "long_text",
+                    "label": "Billing Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "menu-packages",
+            "title": "Menu Packages",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"menu_packages\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Menu Packages",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "menu_packages",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "package_name": "package_name",
+                        "category": "category",
+                        "price_per_person_cents": "price_per_person_cents",
+                        "min_guests": "min_guests",
+                        "dietary_support_json": "dietary_support_json",
+                        "description": "description",
+                        "active_status": "active_status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Menu Packages",
+                    "description": "Connected live to SQLite table \"menu_packages\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "package_name",
+                    "type": "short_text",
+                    "label": "Package Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "breakfast",
+                                "label": "Breakfast",
+                                "value": "Breakfast"
+                            },
+                            {
+                                "id": "lunch",
+                                "label": "Lunch",
+                                "value": "Lunch"
+                            },
+                            {
+                                "id": "dinner",
+                                "label": "Dinner",
+                                "value": "Dinner"
+                            },
+                            {
+                                "id": "grazing",
+                                "label": "Grazing",
+                                "value": "Grazing"
+                            },
+                            {
+                                "id": "drinks",
+                                "label": "Drinks",
+                                "value": "Drinks"
+                            }
+                        ],
+                        "defaultValue": "Lunch"
+                    }
+                },
+                {
+                    "id": "price_per_person_cents",
+                    "type": "number",
+                    "label": "Price Per Person (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "min_guests",
+                    "type": "number",
+                    "label": "Min Guests",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "dietary_support_json",
+                    "type": "long_text",
+                    "label": "Dietary Support Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active_status",
+                    "type": "dropdown",
+                    "label": "Active Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "seasonal",
+                                "label": "Seasonal",
+                                "value": "Seasonal"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Menu Packages",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-packages",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Menu Packages by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-packages",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Menu Packages",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:menu-packages",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "catering-jobs",
+            "title": "Catering Jobs",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"catering_jobs\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Catering Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "catering_jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_number": "job_number",
+                        "client_id": "client_id",
+                        "client_name": "client_name",
+                        "organisation": "organisation",
+                        "package_id": "package_id",
+                        "package_name": "package_name",
+                        "price_per_person_cents": "price_per_person_cents",
+                        "event_name": "event_name",
+                        "event_date": "event_date",
+                        "delivery_time": "delivery_time",
+                        "guest_count": "guest_count",
+                        "service_type": "service_type",
+                        "venue_address": "venue_address",
+                        "status": "status",
+                        "estimated_value_cents": "estimated_value_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Catering Jobs",
+                    "description": "Connected live to SQLite table \"catering_jobs\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_number",
+                    "type": "short_text",
+                    "label": "Job Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "organisation",
+                    "type": "short_text",
+                    "label": "Organisation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "package_id",
+                    "type": "linked_record",
+                    "label": "Package",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:menu-packages",
+                        "displayFieldIds": [
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "package_name",
+                    "type": "short_text",
+                    "label": "Package Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "price_per_person_cents",
+                    "type": "number",
+                    "label": "Price Per Person (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "event_name",
+                    "type": "short_text",
+                    "label": "Event Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "event_date",
+                    "type": "date",
+                    "label": "Event Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "delivery_time",
+                    "type": "time",
+                    "label": "Delivery Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "guest_count",
+                    "type": "number",
+                    "label": "Guest Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "service_type",
+                    "type": "dropdown",
+                    "label": "Service Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "drop_off",
+                                "label": "Drop-off",
+                                "value": "Drop-off"
+                            },
+                            {
+                                "id": "staffed_buffet",
+                                "label": "Staffed buffet",
+                                "value": "Staffed buffet"
+                            },
+                            {
+                                "id": "plated",
+                                "label": "Plated",
+                                "value": "Plated"
+                            },
+                            {
+                                "id": "grazing_table",
+                                "label": "Grazing table",
+                                "value": "Grazing table"
+                            }
+                        ],
+                        "defaultValue": "Drop-off"
+                    }
+                },
+                {
+                    "id": "venue_address",
+                    "type": "long_text",
+                    "label": "Venue Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "in_prep",
+                                "label": "In Prep",
+                                "value": "In Prep"
+                            },
+                            {
+                                "id": "dispatched",
+                                "label": "Dispatched",
+                                "value": "Dispatched"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "loaded",
+                                "label": "Loaded",
+                                "value": "Loaded"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Enquiry"
+                    }
+                },
+                {
+                    "id": "estimated_value_cents",
+                    "type": "number",
+                    "label": "Estimated Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Catering Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:catering-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Catering Jobs by Service Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:catering-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "service_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Catering Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:catering-jobs",
+                                "titleField": "job_number",
+                                "limit": 10,
+                                "subtitleField": "service_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "production-tasks",
+            "title": "Production Tasks",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"production_tasks\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Production Tasks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "production_tasks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "event_name": "event_name",
+                        "event_date": "event_date",
+                        "task": "task",
+                        "station": "station",
+                        "due_date": "due_date",
+                        "due_time": "due_time",
+                        "assigned_to": "assigned_to",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Production Tasks",
+                    "description": "Connected live to SQLite table \"production_tasks\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:catering-jobs",
+                        "displayFieldIds": [
+                            "job_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "event_name",
+                    "type": "short_text",
+                    "label": "Event Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "event_date",
+                    "type": "date",
+                    "label": "Event Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "task",
+                    "type": "short_text",
+                    "label": "Task",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "hot_kitchen",
+                                "label": "Hot Kitchen",
+                                "value": "Hot Kitchen"
+                            },
+                            {
+                                "id": "cold_larder",
+                                "label": "Cold Larder",
+                                "value": "Cold Larder"
+                            },
+                            {
+                                "id": "pastry",
+                                "label": "Pastry",
+                                "value": "Pastry"
+                            },
+                            {
+                                "id": "packing",
+                                "label": "Packing",
+                                "value": "Packing"
+                            }
+                        ],
+                        "defaultValue": "Hot Kitchen"
+                    }
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_time",
+                    "type": "time",
+                    "label": "Due Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "in_prep",
+                                "label": "In Prep",
+                                "value": "In Prep"
+                            },
+                            {
+                                "id": "dispatched",
+                                "label": "Dispatched",
+                                "value": "Dispatched"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "loaded",
+                                "label": "Loaded",
+                                "value": "Loaded"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Not started"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Production Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:production-tasks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Production Tasks by Station",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:production-tasks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "station",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Production Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:production-tasks",
+                                "titleField": "event_name",
+                                "limit": 10,
+                                "subtitleField": "event_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "delivery-runs",
+            "title": "Delivery Runs",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"delivery_runs\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Delivery Runs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "delivery_runs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "event_name": "event_name",
+                        "event_date": "event_date",
+                        "venue_address": "venue_address",
+                        "driver": "driver",
+                        "vehicle": "vehicle",
+                        "pickup_time": "pickup_time",
+                        "delivery_time": "delivery_time",
+                        "status": "status",
+                        "delivery_notes": "delivery_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Delivery Runs",
+                    "description": "Connected live to SQLite table \"delivery_runs\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:catering-jobs",
+                        "displayFieldIds": [
+                            "job_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "event_name",
+                    "type": "short_text",
+                    "label": "Event Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "event_date",
+                    "type": "date",
+                    "label": "Event Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "venue_address",
+                    "type": "long_text",
+                    "label": "Venue Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "driver",
+                    "type": "short_text",
+                    "label": "Driver",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle",
+                    "type": "short_text",
+                    "label": "Vehicle",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "pickup_time",
+                    "type": "time",
+                    "label": "Pickup Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "delivery_time",
+                    "type": "time",
+                    "label": "Delivery Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "in_prep",
+                                "label": "In Prep",
+                                "value": "In Prep"
+                            },
+                            {
+                                "id": "dispatched",
+                                "label": "Dispatched",
+                                "value": "Dispatched"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "loaded",
+                                "label": "Loaded",
+                                "value": "Loaded"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "delivery_notes",
+                    "type": "long_text",
+                    "label": "Delivery Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Delivery Runs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:delivery-runs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Delivery Runs by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:delivery-runs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Delivery Runs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:delivery-runs",
+                                "titleField": "event_name",
+                                "limit": 10,
+                                "subtitleField": "event_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "dietary-requirements",
+            "title": "Dietary Requirements",
+            "icon": "UtensilsCrossed",
+            "description": "Live FormLogic form synced directly to SQLite table \"dietary_requirements\" in CaterCraft.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Dietary Requirements",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:catercraft-catering-softn-app",
+                    "table": "dietary_requirements",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "event_name": "event_name",
+                        "event_date": "event_date",
+                        "requirement_type": "requirement_type",
+                        "guest_count": "guest_count",
+                        "notes": "notes",
+                        "kitchen_confirmed": "kitchen_confirmed",
+                        "confirmed_by": "confirmed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Dietary Requirements",
+                    "description": "Connected live to SQLite table \"dietary_requirements\" in CaterCraft.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:catering-jobs",
+                        "displayFieldIds": [
+                            "job_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "event_name",
+                    "type": "short_text",
+                    "label": "Event Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "event_date",
+                    "type": "date",
+                    "label": "Event Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "requirement_type",
+                    "type": "dropdown",
+                    "label": "Requirement Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "vegan",
+                                "label": "Vegan",
+                                "value": "Vegan"
+                            },
+                            {
+                                "id": "vegetarian",
+                                "label": "Vegetarian",
+                                "value": "Vegetarian"
+                            },
+                            {
+                                "id": "gluten_free",
+                                "label": "Gluten-free",
+                                "value": "Gluten-free"
+                            },
+                            {
+                                "id": "dairy_free",
+                                "label": "Dairy-free",
+                                "value": "Dairy-free"
+                            },
+                            {
+                                "id": "nut_free",
+                                "label": "Nut-free",
+                                "value": "Nut-free"
+                            },
+                            {
+                                "id": "halal",
+                                "label": "Halal",
+                                "value": "Halal"
+                            },
+                            {
+                                "id": "kosher",
+                                "label": "Kosher",
+                                "value": "Kosher"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Vegan"
+                    }
+                },
+                {
+                    "id": "guest_count",
+                    "type": "number",
+                    "label": "Guest Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "kitchen_confirmed",
+                    "type": "dropdown",
+                    "label": "Kitchen Confirmed",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                },
+                {
+                    "id": "confirmed_by",
+                    "type": "short_text",
+                    "label": "Confirmed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Dietary Requirements",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:dietary-requirements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Dietary Requirements by Requirement Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:dietary-requirements",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "requirement_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Dietary Requirements",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:dietary-requirements",
+                                "titleField": "event_name",
+                                "limit": 10,
+                                "subtitleField": "event_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "catercraft-catering-softn-app",
+            "name": "CaterCraft",
+            "description": "Turnkey catering & event orders hub: visual event pipeline with automatic per-head quote calculation and HTML run-sheets, multi-station kitchen production board, delivery dispatch runs, dietary requirements matrix with kitchen sign-off, menu packages and client directory.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "catercraft-catering-softn-forms",
+            "name": "CaterCraft Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to CaterCraft's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:catercraft-catering-softn-app",
+                "linkedSoftnAppId": "@packApp:catercraft-catering-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "menu-packages",
+                    "displayName": "Menu Packages",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "catering-jobs",
+                    "displayName": "Catering Jobs",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "production-tasks",
+                    "displayName": "Production Tasks",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "delivery-runs",
+                    "displayName": "Delivery Runs",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "dietary-requirements",
+                    "displayName": "Dietary Requirements",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "kpi_menu_packages",
+                    "name": "Total Menu Packages",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-packages",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_menu_packages",
+                    "name": "Menu Packages by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-packages",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_catering_jobs",
+                    "name": "Total Catering Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:catering-jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_production_tasks",
+                    "name": "Total Production Tasks",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:production-tasks",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Menu Packages",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-packages",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Menu Packages by Category",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-packages",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Catering Jobs",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:catering-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Production Tasks",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:production-tasks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

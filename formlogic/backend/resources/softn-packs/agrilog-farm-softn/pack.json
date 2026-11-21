@@ -1,0 +1,48 @@
+{
+    "id": "agrilog-farm-softn",
+    "slug": "agrilog-farm-softn",
+    "name": "AgriLog — SoftN App & Linked Forms",
+    "shortName": "AgriLog",
+    "description": "Turnkey farm operations tracker: paddocks with live chemical withholding period locks, crop jobs, harvest yield log, chemical register, and machinery maintenance. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Tractor",
+    "category": "Business apps",
+    "tags": [
+        "farm",
+        "agriculture",
+        "harvest",
+        "paddocks",
+        "compliance",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "agrilog-farm-softn.softn",
+    "softnPackAppId": "agrilog-farm-softn-app",
+    "formsPackAppId": "agrilog-farm-softn-forms",
+    "companionPackSlug": "agrilog-farm",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": true,
+    "tables": [
+        "paddocks",
+        "farm_jobs",
+        "harvest_logs",
+        "chemical_applications",
+        "machinery",
+        "maintenance_logs"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/agrilog-farm.png"
+        }
+    ]
+}

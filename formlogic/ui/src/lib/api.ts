@@ -2424,6 +2424,150 @@ class ApiClient {
   async installNativeStarter(id: string, template: import('./softnApps').WebStarterTemplate = 'javascript'): Promise<ApiResponse<{ project: import('./nativeHosting').NativeProject; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy }>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/starter`, { method: 'POST', body: JSON.stringify({ template }) });
   }
+  /** Shared database link info: canonical DB owner, eligible apps to link to, connected sibling apps, and linked FormLogic forms. */
+  async getNativeDatabaseLink(id: string): Promise<ApiResponse<{
+    appId: string;
+    sharedDatabaseAppId: string | null;
+    databaseAppId: string;
+    databaseOwner: { id: string; name: string; slug: string } | null;
+    eligibleTargets: { id: string; name: string; slug: string; tables: number | null; formDatabase?: boolean; softnApp?: boolean }[];
+    connectedApps: { id: string; name: string; slug: string; softnApp: boolean }[];
+    linkedForms: { id: string; title: string; table: string; status: string }[];
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/database-link`);
+  }
+  /** Link or unlink this app to share another app's SQLite database (`targetAppId: null` restores its own DB). */
+  async setNativeDatabaseLink(id: string, targetAppId: string | null): Promise<ApiResponse<{
+    appId: string;
+    sharedDatabaseAppId: string | null;
+    databaseAppId: string;
+    databaseOwner: { id: string; name: string; slug: string } | null;
+    eligibleTargets: { id: string; name: string; slug: string; tables: number | null; formDatabase?: boolean; softnApp?: boolean }[];
+    connectedApps: { id: string; name: string; slug: string; softnApp: boolean }[];
+    linkedForms: { id: string; title: string; table: string; status: string }[];
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/database-link`, {
+      method: 'PUT',
+      body: JSON.stringify({ targetAppId }),
+    });
+  }
+  /** Unified SQLite Database state for ANY app (Form App OR SoftN App). */
+  async getAppDatabase(id: string): Promise<ApiResponse<AppDatabaseState>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database`);
+  }
+  /** Enable a real Unified SQLite Database on a Form App, turning every form into a live SQLite table. */
+  async enableAppSqliteDatabase(id: string): Promise<ApiResponse<AppDatabaseState>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/enable`, { method: 'POST' });
+  }
+  /** Sync all forms & fields in a SQLite-backed Form App into SQLite tables (`CREATE TABLE` / `ALTER TABLE ADD COLUMN`). */
+  async syncAppSqliteDatabase(id: string): Promise<ApiResponse<AppDatabaseState>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/sync`, { method: 'POST' });
+  }
+  /** Link or unlink any app (Form App or SoftN App) to share another app's SQLite database. */
+  async setAppSharedDatabase(id: string, targetAppId: string | null): Promise<ApiResponse<AppDatabaseState>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/link`, {
+      method: 'PUT',
+      body: JSON.stringify({ targetAppId }),
+    });
+  }
+  /** Link an existing FormLogic Form directly to a SQLite table inside this app's database. */
+  async linkFormToAppTable(id: string, payload: { formId: string; table: string; columnMap?: Record<string, string> }): Promise<ApiResponse<{
+    formId: string;
+    databaseAppId: string;
+    table: string;
+    columns: Record<string, string>;
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/link-form`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+  /** Attach auto-generated FormLogic Forms & Charts to this Form App from another app's SQLite database. */
+  async attachFormsFromSharedDatabase(id: string, payload: { sourceAppId: string; tables?: string[]; includeCharts?: boolean }): Promise<ApiResponse<{
+    appId: string;
+    databaseAppId: string;
+    formsCreated: { id: string; title: string; table: string }[];
+    reportsCreated: number;
+    database: AppDatabaseState;
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/attach-forms`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+  /** One-click create an interactive SoftN App (or shared API backend) directly on a Form App's SQLite database. */
+  async createSoftnAppFromFormDatabase(id: string, payload?: { name?: string; mode?: 'app' | 'api' }): Promise<ApiResponse<{
+    app: import('../types/app').App;
+    databaseAppId: string;
+    tables: string[];
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/database/create-softn-app`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    });
+  }
+  /** One-click create a secondary SoftN API Backend app connected to this app's shared SQLite database. */
+  async createSharedApiBackend(id: string, options?: { name?: string }): Promise<ApiResponse<{
+    app: import('../types/app').App;
+    project: import('./nativeHosting').NativeProject;
+    databaseAppId: string;
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/create-api-backend`, {
+      method: 'POST',
+      body: JSON.stringify(options ?? {}),
+    });
+  }
+  /** One-click create live FormLogic Management Form(s) + starter KPIs/Charts over this SoftN app's SQLite table(s). */
+  async createManagementFormFromTable(id: string, options: {
+    table?: string;
+    tables?: string[];
+    targetAppId?: string;
+    appName?: string;
+    includeCharts?: boolean;
+  }): Promise<ApiResponse<{
+    forms: { id: string; title: string }[];
+    form: { id: string; title: string } | null;
+    managementApp: import('../types/app').App | null;
+    reportsCreated: number;
+    databaseAppId: string;
+  }>> {
+    return this.request(`/apps/${encodeURIComponent(id)}/native/create-management-form`, {
+      method: 'POST',
+      body: JSON.stringify(options),
+    });
+  }
+  /** Session-authenticated owner proxy for browser flow runs calling another app's backend (`native_app_request`). */
+  async runFlowNativeAppRequest(payload: {
+    appId: string;
+    method: string;
+    path: string;
+    query?: Record<string, unknown> | string;
+    body?: unknown;
+    headers?: Record<string, string>;
+  }): Promise<ApiResponse<{ status: number; ok: boolean; body: unknown; headers?: [string, string][] }>> {
+    return this.request('/flows/internal/native-app-request', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+  /** Session-authenticated owner proxy for browser flow runs querying/mutating another app's SQLite DB (`native_record_action`). */
+  async runFlowNativeRecordAction(payload: {
+    appId: string;
+    table: string;
+    operation: string;
+    key?: Record<string, unknown>;
+    values?: Record<string, unknown>;
+    q?: string;
+    filter?: unknown;
+    limit?: number;
+    offset?: number;
+    revision?: string;
+  }): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request('/flows/internal/native-record-action', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
   /** The app's phone sign-in codes: which plugin sends them, and the owner's settings for it (never a secret). */
   async getAppSignInCodes(id: string): Promise<ApiResponse<AppSignInCodes>> {
     return this.request(`/apps/${encodeURIComponent(id)}/native/verification`);
@@ -4139,8 +4283,11 @@ class ApiClient {
   // App-independent flows owned by the signed-in user (/api/flows, /api/flow-runs); slug is
   // unique per owner across the workspace scope (enforced server-side).
 
-  async listWorkspaceFlows(): Promise<ApiResponse<{ flows: FlowDefinition[] }>> {
-    return this.request('/flows');
+  async listWorkspaceFlows(
+    options?: { scope?: 'workspace' | 'all' },
+  ): Promise<ApiResponse<{ flows: FlowDefinition[]; bindings?: FlowBinding[]; scope?: 'workspace' | 'all' }>> {
+    const query = options?.scope === 'all' ? '?scope=all' : '';
+    return this.request(`/flows${query}`);
   }
 
   async listFlowBindingsForFlow(flowId: string): Promise<ApiResponse<{ bindings: FlowBinding[] }>> {
@@ -4812,11 +4959,14 @@ class ApiClient {
   }
 
   // Pack Marketplace
-  async browsePacks(params?: { search?: string; category?: string; tag?: string; sort?: string; page?: number; limit?: number }): Promise<ApiResponse<PackCatalogBrowseResult>> {
+  async browsePacks(params?: { search?: string; category?: string; tag?: string; itemType?: string; pricing?: string; compatibleWith?: string; sort?: string; page?: number; limit?: number }): Promise<ApiResponse<PackCatalogBrowseResult>> {
     const qs = new URLSearchParams();
     if (params?.search) qs.set('search', params.search);
     if (params?.category) qs.set('category', params.category);
     if (params?.tag) qs.set('tag', params.tag);
+    if (params?.itemType) qs.set('itemType', params.itemType);
+    if (params?.pricing) qs.set('pricing', params.pricing);
+    if (params?.compatibleWith) qs.set('compatibleWith', params.compatibleWith);
     if (params?.sort) qs.set('sort', params.sort);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.limit) qs.set('limit', String(params.limit));
@@ -4828,7 +4978,7 @@ class ApiClient {
     return this.request('/packs/catalog/facets');
   }
 
-  async getPackDetail(slug: string): Promise<ApiResponse<{ pack: CatalogPack & { versions: PackVersionInfo[]; formTitles?: string[]; appNames?: string[] } }>> {
+  async getPackDetail(slug: string): Promise<ApiResponse<{ pack: CatalogPack & { versions: PackVersionInfo[]; formTitles?: string[]; appNames?: string[]; compatiblePlugins?: CatalogPack[] } }>> {
     return this.request(`/packs/catalog/${seg(slug)}`);
   }
 
@@ -4920,6 +5070,184 @@ class ApiClient {
 
   async deletePackRating(slug: string): Promise<ApiResponse<{ success: boolean }>> {
     return this.request(`/packs/catalog/${seg(slug)}/ratings`, { method: 'DELETE' });
+  }
+
+  // Marketplace SoftN Publishing, Private Sandboxed Demos, Commerce & Modular Plugins
+  async publishSoftnToMarketplace(input: {
+    file?: File;
+    sourceAppId?: string;
+    name: string;
+    description?: string;
+    itemType: 'softn_app' | 'plugin';
+    sourceVisibility: 'private' | 'open';
+    billingModel: 'free' | 'one_time' | 'subscription';
+    priceCents?: number;
+    currency?: string;
+    demoEnabled?: boolean;
+    compatibleWith?: string;
+    category?: string;
+    tags?: string[];
+    version?: string;
+    changelog?: string;
+    icon?: string;
+    visibility?: 'public' | 'unlisted' | 'private';
+  }): Promise<ApiResponse<{
+    success: boolean;
+    catalogId: string;
+    versionId: string;
+    slug: string;
+    itemType: string;
+    sourceVisibility: 'private' | 'open';
+    renderMode: 'dom_ssr' | 'sandbox_web';
+    hasBackend: boolean;
+    backendRuntime: string | null;
+    demoEnabled: boolean;
+  }>> {
+    if (input.file) {
+      const generation = currentSessionGeneration();
+      const url = `${this.baseUrl}/packs/catalog/publish-softn`;
+      const formData = new FormData();
+      formData.append('file', input.file);
+      formData.append('name', input.name);
+      if (input.description) formData.append('description', input.description);
+      formData.append('itemType', input.itemType);
+      formData.append('sourceVisibility', input.sourceVisibility);
+      formData.append('billingModel', input.billingModel);
+      formData.append('priceCents', String(input.priceCents ?? 0));
+      formData.append('currency', input.currency ?? 'USD');
+      formData.append('demoEnabled', input.demoEnabled !== false ? 'true' : 'false');
+      if (input.compatibleWith) formData.append('compatibleWith', input.compatibleWith);
+      if (input.category) formData.append('category', input.category);
+      if (input.tags?.length) formData.append('tags', JSON.stringify(input.tags));
+      if (input.version) formData.append('version', input.version);
+      if (input.changelog) formData.append('changelog', input.changelog);
+      if (input.icon) formData.append('icon', input.icon);
+      if (input.visibility) formData.append('visibility', input.visibility);
+
+      try {
+        const fetchHeaders: Record<string, string> = {};
+        const csrfToken = this.getCsrfToken();
+        if (csrfToken) fetchHeaders['X-CSRF-Token'] = csrfToken;
+        const response = await fetch(url, {
+          method: 'POST',
+          body: formData,
+          headers: fetchHeaders,
+          credentials: 'include',
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          if (response.status === 401) this.handleUnauthorized(generation);
+          return { error: data.message || 'Failed to publish to marketplace', status: response.status };
+        }
+        return { data };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : 'Network error' };
+      }
+    }
+
+    return this.request('/packs/catalog/publish-softn', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  }
+
+  async startMarketplaceDemo(slug: string): Promise<ApiResponse<MarketplaceDemoSession>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/session`, { method: 'POST' });
+  }
+
+  async resetMarketplaceDemo(slug: string, token: string): Promise<ApiResponse<{ reset: boolean; expiresAt: string }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/demo/reset`, {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+
+  async purchaseMarketplaceItem(slug: string, options?: { provider?: string; paymentRef?: string }): Promise<ApiResponse<{ success: boolean; license: MarketplaceLicense }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/purchase`, {
+      method: 'POST',
+      body: JSON.stringify(options ?? {}),
+    });
+  }
+
+  async installMarketplaceItem(slug: string, options?: {
+    appName?: string;
+    name?: string;
+    mode?: 'bundle' | 'softn_only' | 'link_forms';
+    targetAppId?: string;
+    attachToAppId?: string;
+    shareDatabase?: boolean;
+  }): Promise<ApiResponse<{
+    success: boolean;
+    kind?: 'softn_app' | 'plugin';
+    itemType?: string;
+    mode?: string;
+    installationId?: string;
+    app?: { id: string; name: string; slug: string; status: string } | null;
+    softnApp?: { id: string; name: string; slug: string; status: string } | null;
+    managementApp?: { id: string; name: string; slug: string; status: string } | null;
+    apps?: Array<{ id: string; name: string }>;
+    forms?: Array<{ id: string; title: string }>;
+    plugin?: MemberPlugin;
+    attachment?: AppPluginAttachment | null;
+    license?: MarketplaceLicense;
+    sourceProtected: boolean;
+  }>> {
+    return this.request(`/packs/catalog/${seg(slug)}/install`, {
+      method: 'POST',
+      body: JSON.stringify(options ?? {}),
+    });
+  }
+
+  async getMarketplaceLicenses(): Promise<ApiResponse<{ licenses: MarketplaceLicense[] }>> {
+    return this.request('/marketplace/licenses');
+  }
+
+  async getMarketplaceSellerSales(): Promise<ApiResponse<MarketplaceSellerStats>> {
+    return this.request('/marketplace/sales');
+  }
+
+  async listMemberPlugins(): Promise<ApiResponse<{ plugins: MemberPlugin[] }>> {
+    return this.request('/member-plugins');
+  }
+
+  async updateMemberPlugin(pluginId: string, data: { enabled?: boolean; settings?: Record<string, unknown> }): Promise<ApiResponse<{ plugin: MemberPlugin }>> {
+    return this.request(`/member-plugins/${seg(pluginId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async uninstallMemberPlugin(pluginId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/member-plugins/${seg(pluginId)}`, { method: 'DELETE' });
+  }
+
+  async invokeMemberPlugin(pluginId: string, payload: { method?: string; path: string; query?: Record<string, string>; body?: unknown; appId?: string }): Promise<ApiResponse<unknown>> {
+    return this.request(`/member-plugins/${seg(pluginId)}/request`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async listAppPlugins(appId: string): Promise<ApiResponse<{ plugins: AppPluginAttachment[]; installedPlugins: MemberPlugin[] }>> {
+    return this.request(`/apps/${seg(appId)}/plugins`);
+  }
+
+  async attachAppPlugin(appId: string, data: { memberPluginId: string; enabled?: boolean; shareDatabase?: boolean; mountPoint?: string; config?: Record<string, unknown> }): Promise<ApiResponse<{ plugin: AppPluginAttachment }>> {
+    return this.request(`/apps/${seg(appId)}/plugins`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAppPlugin(appId: string, memberPluginId: string, data: { enabled?: boolean; shareDatabase?: boolean; mountPoint?: string; config?: Record<string, unknown> }): Promise<ApiResponse<{ plugin: AppPluginAttachment }>> {
+    return this.request(`/apps/${seg(appId)}/plugins/${seg(memberPluginId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async detachAppPlugin(appId: string, memberPluginId: string): Promise<ApiResponse<{ success: boolean }>> {
+    return this.request(`/apps/${seg(appId)}/plugins/${seg(memberPluginId)}`, { method: 'DELETE' });
   }
 
   // File upload for form responses
@@ -6138,8 +6466,42 @@ interface PackInstallation {
   nodesInstalled?: number;
 }
 
+interface AppDatabaseState {
+  appId: string;
+  appName: string;
+  softnApp: boolean;
+  unifiedSqlite: boolean;
+  hasDatabase: boolean;
+  sharedDatabaseAppId: string | null;
+  databaseAppId: string;
+  databaseOwner: { id: string; name: string; slug: string; softnApp: boolean; formDatabase: boolean } | null;
+  linkedSoftnApp: { id: string; name: string; slug: string } | null;
+  tables: Array<{
+    name: string;
+    rows: number;
+    primaryKey: string[];
+    columns: Array<{ name: string; type: string; required: boolean; primary: boolean }>;
+  }>;
+  appForms: Array<{
+    formId: string;
+    title: string;
+    boundTable: string | null;
+    boundAppId: string | null;
+    fieldCount: number;
+    isPrivate: boolean;
+  }>;
+  linkedForms: Array<{ id: string; title: string; table: string; status: string; managedByForm: boolean }>;
+  connectedApps: Array<{ id: string; name: string; slug: string; softnApp: boolean; unifiedSqlite: boolean }>;
+  eligibleTargets: Array<{ id: string; name: string; slug: string; tables: number | null; formDatabase: boolean; softnApp: boolean }>;
+  synced?: Array<{ formId: string; title: string; table: string; columnsAdded: number; rowsMigrated: number }>;
+}
+
 interface CatalogPack {
   folderSource?: boolean;
+  bundledSoftnPack?: boolean;
+  companionPackSlug?: string | null;
+  companionSoftnSlug?: string | null;
+  tables?: string[];
   id: string;
   slug: string;
   name: string;
@@ -6149,11 +6511,27 @@ interface CatalogPack {
   screenshots: PackScreenshot[];
   tags: string[];
   category: string | null;
-  /** Marketplace artifact type (spec §30). Only 'application_package' has a runtime install target today. */
+  /** Marketplace artifact type (spec §30). Includes 'softn_app', 'plugin', 'application_package', etc. */
   itemType?: string;
   /** Server-derived trust level: official | verified | community | private. Never from client input. */
   trustLevel?: string;
   visibility: string;
+  sourceVisibility?: 'open' | 'private';
+  priceCents?: number;
+  currency?: string;
+  billingModel?: 'free' | 'one_time' | 'subscription';
+  demoEnabled?: boolean;
+  compatibleWith?: string | null;
+  pluginMeta?: {
+    manifestId?: string | null;
+    renderMode?: 'dom_ssr' | 'sandbox_web';
+    hasBackend?: boolean;
+    backendRuntime?: string | null;
+    capabilities?: string[];
+    routes?: Array<{ method: string; path: string }>;
+    supportsSharedDatabase?: boolean;
+    formlogicPlugin?: Record<string, unknown> | null;
+  } | null;
   status: string;
   downloadCount: number;
   avgRating: number;
@@ -6683,5 +7061,122 @@ export function resolveFileUrl(url?: string | null): string {
   return '';
 }
 
+interface MarketplaceDemoSession {
+  token: string;
+  expiresAt: string;
+  renderMode: 'dom_ssr' | 'sandbox_web';
+  hasBackend: boolean;
+  backendRuntime: string | null;
+  sourceProtected: boolean;
+  framePath: string;
+  slug: string;
+}
+
+interface MarketplaceLicense {
+  id: string;
+  catalogId: string;
+  catalogSlug?: string | null;
+  catalogName?: string | null;
+  catalogIcon?: string | null;
+  itemType?: string | null;
+  sourceVisibility?: 'open' | 'private';
+  billingModel?: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  sellerName?: string | null;
+  licenseKey: string;
+  status: string;
+  priceCents: number;
+  currency: string;
+  paymentProvider: string;
+  createdAt?: string | null;
+}
+
+interface MarketplaceSellerStats {
+  totalLicenses: number;
+  paidSales: number;
+  grossRevenueCents: number;
+  currency: string;
+  listings: Array<{
+    id: string;
+    slug: string;
+    name: string;
+    itemType: string;
+    sourceVisibility: 'open' | 'private';
+    priceCents: number;
+    currency: string;
+    billingModel: string;
+    downloadCount: number;
+    licenseCount: number;
+    revenueCents: number;
+  }>;
+  recentSales: Array<{
+    id: string;
+    catalogSlug: string;
+    catalogName: string;
+    itemType: string;
+    buyerName: string;
+    priceCents: number;
+    currency: string;
+    paymentProvider: string;
+    createdAt: string | null;
+  }>;
+}
+
+interface MemberPlugin {
+  id: string;
+  userId: string;
+  catalogId: string | null;
+  catalogSlug: string;
+  catalogIcon: string | null;
+  licenseId: string | null;
+  pluginSlug: string;
+  name: string;
+  description: string;
+  version: string;
+  hasRuntime: boolean;
+  sourceProtected: boolean;
+  compatibleWith: string | null;
+  manifest: {
+    name?: string;
+    version?: string;
+    renderMode?: 'dom_ssr' | 'sandbox_web';
+    hasBackend?: boolean;
+    backendRuntime?: string | null;
+    routes?: Array<{ method: string; path: string }>;
+  };
+  capabilities: string[];
+  settings: Record<string, unknown>;
+  enabled: boolean;
+  attachedAppCount: number;
+  installedAt: string | null;
+  updatedAt: string | null;
+}
+
+interface AppPluginAttachment {
+  id: string;
+  appId: string;
+  memberPluginId: string;
+  pluginSlug: string;
+  catalogSlug: string;
+  catalogIcon: string | null;
+  name: string;
+  description: string;
+  version: string;
+  hasRuntime: boolean;
+  sourceProtected: boolean;
+  compatibleWith: string | null;
+  manifest: MemberPlugin['manifest'];
+  capabilities: string[];
+  enabled: boolean;
+  attachmentEnabled: boolean;
+  pluginGlobalEnabled: boolean;
+  shareDatabase: boolean;
+  mountPoint: string;
+  config: Record<string, unknown>;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
 // Export types
-export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata };
+export type { User, FormResponse, FormAnalytics, ApiResponse, AIStatus, AIGeneratedField, AIFormGenerationResult, AIScriptGenerationResult, FormField, LinkedRecord, RelatedRecordGroup, Webhook, WebhookDelivery, FormVersion, PackData, PackImportResult, PackInstallation, PackUninstallResult, PackDescribeResult, PackCapabilitySummary, ApplicationPackageImportResult, CsvParseResult, CsvImportResult, AuditVerifyResult, ApiKey, ApiKeyCreated, DesktopConnection, AppDatabaseState, CatalogPack, PackScreenshot, PackVersionInfo, PackCatalogBrowseResult, PackFacet, PackFacets, PackRatingEntry, PackRatingsResult, UploadedFileMetadata, MarketplaceDemoSession, MarketplaceLicense, MarketplaceSellerStats, MemberPlugin, AppPluginAttachment };

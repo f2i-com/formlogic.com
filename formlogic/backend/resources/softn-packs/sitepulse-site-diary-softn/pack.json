@@ -1,0 +1,48 @@
+{
+    "id": "sitepulse-site-diary-softn",
+    "slug": "sitepulse-site-diary-softn",
+    "name": "SitePulse — SoftN App & Linked Forms",
+    "shortName": "SitePulse",
+    "description": "Turnkey construction site diary and builder command hub: active projects overview, daily site diaries with weather & sign-off, defect snag list, client-approved variations, deliveries log, and subcontractor insurance expiry tracking. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "HardHat",
+    "category": "Business apps",
+    "tags": [
+        "construction",
+        "site-diary",
+        "builders",
+        "defects",
+        "projects",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "sitepulse-site-diary-softn.softn",
+    "softnPackAppId": "sitepulse-site-diary-softn-app",
+    "formsPackAppId": "sitepulse-site-diary-softn-forms",
+    "companionPackSlug": "sitepulse-site-diary",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "projects",
+        "site_diaries",
+        "defects",
+        "variations",
+        "deliveries",
+        "subcontractors"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/sitepulse-site-diary.png"
+        }
+    ]
+}

@@ -1,0 +1,2193 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "hr-people-softn",
+        "name": "People Hub (SoftN + Forms)",
+        "description": "Turnkey HR & people operations desk with actionable approvals inbox, recruitment pipeline & interview scorecards, interactive onboarding checklists, leave, performance reviews, expenses, training, and exit interviews. Includes the full-stack SoftN application plus 8 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "hr",
+            "people",
+            "recruitment",
+            "onboarding",
+            "leave",
+            "performance",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "candidates",
+            "title": "Candidates",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"candidates\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Candidates",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "candidates",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "first_name": "first_name",
+                        "last_name": "last_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "position": "position",
+                        "cover_letter": "cover_letter",
+                        "availability_date": "availability_date",
+                        "salary_expectations_cents": "salary_expectations_cents",
+                        "referral_source": "referral_source",
+                        "stage": "stage"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "stage"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Candidates",
+                    "description": "Connected live to SQLite table \"candidates\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "first_name",
+                    "type": "short_text",
+                    "label": "First Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "last_name",
+                    "type": "short_text",
+                    "label": "Last Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "position",
+                    "type": "short_text",
+                    "label": "Position",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cover_letter",
+                    "type": "short_text",
+                    "label": "Cover Letter",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "availability_date",
+                    "type": "date",
+                    "label": "Availability Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "salary_expectations_cents",
+                    "type": "number",
+                    "label": "Salary Expectations (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "referral_source",
+                    "type": "short_text",
+                    "label": "Referral Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "stage",
+                    "type": "short_text",
+                    "label": "Stage",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Candidates",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:candidates",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Candidates",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:candidates",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "interview-scorecards",
+            "title": "Interview Scorecards",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"interview_scorecards\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Interview Scorecards",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "interview_scorecards",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "candidate_id": "candidate_id",
+                        "interviewer_name": "interviewer_name",
+                        "interview_date": "interview_date",
+                        "interview_type": "interview_type",
+                        "technical_skills": "technical_skills",
+                        "communication": "communication",
+                        "culture_fit": "culture_fit",
+                        "problem_solving": "problem_solving",
+                        "overall_score": "overall_score",
+                        "overall_recommendation": "overall_recommendation",
+                        "strengths": "strengths",
+                        "concerns": "concerns",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Interview Scorecards",
+                    "description": "Connected live to SQLite table \"interview_scorecards\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "candidate_id",
+                    "type": "linked_record",
+                    "label": "Candidate",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:candidates",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "interviewer_name",
+                    "type": "short_text",
+                    "label": "Interviewer Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "interview_date",
+                    "type": "date",
+                    "label": "Interview Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "interview_type",
+                    "type": "short_text",
+                    "label": "Interview Type",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "technical_skills",
+                    "type": "number",
+                    "label": "Technical Skills",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "communication",
+                    "type": "number",
+                    "label": "Communication",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "culture_fit",
+                    "type": "number",
+                    "label": "Culture Fit",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "problem_solving",
+                    "type": "number",
+                    "label": "Problem Solving",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "overall_score",
+                    "type": "number",
+                    "label": "Overall Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "overall_recommendation",
+                    "type": "short_text",
+                    "label": "Overall Recommendation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "strengths",
+                    "type": "short_text",
+                    "label": "Strengths",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "concerns",
+                    "type": "short_text",
+                    "label": "Concerns",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Interview Scorecards",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:interview-scorecards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Interview Scorecards",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:interview-scorecards",
+                                "titleField": "interviewer_name",
+                                "limit": 10,
+                                "subtitleField": "interview_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "onboardings",
+            "title": "Onboardings",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"onboardings\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Onboardings",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "onboardings",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "email": "email",
+                        "start_date": "start_date",
+                        "department": "department",
+                        "manager": "manager",
+                        "it_setup_json": "it_setup_json",
+                        "policy_json": "policy_json",
+                        "emergency_contact_name": "emergency_contact_name",
+                        "emergency_contact_phone": "emergency_contact_phone",
+                        "emergency_contact_relationship": "emergency_contact_relationship",
+                        "bank_account": "bank_account",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Onboardings",
+                    "description": "Connected live to SQLite table \"onboardings\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "department",
+                    "type": "short_text",
+                    "label": "Department",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager",
+                    "type": "short_text",
+                    "label": "Manager",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "it_setup_json",
+                    "type": "short_text",
+                    "label": "It Setup Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "policy_json",
+                    "type": "short_text",
+                    "label": "Policy Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_name",
+                    "type": "short_text",
+                    "label": "Emergency Contact Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_phone",
+                    "type": "phone",
+                    "label": "Emergency Contact Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_relationship",
+                    "type": "short_text",
+                    "label": "Emergency Contact Relationship",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "bank_account",
+                    "type": "short_text",
+                    "label": "Bank Account",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Onboardings",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:onboardings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Onboardings",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:onboardings",
+                                "titleField": "email",
+                                "limit": 10
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "leave-requests",
+            "title": "Leave Requests",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"leave_requests\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Leave Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "leave_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "employee_email": "employee_email",
+                        "leave_type": "leave_type",
+                        "start_date": "start_date",
+                        "end_date": "end_date",
+                        "total_days": "total_days",
+                        "reason": "reason",
+                        "manager_name": "manager_name",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Leave Requests",
+                    "description": "Connected live to SQLite table \"leave_requests\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_email",
+                    "type": "email",
+                    "label": "Employee Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "leave_type",
+                    "type": "dropdown",
+                    "label": "Leave Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "annual_leave",
+                                "label": "Annual Leave",
+                                "value": "Annual Leave"
+                            },
+                            {
+                                "id": "sick_leave",
+                                "label": "Sick Leave",
+                                "value": "Sick Leave"
+                            },
+                            {
+                                "id": "personal_leave",
+                                "label": "Personal Leave",
+                                "value": "Personal Leave"
+                            },
+                            {
+                                "id": "parental_leave",
+                                "label": "Parental Leave",
+                                "value": "Parental Leave"
+                            },
+                            {
+                                "id": "bereavement",
+                                "label": "Bereavement",
+                                "value": "Bereavement"
+                            },
+                            {
+                                "id": "unpaid_leave",
+                                "label": "Unpaid Leave",
+                                "value": "Unpaid Leave"
+                            }
+                        ],
+                        "defaultValue": "Annual Leave"
+                    }
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "end_date",
+                    "type": "date",
+                    "label": "End Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "total_days",
+                    "type": "number",
+                    "label": "Total Days",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reason",
+                    "type": "short_text",
+                    "label": "Reason",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager_name",
+                    "type": "short_text",
+                    "label": "Manager Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "reimbursed",
+                                "label": "Reimbursed",
+                                "value": "Reimbursed"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Leave Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:leave-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Leave Requests by Leave Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:leave-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "leave_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Leave Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:leave-requests",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "employee_email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "performance-reviews",
+            "title": "Performance Reviews",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"performance_reviews\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Performance Reviews",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "performance_reviews",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "onboarding_id": "onboarding_id",
+                        "employee_name": "employee_name",
+                        "review_period": "review_period",
+                        "reviewer_name": "reviewer_name",
+                        "review_date": "review_date",
+                        "job_knowledge": "job_knowledge",
+                        "quality_of_work": "quality_of_work",
+                        "productivity": "productivity",
+                        "teamwork": "teamwork",
+                        "initiative": "initiative",
+                        "overall_rating": "overall_rating",
+                        "goals_met": "goals_met",
+                        "strengths": "strengths",
+                        "areas_for_improvement": "areas_for_improvement",
+                        "goals_next_period": "goals_next_period"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Performance Reviews",
+                    "description": "Connected live to SQLite table \"performance_reviews\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "onboarding_id",
+                    "type": "linked_record",
+                    "label": "Onboarding",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:onboardings",
+                        "displayFieldIds": [
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "review_period",
+                    "type": "dropdown",
+                    "label": "Review Period",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "q1_jan_mar_",
+                                "label": "Q1 (Jan-Mar)",
+                                "value": "Q1 (Jan-Mar)"
+                            },
+                            {
+                                "id": "q2_apr_jun_",
+                                "label": "Q2 (Apr-Jun)",
+                                "value": "Q2 (Apr-Jun)"
+                            },
+                            {
+                                "id": "q3_jul_sep_",
+                                "label": "Q3 (Jul-Sep)",
+                                "value": "Q3 (Jul-Sep)"
+                            },
+                            {
+                                "id": "q4_oct_dec_",
+                                "label": "Q4 (Oct-Dec)",
+                                "value": "Q4 (Oct-Dec)"
+                            },
+                            {
+                                "id": "annual",
+                                "label": "Annual",
+                                "value": "Annual"
+                            },
+                            {
+                                "id": "probation",
+                                "label": "Probation",
+                                "value": "Probation"
+                            }
+                        ],
+                        "defaultValue": "Annual"
+                    }
+                },
+                {
+                    "id": "reviewer_name",
+                    "type": "short_text",
+                    "label": "Reviewer Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "review_date",
+                    "type": "date",
+                    "label": "Review Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "job_knowledge",
+                    "type": "number",
+                    "label": "Job Knowledge",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "quality_of_work",
+                    "type": "number",
+                    "label": "Quality Of Work",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "productivity",
+                    "type": "number",
+                    "label": "Productivity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "teamwork",
+                    "type": "number",
+                    "label": "Teamwork",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "initiative",
+                    "type": "number",
+                    "label": "Initiative",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "overall_rating",
+                    "type": "number",
+                    "label": "Overall Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "goals_met",
+                    "type": "dropdown",
+                    "label": "Goals Met",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "exceeded_all_goals",
+                                "label": "Exceeded All Goals",
+                                "value": "Exceeded All Goals"
+                            },
+                            {
+                                "id": "met_all_goals",
+                                "label": "Met All Goals",
+                                "value": "Met All Goals"
+                            },
+                            {
+                                "id": "partially_met_goals",
+                                "label": "Partially Met Goals",
+                                "value": "Partially Met Goals"
+                            },
+                            {
+                                "id": "did_not_meet_goals",
+                                "label": "Did Not Meet Goals",
+                                "value": "Did Not Meet Goals"
+                            }
+                        ],
+                        "defaultValue": "Met All Goals"
+                    }
+                },
+                {
+                    "id": "strengths",
+                    "type": "short_text",
+                    "label": "Strengths",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "areas_for_improvement",
+                    "type": "short_text",
+                    "label": "Areas For Improvement",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "goals_next_period",
+                    "type": "short_text",
+                    "label": "Goals Next Period",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Performance Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:performance-reviews",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Performance Reviews by Review Period",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:performance-reviews",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "review_period",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Performance Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:performance-reviews",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "review_period"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "expense-claims",
+            "title": "Expense Claims",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"expense_claims\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Expense Claims",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "expense_claims",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "employee_email": "employee_email",
+                        "expense_date": "expense_date",
+                        "category": "category",
+                        "description": "description",
+                        "amount_cents": "amount_cents",
+                        "project_code": "project_code",
+                        "notes": "notes",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Expense Claims",
+                    "description": "Connected live to SQLite table \"expense_claims\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_email",
+                    "type": "email",
+                    "label": "Employee Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "expense_date",
+                    "type": "date",
+                    "label": "Expense Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "travel",
+                                "label": "Travel",
+                                "value": "Travel"
+                            },
+                            {
+                                "id": "meals_entertainment",
+                                "label": "Meals & Entertainment",
+                                "value": "Meals & Entertainment"
+                            },
+                            {
+                                "id": "accommodation",
+                                "label": "Accommodation",
+                                "value": "Accommodation"
+                            },
+                            {
+                                "id": "office_supplies",
+                                "label": "Office Supplies",
+                                "value": "Office Supplies"
+                            },
+                            {
+                                "id": "training_development",
+                                "label": "Training & Development",
+                                "value": "Training & Development"
+                            },
+                            {
+                                "id": "technology_software",
+                                "label": "Technology / Software",
+                                "value": "Technology / Software"
+                            },
+                            {
+                                "id": "client_entertainment",
+                                "label": "Client Entertainment",
+                                "value": "Client Entertainment"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Travel"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_code",
+                    "type": "short_text",
+                    "label": "Project Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "reimbursed",
+                                "label": "Reimbursed",
+                                "value": "Reimbursed"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Expense Claims",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:expense-claims",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Expense Claims by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:expense-claims",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Expense Claims",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:expense-claims",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "training-requests",
+            "title": "Training Requests",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"training_requests\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Training Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "training_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "employee_email": "employee_email",
+                        "training_type": "training_type",
+                        "course_name": "course_name",
+                        "provider": "provider",
+                        "start_date": "start_date",
+                        "end_date": "end_date",
+                        "cost_cents": "cost_cents",
+                        "justification": "justification",
+                        "manager_name": "manager_name",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Training Requests",
+                    "description": "Connected live to SQLite table \"training_requests\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_email",
+                    "type": "email",
+                    "label": "Employee Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "training_type",
+                    "type": "dropdown",
+                    "label": "Training Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "online_course",
+                                "label": "Online Course",
+                                "value": "Online Course"
+                            },
+                            {
+                                "id": "certification",
+                                "label": "Certification",
+                                "value": "Certification"
+                            },
+                            {
+                                "id": "conference",
+                                "label": "Conference",
+                                "value": "Conference"
+                            },
+                            {
+                                "id": "workshop",
+                                "label": "Workshop",
+                                "value": "Workshop"
+                            },
+                            {
+                                "id": "degree_program",
+                                "label": "Degree Program",
+                                "value": "Degree Program"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Online Course"
+                    }
+                },
+                {
+                    "id": "course_name",
+                    "type": "short_text",
+                    "label": "Course Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "provider",
+                    "type": "short_text",
+                    "label": "Provider",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "end_date",
+                    "type": "date",
+                    "label": "End Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "justification",
+                    "type": "short_text",
+                    "label": "Justification",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager_name",
+                    "type": "short_text",
+                    "label": "Manager Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "reimbursed",
+                                "label": "Reimbursed",
+                                "value": "Reimbursed"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Training Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:training-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Training Requests by Training Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:training-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "training_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Training Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:training-requests",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "employee_email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "exit-interviews",
+            "title": "Exit Interviews",
+            "icon": "Users",
+            "description": "Live FormLogic form synced directly to SQLite table \"exit_interviews\" in People Hub.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Exit Interviews",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:hr-people-softn-app",
+                    "table": "exit_interviews",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "department": "department",
+                        "last_day": "last_day",
+                        "tenure_years": "tenure_years",
+                        "reason_for_leaving": "reason_for_leaving",
+                        "overall_satisfaction": "overall_satisfaction",
+                        "management_rating": "management_rating",
+                        "culture_rating": "culture_rating",
+                        "what_enjoyed": "what_enjoyed",
+                        "suggestions": "suggestions",
+                        "would_return": "would_return",
+                        "would_recommend": "would_recommend"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Exit Interviews",
+                    "description": "Connected live to SQLite table \"exit_interviews\" in People Hub.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "department",
+                    "type": "short_text",
+                    "label": "Department",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "last_day",
+                    "type": "short_text",
+                    "label": "Last Day",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "tenure_years",
+                    "type": "number",
+                    "label": "Tenure Years",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reason_for_leaving",
+                    "type": "dropdown",
+                    "label": "Reason For Leaving",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new_opportunity",
+                                "label": "New Opportunity",
+                                "value": "New Opportunity"
+                            },
+                            {
+                                "id": "compensation",
+                                "label": "Compensation",
+                                "value": "Compensation"
+                            },
+                            {
+                                "id": "career_growth",
+                                "label": "Career Growth",
+                                "value": "Career Growth"
+                            },
+                            {
+                                "id": "work_life_balance",
+                                "label": "Work-Life Balance",
+                                "value": "Work-Life Balance"
+                            },
+                            {
+                                "id": "management",
+                                "label": "Management",
+                                "value": "Management"
+                            },
+                            {
+                                "id": "relocation",
+                                "label": "Relocation",
+                                "value": "Relocation"
+                            },
+                            {
+                                "id": "retirement",
+                                "label": "Retirement",
+                                "value": "Retirement"
+                            },
+                            {
+                                "id": "personal_reasons",
+                                "label": "Personal Reasons",
+                                "value": "Personal Reasons"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "New Opportunity"
+                    }
+                },
+                {
+                    "id": "overall_satisfaction",
+                    "type": "number",
+                    "label": "Overall Satisfaction",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "management_rating",
+                    "type": "number",
+                    "label": "Management Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "culture_rating",
+                    "type": "number",
+                    "label": "Culture Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "what_enjoyed",
+                    "type": "short_text",
+                    "label": "What Enjoyed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "suggestions",
+                    "type": "short_text",
+                    "label": "Suggestions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "would_return",
+                    "type": "dropdown",
+                    "label": "Would Return",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "maybe",
+                                "label": "Maybe",
+                                "value": "Maybe"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "would_recommend",
+                    "type": "dropdown",
+                    "label": "Would Recommend",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "maybe",
+                                "label": "Maybe",
+                                "value": "Maybe"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Exit Interviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:exit-interviews",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Exit Interviews by Reason For Leaving",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:exit-interviews",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "reason_for_leaving",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Exit Interviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:exit-interviews",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "department"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "hr-people-softn-app",
+            "name": "People Hub",
+            "description": "Turnkey HR & people operations desk with actionable approvals inbox, recruitment pipeline & interview scorecards, interactive onboarding checklists, leave, performance reviews, expenses, training, and exit interviews.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "hr-people-softn-forms",
+            "name": "People Hub Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to People Hub's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:hr-people-softn-app",
+                "linkedSoftnAppId": "@packApp:hr-people-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "candidates",
+                    "displayName": "Candidates",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "interview-scorecards",
+                    "displayName": "Interview Scorecards",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "onboardings",
+                    "displayName": "Onboardings",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "leave-requests",
+                    "displayName": "Leave Requests",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "performance-reviews",
+                    "displayName": "Performance Reviews",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "expense-claims",
+                    "displayName": "Expense Claims",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "training-requests",
+                    "displayName": "Training Requests",
+                    "sortOrder": 6,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "exit-interviews",
+                    "displayName": "Exit Interviews",
+                    "sortOrder": 7,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_candidates",
+                    "name": "Total Candidates",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:candidates",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "kpi_interview_scorecards",
+                    "name": "Total Interview Scorecards",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:interview-scorecards",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "kpi_onboardings",
+                    "name": "Total Onboardings",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:onboardings",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_leave_requests",
+                    "name": "Total Leave Requests",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:leave-requests",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Candidates",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:candidates",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Interview Scorecards",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:interview-scorecards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Onboardings",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:onboardings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Leave Requests",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:leave-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

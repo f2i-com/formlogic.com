@@ -1,0 +1,1643 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "tutortrack-tutoring-softn",
+        "name": "TutorTrack (SoftN + Forms)",
+        "description": "Turnkey tutoring studio and music lessons desk: filterable lesson schedule with one-click progress note logging, student and guardian dossiers, homework and copyable parent updates, tutor roster, and printable HTML tuition invoices. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "tutoring",
+            "lessons",
+            "education",
+            "students",
+            "billing",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "students",
+            "title": "Students",
+            "icon": "GraduationCap",
+            "description": "Live FormLogic form synced directly to SQLite table \"students\" in TutorTrack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Students",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:tutortrack-tutoring-softn-app",
+                    "table": "students",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "student_name": "student_name",
+                        "guardian_name": "guardian_name",
+                        "guardian_email": "guardian_email",
+                        "phone": "phone",
+                        "subject": "subject",
+                        "level": "level",
+                        "goals": "goals",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Students",
+                    "description": "Connected live to SQLite table \"students\" in TutorTrack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "student_name",
+                    "type": "short_text",
+                    "label": "Student Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "guardian_name",
+                    "type": "short_text",
+                    "label": "Guardian Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "guardian_email",
+                    "type": "email",
+                    "label": "Guardian Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subject",
+                    "type": "dropdown",
+                    "label": "Subject",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "mathematics",
+                                "label": "Mathematics",
+                                "value": "Mathematics"
+                            },
+                            {
+                                "id": "english",
+                                "label": "English",
+                                "value": "English"
+                            },
+                            {
+                                "id": "science",
+                                "label": "Science",
+                                "value": "Science"
+                            },
+                            {
+                                "id": "piano",
+                                "label": "Piano",
+                                "value": "Piano"
+                            },
+                            {
+                                "id": "guitar",
+                                "label": "Guitar",
+                                "value": "Guitar"
+                            },
+                            {
+                                "id": "violin",
+                                "label": "Violin",
+                                "value": "Violin"
+                            },
+                            {
+                                "id": "spanish",
+                                "label": "Spanish",
+                                "value": "Spanish"
+                            },
+                            {
+                                "id": "french",
+                                "label": "French",
+                                "value": "French"
+                            }
+                        ],
+                        "defaultValue": "Mathematics"
+                    }
+                },
+                {
+                    "id": "level",
+                    "type": "dropdown",
+                    "label": "Level",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "beginner",
+                                "label": "Beginner",
+                                "value": "Beginner"
+                            },
+                            {
+                                "id": "intermediate",
+                                "label": "Intermediate",
+                                "value": "Intermediate"
+                            },
+                            {
+                                "id": "advanced",
+                                "label": "Advanced",
+                                "value": "Advanced"
+                            },
+                            {
+                                "id": "exam_preparation",
+                                "label": "Exam preparation",
+                                "value": "Exam preparation"
+                            }
+                        ],
+                        "defaultValue": "Intermediate"
+                    }
+                },
+                {
+                    "id": "goals",
+                    "type": "short_text",
+                    "label": "Goals",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "waitlist",
+                                "label": "Waitlist",
+                                "value": "Waitlist"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "rescheduled",
+                                "label": "Rescheduled",
+                                "value": "Rescheduled"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "unpaid",
+                                "label": "Unpaid",
+                                "value": "Unpaid"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Students",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:students",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Students by Subject",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:students",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "subject",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Students",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:students",
+                                "titleField": "subject",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "tutors",
+            "title": "Tutors",
+            "icon": "GraduationCap",
+            "description": "Live FormLogic form synced directly to SQLite table \"tutors\" in TutorTrack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Tutors",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:tutortrack-tutoring-softn-app",
+                    "table": "tutors",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "tutor_name": "tutor_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "subjects_json": "subjects_json",
+                        "availability_json": "availability_json",
+                        "hourly_rate_cents": "hourly_rate_cents",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Tutors",
+                    "description": "Connected live to SQLite table \"tutors\" in TutorTrack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tutor_name",
+                    "type": "short_text",
+                    "label": "Tutor Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subjects_json",
+                    "type": "short_text",
+                    "label": "Subjects Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "availability_json",
+                    "type": "short_text",
+                    "label": "Availability Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "hourly_rate_cents",
+                    "type": "url",
+                    "label": "Hourly Rate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Tutors",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:tutors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Tutors by Active",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:tutors",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Tutors",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:tutors",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "lessons",
+            "title": "Lessons",
+            "icon": "GraduationCap",
+            "description": "Live FormLogic form synced directly to SQLite table \"lessons\" in TutorTrack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Lessons",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:tutortrack-tutoring-softn-app",
+                    "table": "lessons",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "student_id": "student_id",
+                        "tutor_id": "tutor_id",
+                        "lesson_date": "lesson_date",
+                        "start_time": "start_time",
+                        "duration": "duration",
+                        "subject": "subject",
+                        "status": "status",
+                        "notes": "notes",
+                        "fee_cents": "fee_cents"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Lessons",
+                    "description": "Connected live to SQLite table \"lessons\" in TutorTrack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "student_id",
+                    "type": "linked_record",
+                    "label": "Student",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:students",
+                        "displayFieldIds": [
+                            "subject",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "tutor_id",
+                    "type": "linked_record",
+                    "label": "Tutor",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:tutors",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "lesson_date",
+                    "type": "date",
+                    "label": "Lesson Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "duration",
+                    "type": "number",
+                    "label": "Duration",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subject",
+                    "type": "dropdown",
+                    "label": "Subject",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "mathematics",
+                                "label": "Mathematics",
+                                "value": "Mathematics"
+                            },
+                            {
+                                "id": "english",
+                                "label": "English",
+                                "value": "English"
+                            },
+                            {
+                                "id": "science",
+                                "label": "Science",
+                                "value": "Science"
+                            },
+                            {
+                                "id": "piano",
+                                "label": "Piano",
+                                "value": "Piano"
+                            },
+                            {
+                                "id": "guitar",
+                                "label": "Guitar",
+                                "value": "Guitar"
+                            },
+                            {
+                                "id": "violin",
+                                "label": "Violin",
+                                "value": "Violin"
+                            },
+                            {
+                                "id": "spanish",
+                                "label": "Spanish",
+                                "value": "Spanish"
+                            },
+                            {
+                                "id": "french",
+                                "label": "French",
+                                "value": "French"
+                            }
+                        ],
+                        "defaultValue": "Mathematics"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "waitlist",
+                                "label": "Waitlist",
+                                "value": "Waitlist"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "rescheduled",
+                                "label": "Rescheduled",
+                                "value": "Rescheduled"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "unpaid",
+                                "label": "Unpaid",
+                                "value": "Unpaid"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fee_cents",
+                    "type": "number",
+                    "label": "Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Lessons",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:lessons",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Lessons by Subject",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:lessons",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "subject",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Lessons",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:lessons",
+                                "titleField": "subject",
+                                "limit": 10
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "progress-notes",
+            "title": "Progress Notes",
+            "icon": "GraduationCap",
+            "description": "Live FormLogic form synced directly to SQLite table \"progress_notes\" in TutorTrack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Progress Notes",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:tutortrack-tutoring-softn-app",
+                    "table": "progress_notes",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "student_id": "student_id",
+                        "lesson_id": "lesson_id",
+                        "area": "area",
+                        "score": "score",
+                        "notes": "notes",
+                        "homework": "homework",
+                        "follow_up": "follow_up"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Progress Notes",
+                    "description": "Connected live to SQLite table \"progress_notes\" in TutorTrack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "student_id",
+                    "type": "linked_record",
+                    "label": "Student",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:students",
+                        "displayFieldIds": [
+                            "subject",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "lesson_id",
+                    "type": "linked_record",
+                    "label": "Lesson",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:lessons",
+                        "displayFieldIds": [
+                            "subject"
+                        ]
+                    }
+                },
+                {
+                    "id": "area",
+                    "type": "dropdown",
+                    "label": "Area",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "technique",
+                                "label": "Technique",
+                                "value": "Technique"
+                            },
+                            {
+                                "id": "theory",
+                                "label": "Theory",
+                                "value": "Theory"
+                            },
+                            {
+                                "id": "confidence",
+                                "label": "Confidence",
+                                "value": "Confidence"
+                            },
+                            {
+                                "id": "exam_readiness",
+                                "label": "Exam readiness",
+                                "value": "Exam readiness"
+                            },
+                            {
+                                "id": "homework_habits",
+                                "label": "Homework habits",
+                                "value": "Homework habits"
+                            }
+                        ],
+                        "defaultValue": "Technique"
+                    }
+                },
+                {
+                    "id": "score",
+                    "type": "number",
+                    "label": "Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "homework",
+                    "type": "short_text",
+                    "label": "Homework",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "follow_up",
+                    "type": "dropdown",
+                    "label": "Follow Up",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Progress Notes",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:progress-notes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Progress Notes by Area",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:progress-notes",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "area",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Progress Notes",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:progress-notes",
+                                "titleField": "area",
+                                "limit": 10,
+                                "subtitleField": "score"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "invoices",
+            "title": "Invoices",
+            "icon": "GraduationCap",
+            "description": "Live FormLogic form synced directly to SQLite table \"invoices\" in TutorTrack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Invoices",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:tutortrack-tutoring-softn-app",
+                    "table": "invoices",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "invoice_number": "invoice_number",
+                        "student_id": "student_id",
+                        "billing_period": "billing_period",
+                        "amount_cents": "amount_cents",
+                        "status": "status",
+                        "due_date": "due_date",
+                        "notes": "notes",
+                        "paid_at": "paid_at"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Invoices",
+                    "description": "Connected live to SQLite table \"invoices\" in TutorTrack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "invoice_number",
+                    "type": "short_text",
+                    "label": "Invoice Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "student_id",
+                    "type": "linked_record",
+                    "label": "Student",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:students",
+                        "displayFieldIds": [
+                            "subject",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "billing_period",
+                    "type": "short_text",
+                    "label": "Billing Period",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "waitlist",
+                                "label": "Waitlist",
+                                "value": "Waitlist"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "rescheduled",
+                                "label": "Rescheduled",
+                                "value": "Rescheduled"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "unpaid",
+                                "label": "Unpaid",
+                                "value": "Unpaid"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Unpaid"
+                    }
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "paid_at",
+                    "type": "number",
+                    "label": "Paid At",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Invoices by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:invoices",
+                                "titleField": "invoice_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "tutortrack-tutoring-softn-app",
+            "name": "TutorTrack",
+            "description": "Turnkey tutoring studio and music lessons desk: filterable lesson schedule with one-click progress note logging, student and guardian dossiers, homework and copyable parent updates, tutor roster, and printable HTML tuition invoices.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "tutortrack-tutoring-softn-forms",
+            "name": "TutorTrack Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to TutorTrack's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:tutortrack-tutoring-softn-app",
+                "linkedSoftnAppId": "@packApp:tutortrack-tutoring-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "students",
+                    "displayName": "Students",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "tutors",
+                    "displayName": "Tutors",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "lessons",
+                    "displayName": "Lessons",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "progress-notes",
+                    "displayName": "Progress Notes",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "invoices",
+                    "displayName": "Invoices",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_students",
+                    "name": "Total Students",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:students",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_students",
+                    "name": "Students by Subject",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:students",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "subject",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_tutors",
+                    "name": "Total Tutors",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:tutors",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_tutors",
+                    "name": "Tutors by Active",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:tutors",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "active",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_lessons",
+                    "name": "Total Lessons",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:lessons",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_progress_notes",
+                    "name": "Total Progress Notes",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:progress-notes",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Students",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:students",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Students by Subject",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:students",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "subject",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Tutors",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:tutors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Tutors by Active",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:tutors",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Lessons",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:lessons",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Progress Notes",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:progress-notes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

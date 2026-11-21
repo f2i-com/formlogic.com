@@ -1,0 +1,54 @@
+{
+    "id": "finance-os-au-softn",
+    "slug": "finance-os-au-softn",
+    "name": "Finance OS (AU) — SoftN App & Linked Forms",
+    "shortName": "Finance OS (AU)",
+    "description": "Turnkey Australian AFSL advisory & compliance workbench: client onboarding, Best Interest Duty risk profile scorer, Fee Disclosure Statements (FDS), superannuation rollovers, 100%-validated BDBNs, off-market transfers, annual reviews and document vault. Includes the full-stack SoftN application (PHP + SQLite) plus 8 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Wallet",
+    "category": "Business apps",
+    "tags": [
+        "finance",
+        "compliance",
+        "onboarding",
+        "australia",
+        "afsl",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "finance-os-au-softn.softn",
+    "softnPackAppId": "finance-os-au-softn-app",
+    "formsPackAppId": "finance-os-au-softn-forms",
+    "companionPackSlug": "finance-os-au",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "au_clients",
+        "au_risk_profiles",
+        "au_fee_disclosures",
+        "au_off_market_transfers",
+        "au_super_rollovers",
+        "au_bdbns",
+        "au_annual_reviews",
+        "au_documents"
+    ],
+    "formCount": 8,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/finance-os-au-2.png"
+        },
+        {
+            "label": "Additional app dashboard",
+            "url": "/api/packs/screenshots/finance-os-au.png"
+        }
+    ]
+}

@@ -49,6 +49,8 @@ export const EXECUTABLE_NODE_TYPES = [
   'formlogic_list_responses',
   'formlogic_submit_response',
   'formlogic_update_response',
+  'native_app_request',
+  'native_record_action',
   'connector_request',
   'storage_get',
   'storage_set',
@@ -367,6 +369,31 @@ export interface FlowExecutorDeps {
    * before this route existed).
    */
   invokeServiceAction?(req: ServiceActionInvokeRequest): Promise<ServiceActionInvokeResult>;
+  /**
+   * Invoke another hosted SoftN / container app backend owned by the same account
+   * (POST /api/flows/internal/native-app-request).
+   */
+  nativeAppRequest?(req: {
+    appId: string;
+    method: string;
+    path: string;
+    query?: Record<string, unknown>;
+    body?: unknown;
+  }): Promise<{ status: number; ok: boolean; body: unknown }>;
+  /**
+   * Read or write a record in a hosted app's SQLite database owned by the same account
+   * (POST /api/flows/internal/native-record-action).
+   */
+  nativeRecordAction?(req: {
+    appId: string;
+    table: string;
+    operation: 'list' | 'read' | 'create' | 'update' | 'delete';
+    key?: Record<string, unknown>;
+    values?: Record<string, unknown>;
+    q?: string;
+    filter?: unknown;
+    limit?: number;
+  }): Promise<unknown>;
   /**
    * Before a node calls a URL its flow names on the viewer's computer: throws unless the
    * viewer allowed this app (client-runtime/appLocalAccess.ts). Absent in a workspace run.
@@ -1881,6 +1908,100 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
         throw new FlowExecError('node_failed', `Node '${node.id}' answers did not resolve to an object`, node.id);
       }
       return await deps.updateResponse(formId, responseId, answers as Record<string, unknown>);
+    }
+
+    case 'native_app_request': {
+      if (!deps.nativeAppRequest) {
+        throw new FlowExecError(
+          'runner_unavailable',
+          `Node '${node.id}' native_app_request is not available in this runtime`,
+          node.id
+        );
+      }
+      const scopeAppId =
+        ctx.scope.app && typeof ctx.scope.app === 'object' && 'id' in ctx.scope.app && typeof (ctx.scope.app as { id?: unknown }).id === 'string'
+          ? (ctx.scope.app as { id: string }).id
+          : '';
+      const rawAppId =
+        typeof data.appId === 'string' && data.appId.trim() !== ''
+          ? interpolateTemplate(data.appId, scopeToContext(ctx.scope)).trim()
+          : scopeAppId;
+      if (!rawAppId) {
+        throw new FlowExecError('node_failed', `Node '${node.id}' requires an app to call`, node.id);
+      }
+      const rawPath = requireString(node, data, ['path']);
+      const path = interpolateTemplate(rawPath, scopeToContext(ctx.scope)).trim();
+      const method = typeof data.method === 'string' && data.method.trim() !== '' ? data.method.trim().toUpperCase() : 'GET';
+      const resolvedQuery = data.query !== undefined ? resolveDeep(data.query, ctx.scope) : undefined;
+      const query =
+        resolvedQuery && typeof resolvedQuery === 'object' && !Array.isArray(resolvedQuery)
+          ? (resolvedQuery as Record<string, unknown>)
+          : undefined;
+      const body = data.body !== undefined ? resolveDeep(data.body, ctx.scope) : undefined;
+      return await deps.nativeAppRequest({
+        appId: rawAppId,
+        method,
+        path: path.startsWith('/') ? path : `/${path}`,
+        query,
+        body,
+      });
+    }
+
+    case 'native_record_action': {
+      if (!deps.nativeRecordAction) {
+        throw new FlowExecError(
+          'runner_unavailable',
+          `Node '${node.id}' native_record_action is not available in this runtime`,
+          node.id
+        );
+      }
+      const scopeAppId =
+        ctx.scope.app && typeof ctx.scope.app === 'object' && 'id' in ctx.scope.app && typeof (ctx.scope.app as { id?: unknown }).id === 'string'
+          ? (ctx.scope.app as { id: string }).id
+          : '';
+      const rawAppId =
+        typeof data.appId === 'string' && data.appId.trim() !== ''
+          ? interpolateTemplate(data.appId, scopeToContext(ctx.scope)).trim()
+          : scopeAppId;
+      if (!rawAppId) {
+        throw new FlowExecError('node_failed', `Node '${node.id}' requires a target app`, node.id);
+      }
+      const table = interpolateTemplate(requireString(node, data, ['table']), scopeToContext(ctx.scope)).trim();
+      const opRaw = typeof data.operation === 'string' ? data.operation.trim().toLowerCase() : 'list';
+      const operation = (['list', 'read', 'create', 'update', 'delete'].includes(opRaw) ? opRaw : 'list') as
+        | 'list'
+        | 'read'
+        | 'create'
+        | 'update'
+        | 'delete';
+      const keyVal = data.key !== undefined && data.key !== '' ? resolveDeep(data.key, ctx.scope) : undefined;
+      const key =
+        keyVal && typeof keyVal === 'object' && !Array.isArray(keyVal)
+          ? (keyVal as Record<string, unknown>)
+          : keyVal !== undefined && keyVal !== null && String(keyVal).trim() !== ''
+            ? { id: keyVal }
+            : undefined;
+      const valuesVal = data.values !== undefined ? resolveDeep(data.values, ctx.scope) : undefined;
+      const values =
+        valuesVal && typeof valuesVal === 'object' && !Array.isArray(valuesVal)
+          ? (valuesVal as Record<string, unknown>)
+          : undefined;
+      const q =
+        typeof data.q === 'string' && data.q.trim() !== ''
+          ? interpolateTemplate(data.q, scopeToContext(ctx.scope)).trim()
+          : undefined;
+      const filter = data.filter !== undefined ? resolveDeep(data.filter, ctx.scope) : undefined;
+      const limit = typeof data.limit === 'number' && Number.isFinite(data.limit) ? data.limit : undefined;
+      return await deps.nativeRecordAction({
+        appId: rawAppId,
+        table,
+        operation,
+        key,
+        values,
+        q,
+        filter,
+        limit,
+      });
     }
 
     case 'connector_request': {

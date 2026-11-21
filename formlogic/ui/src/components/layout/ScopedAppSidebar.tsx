@@ -1,8 +1,10 @@
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ChevronsUpDown } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { AppTile } from '../apps/AppTile';
 import { listedStatus } from '../../lib/appStatus';
+import { isSoftnApp, softnWorkspacePath } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
+import { useAppStore } from '../../stores/appStore';
 import { followAppLink, type AppSidebarNavigation } from './useAppSectionSidebar';
 import type { AppSectionItem } from './appSectionNavigation';
 
@@ -12,6 +14,15 @@ export function ScopedAppSidebar({ navigation: { app, items, leave }, section, c
   collapsed: boolean;
 }) {
   const { pathname } = useLocation();
+  const apps = useAppStore(s => s.apps);
+  const switchableApps = apps.length > 1 ? apps : [];
+  const switchToApp = (targetId: string) => {
+    if (!targetId || targetId === app.id) return;
+    const target = apps.find(candidate => candidate.id === targetId);
+    if (!target) return;
+    const dest = isSoftnApp(target) ? softnWorkspacePath(target.id) : `/apps/${target.id}/studio`;
+    leave(dest);
+  };
   const link = (item: AppSectionItem) => {
     const active = section === item.value;
     return (
@@ -50,6 +61,23 @@ export function ScopedAppSidebar({ navigation: { app, items, leave }, section, c
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">{listedStatus(app)}</p>
           </div>}
         </div>
+        {!collapsed && switchableApps.length > 1 && (
+          <div className="relative mt-2.5">
+            <select
+              aria-label="Switch app"
+              value={app.id}
+              onChange={(e) => switchToApp(e.target.value)}
+              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-2.5 pr-8 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200 dark:hover:border-slate-600"
+            >
+              {switchableApps.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}{candidate.settings?.softnApp ? ' (SoftN)' : ''}
+                </option>
+              ))}
+            </select>
+            <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+          </div>
+        )}
       </div>
       <nav aria-label="App sections" className={cn('space-y-3 px-3 pb-4', collapsed && 'px-2')}>
         {items.filter(item => !item.group).map(link)}

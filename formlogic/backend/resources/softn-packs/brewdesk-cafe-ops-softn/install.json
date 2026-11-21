@@ -1,0 +1,1906 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "brewdesk-cafe-ops-softn",
+        "name": "BrewDesk (SoftN + Forms)",
+        "description": "Turnkey cafe and barista operations desk: live order pad, espresso ticket queue, menu board, beans and milk par stock, shift roster and daily closeout. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "cafe",
+            "coffee",
+            "orders",
+            "barista",
+            "hospitality",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "menu-items",
+            "title": "Menu Items",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"menu_items\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Menu Items",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "menu_items",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "item_name": "item_name",
+                        "category": "category",
+                        "price_cents": "price_cents",
+                        "station": "station",
+                        "active": "active",
+                        "dietary_tags": "dietary_tags"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Menu Items",
+                    "description": "Connected live to SQLite table \"menu_items\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "item_name",
+                    "type": "short_text",
+                    "label": "Item Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "coffee",
+                                "label": "Coffee",
+                                "value": "Coffee"
+                            },
+                            {
+                                "id": "tea",
+                                "label": "Tea",
+                                "value": "Tea"
+                            },
+                            {
+                                "id": "cold_drink",
+                                "label": "Cold drink",
+                                "value": "Cold drink"
+                            },
+                            {
+                                "id": "food",
+                                "label": "Food",
+                                "value": "Food"
+                            },
+                            {
+                                "id": "retail_beans",
+                                "label": "Retail beans",
+                                "value": "Retail beans"
+                            },
+                            {
+                                "id": "beans",
+                                "label": "Beans",
+                                "value": "Beans"
+                            },
+                            {
+                                "id": "milk",
+                                "label": "Milk",
+                                "value": "Milk"
+                            },
+                            {
+                                "id": "syrup",
+                                "label": "Syrup",
+                                "value": "Syrup"
+                            },
+                            {
+                                "id": "cups",
+                                "label": "Cups",
+                                "value": "Cups"
+                            },
+                            {
+                                "id": "food_prep",
+                                "label": "Food prep",
+                                "value": "Food prep"
+                            },
+                            {
+                                "id": "packaging",
+                                "label": "Packaging",
+                                "value": "Packaging"
+                            }
+                        ],
+                        "defaultValue": "Coffee"
+                    }
+                },
+                {
+                    "id": "price_cents",
+                    "type": "number",
+                    "label": "Price (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "espresso",
+                                "label": "Espresso",
+                                "value": "Espresso"
+                            },
+                            {
+                                "id": "kitchen",
+                                "label": "Kitchen",
+                                "value": "Kitchen"
+                            },
+                            {
+                                "id": "cold_bar",
+                                "label": "Cold bar",
+                                "value": "Cold bar"
+                            },
+                            {
+                                "id": "retail",
+                                "label": "Retail",
+                                "value": "Retail"
+                            },
+                            {
+                                "id": "floor",
+                                "label": "Floor",
+                                "value": "Floor"
+                            }
+                        ],
+                        "defaultValue": "Espresso"
+                    }
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "seasonal",
+                                "label": "Seasonal",
+                                "value": "Seasonal"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "dietary_tags",
+                    "type": "long_text",
+                    "label": "Dietary Tags",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Menu Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:menu-items",
+                                "titleField": "item_name",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "cafe-orders",
+            "title": "Cafe Orders",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"cafe_orders\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Cafe Orders",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "cafe_orders",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "order_number": "order_number",
+                        "order_day": "order_day",
+                        "table_number": "table_number",
+                        "order_type": "order_type",
+                        "customer_name": "customer_name",
+                        "items_json": "items_json",
+                        "items_summary": "items_summary",
+                        "status": "status",
+                        "total_cents": "total_cents",
+                        "notes": "notes",
+                        "created_by": "created_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Cafe Orders",
+                    "description": "Connected live to SQLite table \"cafe_orders\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_number",
+                    "type": "short_text",
+                    "label": "Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_day",
+                    "type": "short_text",
+                    "label": "Order Day",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "table_number",
+                    "type": "short_text",
+                    "label": "Table Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_type",
+                    "type": "dropdown",
+                    "label": "Order Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "dine_in",
+                                "label": "Dine-in",
+                                "value": "Dine-in"
+                            },
+                            {
+                                "id": "takeaway",
+                                "label": "Takeaway",
+                                "value": "Takeaway"
+                            },
+                            {
+                                "id": "delivery",
+                                "label": "Delivery",
+                                "value": "Delivery"
+                            }
+                        ],
+                        "defaultValue": "Takeaway"
+                    }
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "items_json",
+                    "type": "short_text",
+                    "label": "Items Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "items_summary",
+                    "type": "long_text",
+                    "label": "Items Summary",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "making",
+                                "label": "Making",
+                                "value": "Making"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "queued",
+                                "label": "Queued",
+                                "value": "Queued"
+                            },
+                            {
+                                "id": "pulling_shots",
+                                "label": "Pulling shots",
+                                "value": "Pulling shots"
+                            },
+                            {
+                                "id": "pouring",
+                                "label": "Pouring",
+                                "value": "Pouring"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "New"
+                    }
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "created_by",
+                    "type": "short_text",
+                    "label": "Created By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Cafe Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cafe-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Cafe Orders by Order Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cafe-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "order_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Cafe Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:cafe-orders",
+                                "titleField": "order_number",
+                                "limit": 10,
+                                "subtitleField": "order_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "barista-tickets",
+            "title": "Barista Tickets",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"barista_tickets\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Barista Tickets",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "barista_tickets",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "order_id": "order_id",
+                        "order_number": "order_number",
+                        "customer_name": "customer_name",
+                        "drink_type": "drink_type",
+                        "milk": "milk",
+                        "size": "size",
+                        "shots": "shots",
+                        "extras_json": "extras_json",
+                        "status": "status",
+                        "barista_name": "barista_name",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Barista Tickets",
+                    "description": "Connected live to SQLite table \"barista_tickets\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_id",
+                    "type": "linked_record",
+                    "label": "Order",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:cafe-orders",
+                        "displayFieldIds": [
+                            "order_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "order_number",
+                    "type": "short_text",
+                    "label": "Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "drink_type",
+                    "type": "short_text",
+                    "label": "Drink Type",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "milk",
+                    "type": "dropdown",
+                    "label": "Milk",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "full_cream",
+                                "label": "Full cream",
+                                "value": "Full cream"
+                            },
+                            {
+                                "id": "skim",
+                                "label": "Skim",
+                                "value": "Skim"
+                            },
+                            {
+                                "id": "oat",
+                                "label": "Oat",
+                                "value": "Oat"
+                            },
+                            {
+                                "id": "almond",
+                                "label": "Almond",
+                                "value": "Almond"
+                            },
+                            {
+                                "id": "soy",
+                                "label": "Soy",
+                                "value": "Soy"
+                            },
+                            {
+                                "id": "lactose_free",
+                                "label": "Lactose-free",
+                                "value": "Lactose-free"
+                            },
+                            {
+                                "id": "black_none",
+                                "label": "Black / None",
+                                "value": "Black / None"
+                            }
+                        ],
+                        "defaultValue": "Full cream"
+                    }
+                },
+                {
+                    "id": "size",
+                    "type": "dropdown",
+                    "label": "Size",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "small",
+                                "label": "Small",
+                                "value": "Small"
+                            },
+                            {
+                                "id": "regular",
+                                "label": "Regular",
+                                "value": "Regular"
+                            },
+                            {
+                                "id": "large",
+                                "label": "Large",
+                                "value": "Large"
+                            }
+                        ],
+                        "defaultValue": "Regular"
+                    }
+                },
+                {
+                    "id": "shots",
+                    "type": "number",
+                    "label": "Shots",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "extras_json",
+                    "type": "short_text",
+                    "label": "Extras Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "making",
+                                "label": "Making",
+                                "value": "Making"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "queued",
+                                "label": "Queued",
+                                "value": "Queued"
+                            },
+                            {
+                                "id": "pulling_shots",
+                                "label": "Pulling shots",
+                                "value": "Pulling shots"
+                            },
+                            {
+                                "id": "pouring",
+                                "label": "Pouring",
+                                "value": "Pouring"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Queued"
+                    }
+                },
+                {
+                    "id": "barista_name",
+                    "type": "short_text",
+                    "label": "Barista Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Barista Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:barista-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Barista Tickets by Milk",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:barista-tickets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "milk",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Barista Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:barista-tickets",
+                                "titleField": "order_number",
+                                "limit": 10,
+                                "subtitleField": "milk"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "stock-items",
+            "title": "Stock Items",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"stock_items\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Stock Items",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "stock_items",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "item_name": "item_name",
+                        "category": "category",
+                        "current_qty": "current_qty",
+                        "par_level": "par_level",
+                        "unit": "unit",
+                        "status": "status",
+                        "supplier": "supplier",
+                        "last_checked": "last_checked"
+                    },
+                    "createdAtColumn": null,
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Stock Items",
+                    "description": "Connected live to SQLite table \"stock_items\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "item_name",
+                    "type": "short_text",
+                    "label": "Item Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "coffee",
+                                "label": "Coffee",
+                                "value": "Coffee"
+                            },
+                            {
+                                "id": "tea",
+                                "label": "Tea",
+                                "value": "Tea"
+                            },
+                            {
+                                "id": "cold_drink",
+                                "label": "Cold drink",
+                                "value": "Cold drink"
+                            },
+                            {
+                                "id": "food",
+                                "label": "Food",
+                                "value": "Food"
+                            },
+                            {
+                                "id": "retail_beans",
+                                "label": "Retail beans",
+                                "value": "Retail beans"
+                            },
+                            {
+                                "id": "beans",
+                                "label": "Beans",
+                                "value": "Beans"
+                            },
+                            {
+                                "id": "milk",
+                                "label": "Milk",
+                                "value": "Milk"
+                            },
+                            {
+                                "id": "syrup",
+                                "label": "Syrup",
+                                "value": "Syrup"
+                            },
+                            {
+                                "id": "cups",
+                                "label": "Cups",
+                                "value": "Cups"
+                            },
+                            {
+                                "id": "food_prep",
+                                "label": "Food prep",
+                                "value": "Food prep"
+                            },
+                            {
+                                "id": "packaging",
+                                "label": "Packaging",
+                                "value": "Packaging"
+                            }
+                        ],
+                        "defaultValue": "Beans"
+                    }
+                },
+                {
+                    "id": "current_qty",
+                    "type": "number",
+                    "label": "Current Qty",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "par_level",
+                    "type": "number",
+                    "label": "Par Level",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "kg",
+                                "label": "kg",
+                                "value": "kg"
+                            },
+                            {
+                                "id": "litres",
+                                "label": "Litres",
+                                "value": "Litres"
+                            },
+                            {
+                                "id": "units",
+                                "label": "Units",
+                                "value": "Units"
+                            },
+                            {
+                                "id": "boxes",
+                                "label": "Boxes",
+                                "value": "Boxes"
+                            }
+                        ],
+                        "defaultValue": "kg"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "making",
+                                "label": "Making",
+                                "value": "Making"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "queued",
+                                "label": "Queued",
+                                "value": "Queued"
+                            },
+                            {
+                                "id": "pulling_shots",
+                                "label": "Pulling shots",
+                                "value": "Pulling shots"
+                            },
+                            {
+                                "id": "pouring",
+                                "label": "Pouring",
+                                "value": "Pouring"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "last_checked",
+                    "type": "number",
+                    "label": "Last Checked",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Stock Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stock-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Stock Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stock-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Stock Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:stock-items",
+                                "titleField": "item_name",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "staff-shifts",
+            "title": "Staff Shifts",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"staff_shifts\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Staff Shifts",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "staff_shifts",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "staff_name": "staff_name",
+                        "role": "role",
+                        "shift_date": "shift_date",
+                        "start_time": "start_time",
+                        "end_time": "end_time",
+                        "station": "station",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Staff Shifts",
+                    "description": "Connected live to SQLite table \"staff_shifts\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "staff_name",
+                    "type": "short_text",
+                    "label": "Staff Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "barista",
+                                "label": "Barista",
+                                "value": "Barista"
+                            },
+                            {
+                                "id": "kitchen",
+                                "label": "Kitchen",
+                                "value": "Kitchen"
+                            },
+                            {
+                                "id": "front_counter",
+                                "label": "Front counter",
+                                "value": "Front counter"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "Manager",
+                                "value": "Manager"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "barista",
+                                "label": "barista",
+                                "value": "barista"
+                            },
+                            {
+                                "id": "kitchen",
+                                "label": "kitchen",
+                                "value": "kitchen"
+                            },
+                            {
+                                "id": "front_counter",
+                                "label": "front_counter",
+                                "value": "front_counter"
+                            }
+                        ],
+                        "defaultValue": "Barista"
+                    }
+                },
+                {
+                    "id": "shift_date",
+                    "type": "date",
+                    "label": "Shift Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "end_time",
+                    "type": "time",
+                    "label": "End Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "espresso",
+                                "label": "Espresso",
+                                "value": "Espresso"
+                            },
+                            {
+                                "id": "kitchen",
+                                "label": "Kitchen",
+                                "value": "Kitchen"
+                            },
+                            {
+                                "id": "cold_bar",
+                                "label": "Cold bar",
+                                "value": "Cold bar"
+                            },
+                            {
+                                "id": "retail",
+                                "label": "Retail",
+                                "value": "Retail"
+                            },
+                            {
+                                "id": "floor",
+                                "label": "Floor",
+                                "value": "Floor"
+                            }
+                        ],
+                        "defaultValue": "Espresso"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Staff Shifts",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-shifts",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Staff Shifts by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-shifts",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Staff Shifts",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:staff-shifts",
+                                "titleField": "staff_name",
+                                "limit": 10,
+                                "subtitleField": "role"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "daily-closes",
+            "title": "Daily Closes",
+            "icon": "Coffee",
+            "description": "Live FormLogic form synced directly to SQLite table \"daily_closes\" in BrewDesk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Daily Closes",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:brewdesk-cafe-ops-softn-app",
+                    "table": "daily_closes",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "close_date": "close_date",
+                        "register_cents": "register_cents",
+                        "pos_cents": "pos_cents",
+                        "tips_cents": "tips_cents",
+                        "beans_used": "beans_used",
+                        "milk_used": "milk_used",
+                        "waste": "waste",
+                        "cleaning_json": "cleaning_json",
+                        "manager_notes": "manager_notes",
+                        "closed_by": "closed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Daily Closes",
+                    "description": "Connected live to SQLite table \"daily_closes\" in BrewDesk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "close_date",
+                    "type": "date",
+                    "label": "Close Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "register_cents",
+                    "type": "number",
+                    "label": "Register (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "pos_cents",
+                    "type": "number",
+                    "label": "Pos (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tips_cents",
+                    "type": "number",
+                    "label": "Tips (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "beans_used",
+                    "type": "number",
+                    "label": "Beans Used",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "milk_used",
+                    "type": "number",
+                    "label": "Milk Used",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "waste",
+                    "type": "short_text",
+                    "label": "Waste",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cleaning_json",
+                    "type": "short_text",
+                    "label": "Cleaning Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager_notes",
+                    "type": "long_text",
+                    "label": "Manager Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "closed_by",
+                    "type": "short_text",
+                    "label": "Closed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Daily Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:daily-closes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Daily Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:daily-closes",
+                                "titleField": "close_date",
+                                "limit": 10,
+                                "subtitleField": "register_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "brewdesk-cafe-ops-softn-app",
+            "name": "BrewDesk",
+            "description": "Turnkey cafe and barista operations desk: live order pad, espresso ticket queue, menu board, beans and milk par stock, shift roster and daily closeout.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "brewdesk-cafe-ops-softn-forms",
+            "name": "BrewDesk Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to BrewDesk's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:brewdesk-cafe-ops-softn-app",
+                "linkedSoftnAppId": "@packApp:brewdesk-cafe-ops-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "menu-items",
+                    "displayName": "Menu Items",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "cafe-orders",
+                    "displayName": "Cafe Orders",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "barista-tickets",
+                    "displayName": "Barista Tickets",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "stock-items",
+                    "displayName": "Stock Items",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "staff-shifts",
+                    "displayName": "Staff Shifts",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "daily-closes",
+                    "displayName": "Daily Closes",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_menu_items",
+                    "name": "Total Menu Items",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-items",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_menu_items",
+                    "name": "Menu Items by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-items",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_cafe_orders",
+                    "name": "Total Cafe Orders",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cafe-orders",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_cafe_orders",
+                    "name": "Cafe Orders by Order Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cafe-orders",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "order_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_barista_tickets",
+                    "name": "Total Barista Tickets",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:barista-tickets",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_stock_items",
+                    "name": "Total Stock Items",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:stock-items",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Menu Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Cafe Orders",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:cafe-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Cafe Orders by Order Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:cafe-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "order_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Barista Tickets",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:barista-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Stock Items",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:stock-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

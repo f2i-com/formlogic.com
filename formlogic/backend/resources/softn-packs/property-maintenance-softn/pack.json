@@ -1,0 +1,47 @@
+{
+    "id": "property-maintenance-softn",
+    "slug": "property-maintenance-softn",
+    "name": "Property Maintenance — SoftN App & Linked Forms",
+    "shortName": "Property Maintenance",
+    "description": "Turnkey property maintenance and handyman operations desk: tenant request triage board, 1-click work order dispatch, properties register with access notes, tenants directory, and rated property inspections. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Home",
+    "category": "Business apps",
+    "tags": [
+        "property",
+        "maintenance",
+        "handyman",
+        "jobs",
+        "landlord",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "property-maintenance-softn.softn",
+    "softnPackAppId": "property-maintenance-softn-app",
+    "formsPackAppId": "property-maintenance-softn-forms",
+    "companionPackSlug": "property-maintenance",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": true,
+    "tables": [
+        "properties",
+        "tenants",
+        "maintenance_requests",
+        "work_orders",
+        "inspections"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/property-maintenance.png"
+        }
+    ]
+}

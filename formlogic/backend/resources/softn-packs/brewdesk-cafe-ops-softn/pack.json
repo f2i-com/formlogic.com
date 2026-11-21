@@ -1,0 +1,48 @@
+{
+    "id": "brewdesk-cafe-ops-softn",
+    "slug": "brewdesk-cafe-ops-softn",
+    "name": "BrewDesk — SoftN App & Linked Forms",
+    "shortName": "BrewDesk",
+    "description": "Turnkey cafe and barista operations desk: live order pad, espresso ticket queue, menu board, beans and milk par stock, shift roster and daily closeout. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Coffee",
+    "category": "Business apps",
+    "tags": [
+        "cafe",
+        "coffee",
+        "orders",
+        "barista",
+        "hospitality",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "brewdesk-cafe-ops-softn.softn",
+    "softnPackAppId": "brewdesk-cafe-ops-softn-app",
+    "formsPackAppId": "brewdesk-cafe-ops-softn-forms",
+    "companionPackSlug": "brewdesk-cafe-ops",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": true,
+    "tables": [
+        "menu_items",
+        "cafe_orders",
+        "barista_tickets",
+        "stock_items",
+        "staff_shifts",
+        "daily_closes"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/brewdesk-cafe-ops.png"
+        }
+    ]
+}

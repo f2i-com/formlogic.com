@@ -441,6 +441,16 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
     // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
     invokeServiceAction: askingFirst((req: import('./nodes').ServiceActionInvokeRequest) => invokeDesktopServiceAction(req)),
+    nativeAppRequest: async (req) => {
+      const res = await api.runFlowNativeAppRequest(req);
+      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App request failed');
+      return { status: res.data.status, ok: res.data.ok, body: res.data.body };
+    },
+    nativeRecordAction: async (req) => {
+      const res = await api.runFlowNativeRecordAction(req);
+      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App database action failed');
+      return res.data;
+    },
     confirmLocalAccess: askingFirst(async () => undefined),
   };
 }
@@ -523,6 +533,16 @@ export function buildWorkspaceExecutorDeps(): FlowExecutorDeps {
     invokeChildFlow: (req) => invokeChildFlowWith(workspaceChildFlowBackend(), req),
     // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
     invokeServiceAction: (req) => invokeDesktopServiceAction(req),
+    nativeAppRequest: async (req) => {
+      const res = await api.runFlowNativeAppRequest(req);
+      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App request failed');
+      return { status: res.data.status, ok: res.data.ok, body: res.data.body };
+    },
+    nativeRecordAction: async (req) => {
+      const res = await api.runFlowNativeRecordAction(req);
+      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App database action failed');
+      return res.data;
+    },
   };
 }
 

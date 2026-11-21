@@ -1,0 +1,1702 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "fleetflow-fleet-softn",
+        "name": "FleetFlow (SoftN + Forms)",
+        "description": "Turnkey vehicle fleet and driver logbook: live rego, insurance and licence expiry countdown alerts, vehicle register with automatic odometer syncing from trips, FBT business/personal trip and fuel logbook, workshop maintenance pipeline, and incident register. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "fleet",
+            "vehicles",
+            "drivers",
+            "maintenance",
+            "logistics",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "vehicles",
+            "title": "Vehicles",
+            "icon": "Truck",
+            "description": "Live FormLogic form synced directly to SQLite table \"vehicles\" in FleetFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Vehicles",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fleetflow-fleet-softn-app",
+                    "table": "vehicles",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "vehicle_name": "vehicle_name",
+                        "registration": "registration",
+                        "make_model": "make_model",
+                        "year": "year",
+                        "odometer_km": "odometer_km",
+                        "status": "status",
+                        "rego_expiry": "rego_expiry",
+                        "insurance_expiry": "insurance_expiry",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Vehicles",
+                    "description": "Connected live to SQLite table \"vehicles\" in FleetFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle_name",
+                    "type": "short_text",
+                    "label": "Vehicle Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "registration",
+                    "type": "short_text",
+                    "label": "Registration",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "make_model",
+                    "type": "short_text",
+                    "label": "Make Model",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "year",
+                    "type": "number",
+                    "label": "Year",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "odometer_km",
+                    "type": "number",
+                    "label": "Odometer Km",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "in_use",
+                                "label": "In use",
+                                "value": "In use"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "out_of_service",
+                                "label": "Out of service",
+                                "value": "Out of service"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "due",
+                                "label": "Due",
+                                "value": "Due"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In Workshop",
+                                "value": "In Workshop"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under review",
+                                "value": "Under review"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Available"
+                    }
+                },
+                {
+                    "id": "rego_expiry",
+                    "type": "date",
+                    "label": "Rego Expiry",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "insurance_expiry",
+                    "type": "date",
+                    "label": "Insurance Expiry",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Vehicles",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Vehicles by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Vehicles",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:vehicles",
+                                "titleField": "registration",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "drivers",
+            "title": "Drivers",
+            "icon": "Truck",
+            "description": "Live FormLogic form synced directly to SQLite table \"drivers\" in FleetFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Drivers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fleetflow-fleet-softn-app",
+                    "table": "drivers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "driver_name": "driver_name",
+                        "phone": "phone",
+                        "email": "email",
+                        "licence_class": "licence_class",
+                        "licence_expiry": "licence_expiry",
+                        "active": "active",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Drivers",
+                    "description": "Connected live to SQLite table \"drivers\" in FleetFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "driver_name",
+                    "type": "short_text",
+                    "label": "Driver Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "licence_class",
+                    "type": "dropdown",
+                    "label": "Licence Class",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "car",
+                                "label": "Car",
+                                "value": "Car"
+                            },
+                            {
+                                "id": "light_rigid",
+                                "label": "Light rigid",
+                                "value": "Light rigid"
+                            },
+                            {
+                                "id": "medium_rigid",
+                                "label": "Medium rigid",
+                                "value": "Medium rigid"
+                            },
+                            {
+                                "id": "heavy_rigid",
+                                "label": "Heavy rigid",
+                                "value": "Heavy rigid"
+                            }
+                        ],
+                        "defaultValue": "Car"
+                    }
+                },
+                {
+                    "id": "licence_expiry",
+                    "type": "date",
+                    "label": "Licence Expiry",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Drivers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:drivers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Drivers by Licence Class",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:drivers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "licence_class",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Drivers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:drivers",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "trips",
+            "title": "Trips",
+            "icon": "Truck",
+            "description": "Live FormLogic form synced directly to SQLite table \"trips\" in FleetFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Trips",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fleetflow-fleet-softn-app",
+                    "table": "trips",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "vehicle_id": "vehicle_id",
+                        "vehicle_name": "vehicle_name",
+                        "registration": "registration",
+                        "driver_id": "driver_id",
+                        "driver_name": "driver_name",
+                        "trip_date": "trip_date",
+                        "start_odometer": "start_odometer",
+                        "end_odometer": "end_odometer",
+                        "distance_km": "distance_km",
+                        "purpose": "purpose",
+                        "usage_class": "usage_class",
+                        "destination": "destination",
+                        "fuel_cost_cents": "fuel_cost_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Trips",
+                    "description": "Connected live to SQLite table \"trips\" in FleetFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle_id",
+                    "type": "linked_record",
+                    "label": "Vehicle",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:vehicles",
+                        "displayFieldIds": [
+                            "registration"
+                        ]
+                    }
+                },
+                {
+                    "id": "vehicle_name",
+                    "type": "short_text",
+                    "label": "Vehicle Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "registration",
+                    "type": "short_text",
+                    "label": "Registration",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "driver_id",
+                    "type": "linked_record",
+                    "label": "Driver",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:drivers",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "driver_name",
+                    "type": "short_text",
+                    "label": "Driver Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "trip_date",
+                    "type": "date",
+                    "label": "Trip Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_odometer",
+                    "type": "number",
+                    "label": "Start Odometer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "end_odometer",
+                    "type": "number",
+                    "label": "End Odometer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "distance_km",
+                    "type": "number",
+                    "label": "Distance Km",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "purpose",
+                    "type": "dropdown",
+                    "label": "Purpose",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "delivery",
+                                "label": "Delivery",
+                                "value": "Delivery"
+                            },
+                            {
+                                "id": "site_visit",
+                                "label": "Site visit",
+                                "value": "Site visit"
+                            },
+                            {
+                                "id": "client_transport",
+                                "label": "Client transport",
+                                "value": "Client transport"
+                            },
+                            {
+                                "id": "maintenance_run",
+                                "label": "Maintenance run",
+                                "value": "Maintenance run"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Delivery"
+                    }
+                },
+                {
+                    "id": "usage_class",
+                    "type": "dropdown",
+                    "label": "Usage Class",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "business",
+                                "label": "Business",
+                                "value": "Business"
+                            },
+                            {
+                                "id": "personal",
+                                "label": "Personal",
+                                "value": "Personal"
+                            }
+                        ],
+                        "defaultValue": "Business"
+                    }
+                },
+                {
+                    "id": "destination",
+                    "type": "short_text",
+                    "label": "Destination",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fuel_cost_cents",
+                    "type": "number",
+                    "label": "Fuel Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Trips",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:trips",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Trips by Purpose",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:trips",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "purpose",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Trips",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:trips",
+                                "titleField": "registration",
+                                "limit": 10,
+                                "subtitleField": "purpose"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "maintenance-jobs",
+            "title": "Maintenance Jobs",
+            "icon": "Truck",
+            "description": "Live FormLogic form synced directly to SQLite table \"maintenance_jobs\" in FleetFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Maintenance Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fleetflow-fleet-softn-app",
+                    "table": "maintenance_jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "vehicle_id": "vehicle_id",
+                        "vehicle_name": "vehicle_name",
+                        "registration": "registration",
+                        "maintenance_type": "maintenance_type",
+                        "due_date": "due_date",
+                        "completed_date": "completed_date",
+                        "cost_cents": "cost_cents",
+                        "status": "status",
+                        "supplier": "supplier",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Maintenance Jobs",
+                    "description": "Connected live to SQLite table \"maintenance_jobs\" in FleetFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle_id",
+                    "type": "linked_record",
+                    "label": "Vehicle",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:vehicles",
+                        "displayFieldIds": [
+                            "registration"
+                        ]
+                    }
+                },
+                {
+                    "id": "vehicle_name",
+                    "type": "short_text",
+                    "label": "Vehicle Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "registration",
+                    "type": "short_text",
+                    "label": "Registration",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "maintenance_type",
+                    "type": "dropdown",
+                    "label": "Maintenance Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "service",
+                                "label": "Service",
+                                "value": "Service"
+                            },
+                            {
+                                "id": "tyres",
+                                "label": "Tyres",
+                                "value": "Tyres"
+                            },
+                            {
+                                "id": "brakes",
+                                "label": "Brakes",
+                                "value": "Brakes"
+                            },
+                            {
+                                "id": "repair",
+                                "label": "Repair",
+                                "value": "Repair"
+                            },
+                            {
+                                "id": "inspection",
+                                "label": "Inspection",
+                                "value": "Inspection"
+                            },
+                            {
+                                "id": "registration_check",
+                                "label": "Registration check",
+                                "value": "Registration check"
+                            }
+                        ],
+                        "defaultValue": "Service"
+                    }
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "completed_date",
+                    "type": "date",
+                    "label": "Completed Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "in_use",
+                                "label": "In use",
+                                "value": "In use"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "out_of_service",
+                                "label": "Out of service",
+                                "value": "Out of service"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "due",
+                                "label": "Due",
+                                "value": "Due"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In Workshop",
+                                "value": "In Workshop"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under review",
+                                "value": "Under review"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Maintenance Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Maintenance Jobs by Maintenance Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "maintenance_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Maintenance Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:maintenance-jobs",
+                                "titleField": "registration",
+                                "limit": 10,
+                                "subtitleField": "maintenance_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "incidents",
+            "title": "Incidents",
+            "icon": "Truck",
+            "description": "Live FormLogic form synced directly to SQLite table \"incidents\" in FleetFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Incidents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fleetflow-fleet-softn-app",
+                    "table": "incidents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "vehicle_id": "vehicle_id",
+                        "vehicle_name": "vehicle_name",
+                        "registration": "registration",
+                        "driver_id": "driver_id",
+                        "driver_name": "driver_name",
+                        "incident_date": "incident_date",
+                        "incident_type": "incident_type",
+                        "severity": "severity",
+                        "description": "description",
+                        "status": "status",
+                        "resolution_notes": "resolution_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Incidents",
+                    "description": "Connected live to SQLite table \"incidents\" in FleetFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vehicle_id",
+                    "type": "linked_record",
+                    "label": "Vehicle",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:vehicles",
+                        "displayFieldIds": [
+                            "registration"
+                        ]
+                    }
+                },
+                {
+                    "id": "vehicle_name",
+                    "type": "short_text",
+                    "label": "Vehicle Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "registration",
+                    "type": "short_text",
+                    "label": "Registration",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "driver_id",
+                    "type": "linked_record",
+                    "label": "Driver",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:drivers",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "driver_name",
+                    "type": "short_text",
+                    "label": "Driver Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_date",
+                    "type": "date",
+                    "label": "Incident Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_type",
+                    "type": "dropdown",
+                    "label": "Incident Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "collision",
+                                "label": "Collision",
+                                "value": "Collision"
+                            },
+                            {
+                                "id": "near_miss",
+                                "label": "Near miss",
+                                "value": "Near miss"
+                            },
+                            {
+                                "id": "damage",
+                                "label": "Damage",
+                                "value": "Damage"
+                            },
+                            {
+                                "id": "breakdown",
+                                "label": "Breakdown",
+                                "value": "Breakdown"
+                            },
+                            {
+                                "id": "fine_or_infringement",
+                                "label": "Fine or infringement",
+                                "value": "Fine or infringement"
+                            }
+                        ],
+                        "defaultValue": "Near miss"
+                    }
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            }
+                        ],
+                        "defaultValue": "Low"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "in_use",
+                                "label": "In use",
+                                "value": "In use"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "out_of_service",
+                                "label": "Out of service",
+                                "value": "Out of service"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "due",
+                                "label": "Due",
+                                "value": "Due"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In Workshop",
+                                "value": "In Workshop"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under review",
+                                "value": "Under review"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Reported"
+                    }
+                },
+                {
+                    "id": "resolution_notes",
+                    "type": "long_text",
+                    "label": "Resolution Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:incidents",
+                                "titleField": "registration",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "fleetflow-fleet-softn-app",
+            "name": "FleetFlow",
+            "description": "Turnkey vehicle fleet and driver logbook: live rego, insurance and licence expiry countdown alerts, vehicle register with automatic odometer syncing from trips, FBT business/personal trip and fuel logbook, workshop maintenance pipeline, and incident register.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "fleetflow-fleet-softn-forms",
+            "name": "FleetFlow Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to FleetFlow's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:fleetflow-fleet-softn-app",
+                "linkedSoftnAppId": "@packApp:fleetflow-fleet-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "vehicles",
+                    "displayName": "Vehicles",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "drivers",
+                    "displayName": "Drivers",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "trips",
+                    "displayName": "Trips",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "maintenance-jobs",
+                    "displayName": "Maintenance Jobs",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "incidents",
+                    "displayName": "Incidents",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_vehicles",
+                    "name": "Total Vehicles",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:vehicles",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_vehicles",
+                    "name": "Vehicles by Status",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:vehicles",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "status",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_drivers",
+                    "name": "Total Drivers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:drivers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_drivers",
+                    "name": "Drivers by Licence Class",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:drivers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "licence_class",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_trips",
+                    "name": "Total Trips",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:trips",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_maintenance_jobs",
+                    "name": "Total Maintenance Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:maintenance-jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Vehicles",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Vehicles by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:vehicles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Drivers",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:drivers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Drivers by Licence Class",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:drivers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "licence_class",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Trips",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:trips",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Maintenance Jobs",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:maintenance-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

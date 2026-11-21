@@ -68,12 +68,26 @@ export function uploadName(project: NativeProject, file: File): string {
   return fileAppName(file);
 }
 
-/** Whether a project brings a backend of its own (a `server` block); an app without one runs in the browser alone. */
-export function projectHasBackend(project: NativeProject): boolean {
+const CONTAINER_RUNTIMES = new Set(['php', 'javascript', 'typescript', 'rust', 'python']);
+
+/** Identify the hosted backend runtime declared by a project's manifest, or null if client-only. */
+export function projectBackendRuntime(project: NativeProject): 'softn-logic' | 'php' | 'javascript' | 'typescript' | 'rust' | 'python' | null {
   try {
     const manifest = JSON.parse(project.files['manifest.json'] ?? '{}') as Record<string, unknown>;
-    return manifest !== null && typeof manifest === 'object' && 'server' in manifest;
-  } catch { return false; }
+    if (!manifest || typeof manifest !== 'object') return null;
+    if ('server' in manifest) return 'softn-logic';
+    const backend = manifest.backend;
+    if (backend && typeof backend === 'object' && !Array.isArray(backend)) {
+      const rt = String((backend as Record<string, unknown>).runtime ?? (backend as Record<string, unknown>).engine ?? '').toLowerCase().trim();
+      if (CONTAINER_RUNTIMES.has(rt)) return rt as 'php' | 'javascript' | 'typescript' | 'rust' | 'python';
+    }
+    return null;
+  } catch { return null; }
+}
+
+/** Whether a project brings a backend of its own (a `server` block or sandboxed container `backend` block). */
+export function projectHasBackend(project: NativeProject): boolean {
+  return projectBackendRuntime(project) !== null;
 }
 
 /** Why the shared demo cannot add a SoftN app. */

@@ -24,13 +24,13 @@ import { CreateAppChat } from './CreateAppChat';
 type Build = 'web' | 'forms' | 'upload';
 const builds = [
   { type: 'web', label: 'Web app', hint: 'JavaScript, React or Vue', icon: AppWindow },
-  { type: 'forms', label: 'Forms app', hint: 'Forms and responses', icon: ClipboardList },
-  { type: 'upload', label: 'Upload ZIP', hint: 'Bring an existing app', icon: FileUp },
+  { type: 'forms', label: 'Forms app', hint: 'Forms, CRUD & live charts', icon: ClipboardList },
+  { type: 'upload', label: 'Upload SoftN / ZIP', hint: 'SoftN, PHP, Rust, JS or static', icon: FileUp },
 ] as const;
 const headings = {
   web: ['Start with a web app', 'Choose a framework and open a working starter in your editor.'],
   forms: ['Create a forms app', 'Name your app, then design the first form people will fill out.'],
-  upload: ['Upload an app ZIP', 'Choose an editable project or a browser-ready site with an index.html file.'],
+  upload: ['Upload a SoftN or web app ZIP', 'Upload a .softn or .zip project (including PHP, Rust, JS, Python, or static builds) — with optional shared database linking.'],
 };
 
 export function AppCreateStart() {

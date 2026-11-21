@@ -320,6 +320,15 @@ $container->set(ResponseService::class, function (Container $c) {
     // N3b signed op log (docs/FORMLOGIC_DATA_NODES.md §12): injection-only so
     // the Cloud signing key resolves through ONE configured path.
     $service->setDataOperationLog($c->get(\FormLogic\Services\DataOperationLogService::class));
+    // Bridge for FormLogic forms bound directly to hosted SoftN app SQLite tables.
+    $service->setNativeTableBridge(new \FormLogic\Services\NativeTableFormBridge(
+        $c->get(MySQLConnection::class)->getConnection(),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        null,
+        static fn () => $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
+    ));
     return $service;
 });
 $container->set(\FormLogic\Services\DataOperationLogService::class, function (Container $c) {
@@ -372,7 +381,7 @@ $container->set(\FormLogic\Services\MfaService::class, function (Container $c) {
 });
 
 $container->set(FormController::class, function (Container $c) {
-    return new FormController(
+    $controller = new FormController(
         $c->get(FormService::class),
         $c->get(LoggerInterface::class),
         $c->get(FormVersionService::class),
@@ -382,6 +391,8 @@ $container->set(FormController::class, function (Container $c) {
         $c->get(\FormLogic\Services\TrashService::class),
         $c->get(\FormLogic\Services\FormEncryptionService::class)
     );
+    $controller->setFormSqliteDatabase($c->get(\FormLogic\Services\FormSqliteDatabaseService::class));
+    return $controller;
 });
 
 // E2EE Private Forms (docs/E2EE_PRIVATE_FORMS_PLAN.md): per-form encryption state +
@@ -677,6 +688,62 @@ $container->set(PackRatingController::class, function (Container $c) {
     );
 });
 
+$container->set(\FormLogic\Services\MarketplaceSandboxService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\MarketplaceSandboxService(
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        null,
+        (string) ($settings['settings']['jwt']['secret'] ?? '')
+    );
+});
+$container->set(\FormLogic\Services\MemberPluginService::class, function (Container $c) {
+    return new \FormLogic\Services\MemberPluginService(
+        $c->get(MySQLConnection::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
+    );
+});
+$container->set(\FormLogic\Services\MarketplaceCommerceService::class, function (Container $c) use ($settings) {
+    return new \FormLogic\Services\MarketplaceCommerceService(
+        $c->get(MySQLConnection::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\MarketplaceSandboxService::class),
+        $c->get(\FormLogic\Services\MemberPluginService::class),
+        $c->get(PackCatalogService::class),
+        !($settings['settings']['isProduction'] ?? false) || (bool) ($settings['settings']['cloud']['betaMode'] ?? true)
+    );
+});
+$container->set(\FormLogic\Services\SoftnPackCatalog::class, function () {
+    return new \FormLogic\Services\SoftnPackCatalog();
+});
+$container->set(\FormLogic\Services\FormSqliteDatabaseService::class, function (Container $c) {
+    return new \FormLogic\Services\FormSqliteDatabaseService(
+        $c->get(MySQLConnection::class),
+        $c->get(SQLiteConnection::class),
+        $c->get(AppService::class),
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\AppDatabaseController::class, function (Container $c) {
+    return new \FormLogic\Controllers\AppDatabaseController(
+        $c->get(\FormLogic\Services\FormSqliteDatabaseService::class)
+    );
+});
+$container->set(\FormLogic\Controllers\MarketplaceController::class, function (Container $c) {
+    return new \FormLogic\Controllers\MarketplaceController(
+        $c->get(PackCatalogService::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\MarketplaceSandboxService::class),
+        $c->get(\FormLogic\Services\MarketplaceCommerceService::class),
+        $c->get(\FormLogic\Services\MemberPluginService::class),
+        $c->get(AuditService::class),
+        $c->get(PackService::class),
+        $c->get(\FormLogic\Services\SoftnPackCatalog::class)
+    );
+});
+
 // File storage service
 $container->set(FileStorageService::class, function (Container $c) {
     $uploadsConfig = $c->get('settings')['uploads'] ?? [];
@@ -908,7 +975,7 @@ $container->set(\FormLogic\Controllers\CameraCheckController::class, function (C
     );
 });
 $container->set(\FormLogic\Controllers\NativeAppController::class, function (Container $c) {
-    return new \FormLogic\Controllers\NativeAppController(
+    $controller = new \FormLogic\Controllers\NativeAppController(
         $c->get(AppService::class),
         $c->get(AppUserService::class),
         $c->get(\FormLogic\Services\NativeAppService::class),
@@ -927,6 +994,8 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
         $c->get(\FormLogic\Services\NativeAppCalls::class),
         $c->get(\FormLogic\Services\AppListening::class)
     );
+    $controller->setFormService($c->get(FormService::class));
+    return $controller;
 });
 // Listening for a hosted app (AppListening): FormLogic's page records the person and the site's
 // speech server (AI_SPEECH_BASE_URL) puts it into words, where the app's owner allowed it.
@@ -957,7 +1026,14 @@ $container->set(\FormLogic\Services\AppAiService::class, function (Container $c)
     );
 });
 $container->set(\FormLogic\Services\NativeRecordEventRouter::class, function (Container $c) {
-    return new \FormLogic\Services\NativeRecordEventRouter($c->get(\FormLogic\Services\FlowService::class), $c->get(\FormLogic\Services\AppAiService::class));
+    $cloudRunner = $c->get(\FormLogic\Services\CloudFlowRunner::class);
+    $router = new \FormLogic\Services\NativeRecordEventRouter(
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\AppAiService::class),
+        $cloudRunner
+    );
+    $cloudRunner->setRecordEventRouter($router);
+    return $router;
 });
 // App payments (AppWalletService): visitors' and members' prepaid balances with an app, topped up
 // through the site's own PayPal, for administrators' apps only in this version.
@@ -1057,7 +1133,7 @@ $container->set(AppResponseService::class, function (Container $c) {
 
 // Register App controllers
 $container->set(AppController::class, function (Container $c) {
-    return new AppController(
+    $controller = new AppController(
         $c->get(AppService::class),
         $c->get(LoggerInterface::class),
         $c->get(AuditService::class),
@@ -1067,6 +1143,8 @@ $container->set(AppController::class, function (Container $c) {
         $c->get(\FormLogic\Services\NativeAppService::class),
         $c->get(\FormLogic\Services\AppLookService::class)
     );
+    $controller->setFormSqliteDatabase($c->get(\FormLogic\Services\FormSqliteDatabaseService::class));
+    return $controller;
 });
 
 $container->set(\FormLogic\Services\AppDataExportService::class, function (Container $c) use ($settings) {
@@ -1175,15 +1253,32 @@ $container->set(\FormLogic\Services\CloudFlowRunner::class, function (Container 
         $c->get(AIService::class),
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\DesktopCommandService::class),
-        $appUrl
+        $appUrl,
+        null,
+        \FormLogic\Services\CloudFlowRunner::MAX_WALL_CLOCK_SECONDS,
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
     );
 });
 // Run dispatcher (plan section 5.7): POST /api/flows/{id}/run honors execution_location.
 $container->set(\FormLogic\Controllers\FlowRunController::class, function (Container $c) {
+    // Ensure CloudFlowRunner <-> NativeRecordEventRouter bidirectional link is wired.
+    $c->get(\FormLogic\Services\NativeRecordEventRouter::class);
     return new \FormLogic\Controllers\FlowRunController(
         $c->get(\FormLogic\Services\FlowService::class),
         $c->get(\FormLogic\Services\CloudFlowRunner::class),
         $c->get(\FormLogic\Controllers\DesktopFlowRelayController::class)
+    );
+});
+// External API-key invocation of SoftN / container app backends and programmatic flow runs.
+$container->set(\FormLogic\Controllers\ExternalAppApiController::class, function (Container $c) {
+    return new \FormLogic\Controllers\ExternalAppApiController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(\FormLogic\Services\CloudFlowRunner::class),
+        $c->get(\FormLogic\Services\PlanService::class),
+        $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
     );
 });
 // Flow compilation (RUN-301 first slice, ADR-010): server-authoritative lowering of
@@ -1479,7 +1574,8 @@ $app->add(new BodySizeLimitMiddleware(
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
-        ['path' => '#^/api/(application-packages/import|packs/catalog/upload)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/(application-packages/import|packs/catalog/upload|packs/catalog/publish-softn)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/packs/catalog/publish-softn$#', 'maxBytes' => 16 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         // SAFE-001: describe also accepts a multipart .formlogic archive (pre-install review of a
         // binary archive), so it needs the same cap as the archive import lane.
         ['path' => '#^/api/packs/describe$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
@@ -1529,7 +1625,9 @@ $oauthPublicPaths = [
     '/api/oauth/register',
 ];
 $app->add(function ($request, $handler) use ($oauthPublicPaths) {
-    if (!in_array($request->getUri()->getPath(), $oauthPublicPaths, true)) {
+    $reqPath = $request->getUri()->getPath();
+    $isMarketplaceSandbox = preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset|frame(?:/.*)?)$#', $reqPath) === 1;
+    if (!in_array($reqPath, $oauthPublicPaths, true) && !$isMarketplaceSandbox) {
         return $handler->handle($request);
     }
     $response = strtoupper($request->getMethod()) === 'OPTIONS'
@@ -2819,6 +2917,10 @@ $app->post('/api/packs/catalog/upload', function ($request, $response) use ($con
     return $container->get(PackCatalogController::class)->uploadZip($request, $response);
 })->add($authRequired);
 
+$app->post('/api/packs/catalog/publish-softn', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->publishSoftn($request, $response);
+})->add($authRequired);
+
 $app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
     // Any authenticated user may TRIGGER the one-time bootstrap so a brand-new
     // tenant whose first user happens to be a non-owner doesn't get a
@@ -2873,6 +2975,78 @@ $app->get('/api/packs/catalog/{slug}/ratings', function ($request, $response) us
 
 $app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response) use ($container, $getArgs) {
     return $container->get(PackRatingController::class)->deleteRating($request, $response, $getArgs($request));
+})->add($authRequired);
+
+// Marketplace live sandbox demos (private source-hidden hosting + ephemeral SQLite backend)
+$mktSandboxLimiter = new RateLimitMiddleware($rateLimiter, 180, 60, 'mkt_sandbox');
+$app->post('/api/packs/catalog/{slug}/demo/session', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->startDemo($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter)->add($authOptional);
+
+$app->post('/api/packs/catalog/{slug}/demo/reset', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->resetDemo($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->get('/api/packs/catalog/{slug}/demo/frame/{token}[/{path:.*}]', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->serveDemoFrame($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->post('/api/packs/catalog/{slug}/demo/ui-event', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoUiEvent($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+$app->post('/api/packs/catalog/{slug}/demo/request', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->demoBackendRequest($request, $response, $getArgs($request));
+})->add($mktSandboxLimiter);
+
+// Marketplace licensing, server-side protected install & seller sales
+$app->post('/api/packs/catalog/{slug}/purchase', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->purchase($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->post('/api/packs/catalog/{slug}/install', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->install($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->get('/api/marketplace/licenses', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->myLicenses($request, $response);
+})->add($authRequired);
+
+$app->get('/api/marketplace/sales', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->sellerSales($request, $response);
+})->add($authRequired);
+
+// Modular Member Plugins & Per-App Plugin attachments (including SoftN apps as plugins)
+$app->get('/api/member-plugins', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->listMemberPlugins($request, $response);
+})->add($authRequired);
+
+$app->put('/api/member-plugins/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->updateMemberPlugin($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->delete('/api/member-plugins/{id}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->uninstallMemberPlugin($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->post('/api/member-plugins/{id}/request', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->invokeMemberPlugin($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->get('/api/apps/{id}/plugins', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->listAppPlugins($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->post('/api/apps/{id}/plugins', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->attachAppPlugin($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->put('/api/apps/{id}/plugins/{pluginId}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->updateAppPlugin($request, $response, $getArgs($request));
+})->add($authRequired);
+
+$app->delete('/api/apps/{id}/plugins/{pluginId}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\MarketplaceController::class)->detachAppPlugin($request, $response, $getArgs($request));
 })->add($authRequired);
 
 // API Key management routes (cookie auth, protected, rate limited)
@@ -3321,6 +3495,27 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\FlowKvController::class)->ownerDelete($request, $response);
     })->add($flowsWriteAuth);
 
+    // Programmatic SoftN & container app backend invocation via API key (`apps:invoke`).
+    $appsInvokeAuth = new ApiKeyMiddleware($apiKeyService, ['apps:invoke'], $rateLimiter);
+    $group->get('/apps', function ($request, $response) use ($container) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->listApps($request, $response);
+    })->add($appsInvokeAuth);
+    $group->post('/apps/{appId}/invoke', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->invokeApp($request, $response, $getArgs($request));
+    })->add($appsInvokeAuth);
+    $group->map(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], '/apps/{appId}/routes/{path:.*}', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->routeApp($request, $response, $getArgs($request));
+    })->add($appsInvokeAuth);
+
+    // Programmatic flow execution via API key (`flows:run`).
+    $flowsRunAuth = new ApiKeyMiddleware($apiKeyService, ['flows:run'], $rateLimiter);
+    $group->post('/flows/{flowId}/run', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->runFlow($request, $response, $getArgs($request));
+    })->add($flowsRunAuth);
+    $group->post('/apps/{appId}/flows/{slug}/run', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->runAppFlow($request, $response, $getArgs($request));
+    })->add($flowsRunAuth);
+
     // The Aokie plugin's bootstrap and activity (the desktop's waiting lanes are in the link
     // group below). The controller requires aokie:realtime and emits a relink diagnostic when
     // an older key only has connector:relay. Authentication is still strict.
@@ -3599,6 +3794,44 @@ $app->get('/api/apps/{id}/native/{operation:media}', function ($request, $respon
 // A new SoftN app's first version: the starter project, installed only when nothing is.
 $app->post('/api/apps/{id}/native/{operation:starter}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+// Shared app database linking & one-click secondary SoftN API backend creation.
+$app->get('/api/apps/{id}/native/{operation:database-link}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/native/{operation:database-link}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/native/{operation:create-api-backend}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/native/{operation:create-management-form}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+
+// Unified SQLite Database routes for ANY App (Form Apps AND SoftN Apps): turn Form App forms
+// into real SQLite tables, sync schema changes, share across SoftN Apps & Form Apps, link existing
+// forms to tables, and scaffold a SoftN App directly on a Form App's SQLite database.
+$app->get('/api/apps/{id}/database', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->describe($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/database/enable', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->enable($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/database/sync', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->sync($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/database/link', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->setLink($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/database/link-form', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->linkForm($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/database/attach-forms', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->attachForms($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/database/create-softn-app', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppDatabaseController::class)->createSoftnApp($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 // The app's history of versions, for its owner (NativeAppVersionsController): every version a later
 // one replaced, what differs between one and the app as it is, one of its source files, going back
@@ -4088,6 +4321,13 @@ $app->post('/api/desktop/flows/runs/{id}/ack', function ($request, $response) us
 $cloudFlowRunRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'cloud_flow_run', true);
 $app->post('/api/flows/{flowId}/run', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\FlowRunController::class)->run($request, $response, $getArgs($request));
+})->add($cloudFlowRunRateLimiter)->add($authRequired);
+// Session-authenticated cross-app proxies for the browser Flow Editor (`native_app_request`, `native_record_action`).
+$app->post('/api/flows/internal/native-app-request', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->browserFlowNativeAppRequest($request, $response);
+})->add($cloudFlowRunRateLimiter)->add($authRequired);
+$app->post('/api/flows/internal/native-record-action', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\ExternalAppApiController::class)->browserFlowNativeRecordAction($request, $response);
 })->add($cloudFlowRunRateLimiter)->add($authRequired);
 
 // Server-authoritative flow compilation (RUN-301 first slice, ADR-010): diagnostics +

@@ -18,7 +18,10 @@ final class RecordEventRouterWiringTest extends TestCase
 {
     /** Where events are dispatched, and how many times each file does it. */
     private const DISPATCHERS = [
-        'src/Controllers/NativeAppController.php' => 2,
+        'src/Controllers/NativeAppController.php' => 3,
+        'src/Controllers/ExternalAppApiController.php' => 3,
+        'src/Services/CloudFlowRunner.php' => 3,
+        'src/Services/NativeTableFormBridge.php' => 1,
         'bin/native-record-dispatch.php' => 1,
         // App AI's worker catches up on the events of apps with AI on, every few seconds, and takes
         // the follow-up job a delivery asked for as soon as the delivery is made (contract §0.13).

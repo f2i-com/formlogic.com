@@ -1794,9 +1794,17 @@ CREATE TABLE `pack_catalog` (
   `screenshots` json DEFAULT NULL,
   `tags` json DEFAULT NULL,
   `category` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `item_type` enum('application_package','connector','theme','widget','quickjs_library','sdk_component','template') COLLATE utf8mb4_unicode_ci DEFAULT 'application_package',
+  `item_type` enum('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template') COLLATE utf8mb4_unicode_ci DEFAULT 'application_package',
   `trust_level` enum('official','verified','community','private') COLLATE utf8mb4_unicode_ci DEFAULT 'community',
   `visibility` enum('public','private','unlisted') COLLATE utf8mb4_unicode_ci DEFAULT 'public',
+  `source_visibility` enum('open','private') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'open',
+  `price_cents` int unsigned NOT NULL DEFAULT '0',
+  `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'USD',
+  `billing_model` enum('free','one_time','subscription') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'free',
+  `demo_enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `demo_app_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `compatible_with` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `plugin_meta` json DEFAULT NULL,
   `status` enum('draft','published','archived') COLLATE utf8mb4_unicode_ci DEFAULT 'draft',
   `download_count` int unsigned DEFAULT '0',
   `avg_rating` decimal(3,2) DEFAULT '0.00',
@@ -1812,7 +1820,86 @@ CREATE TABLE `pack_catalog` (
   KEY `idx_featured` (`featured`),
   KEY `idx_item_type` (`item_type`),
   KEY `idx_trust_level` (`trust_level`),
+  KEY `idx_pricing` (`billing_model`,`price_cents`),
+  KEY `idx_compatible_with` (`compatible_with`),
   CONSTRAINT `pack_catalog_ibfk_1` FOREIGN KEY (`publisher_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `marketplace_licenses` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `catalog_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `buyer_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `seller_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('active','revoked','refunded') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `price_cents` int unsigned NOT NULL DEFAULT '0',
+  `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'USD',
+  `payment_provider` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'free',
+  `payment_ref` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_mkt_license_buyer` (`catalog_id`,`buyer_user_id`),
+  UNIQUE KEY `uq_mkt_license_key` (`license_key`),
+  KEY `idx_mkt_license_buyer` (`buyer_user_id`),
+  KEY `idx_mkt_license_seller` (`seller_user_id`),
+  CONSTRAINT `fk_mkt_license_catalog` FOREIGN KEY (`catalog_id`) REFERENCES `pack_catalog` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_mkt_license_buyer` FOREIGN KEY (`buyer_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_mkt_license_seller` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `member_plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `catalog_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `plugin_slug` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `version` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '1.0.0',
+  `runtime_app_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `source_protected` tinyint(1) NOT NULL DEFAULT '0',
+  `compatible_with` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `manifest_json` json DEFAULT NULL,
+  `capabilities_json` json DEFAULT NULL,
+  `settings_json` json DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `installed_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_member_plugins_slug` (`user_id`,`plugin_slug`),
+  KEY `idx_member_plugins_user` (`user_id`),
+  KEY `idx_member_plugins_catalog` (`catalog_id`),
+  CONSTRAINT `fk_member_plugins_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_member_plugins_catalog` FOREIGN KEY (`catalog_id`) REFERENCES `pack_catalog` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_member_plugins_license` FOREIGN KEY (`license_id`) REFERENCES `marketplace_licenses` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `app_plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `member_plugin_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `share_database` tinyint(1) NOT NULL DEFAULT '0',
+  `mount_point` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'panel',
+  `config_json` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_plugins_pair` (`app_id`,`member_plugin_id`),
+  KEY `idx_app_plugins_app` (`app_id`),
+  KEY `idx_app_plugins_plugin` (`member_plugin_id`),
+  CONSTRAINT `fk_app_plugins_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_app_plugins_member_plugin` FOREIGN KEY (`member_plugin_id`) REFERENCES `member_plugins` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_app_plugins_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;

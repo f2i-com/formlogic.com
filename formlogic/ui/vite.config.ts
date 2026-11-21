@@ -93,7 +93,7 @@ export default defineConfig(({ mode }) => {
     : env.VITE_API_PROXY_TARGET || (mode === 'development' ? 'http://127.0.0.1:8080' : undefined)
   return {
   server: apiProxyTarget ? {
-    proxy: { '/api': { target: apiProxyTarget, changeOrigin: false } },
+    proxy: { '/api': { target: apiProxyTarget, changeOrigin: false, cookieDomainRewrite: '' } },
   } : undefined,
   plugins: [
     react(),

@@ -1,0 +1,3714 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "finance-os-us-softn",
+        "name": "Finance OS (US) (SoftN + Forms)",
+        "description": "Turnkey US RIA & wealth compliance workbench: client onboarding, SEC Form CRS & W-9 tracking, Reg BI risk tolerance scorer, tiered AUM fee agreement calculator, ACAT/Rollover/1035 transfers hub, 100%-validated beneficiary designations, POA, annual reviews and document vault. Includes the full-stack SoftN application plus 10 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "finance",
+            "compliance",
+            "onboarding",
+            "united-states",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "us-clients",
+            "title": "Clients",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_clients\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "first_name": "first_name",
+                        "last_name": "last_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "dob": "dob",
+                        "age": "age",
+                        "ssn": "ssn",
+                        "address": "address",
+                        "citizenship": "citizenship",
+                        "employer": "employer",
+                        "occupation": "occupation",
+                        "annual_income_cents": "annual_income_cents",
+                        "net_worth_cents": "net_worth_cents",
+                        "liquid_net_worth_cents": "liquid_net_worth_cents",
+                        "investment_objectives": "investment_objectives",
+                        "time_horizon": "time_horizon",
+                        "risk_tolerance": "risk_tolerance",
+                        "risk_score": "risk_score",
+                        "accredited_investor": "accredited_investor",
+                        "portfolio_allocation": "portfolio_allocation",
+                        "onboarding_stage": "onboarding_stage",
+                        "crs_acknowledged": "crs_acknowledged",
+                        "crs_ack_date": "crs_ack_date",
+                        "crs_signer": "crs_signer",
+                        "crs_advisor_name": "crs_advisor_name",
+                        "w9_legal_name": "w9_legal_name",
+                        "w9_business_name": "w9_business_name",
+                        "w9_tax_classification": "w9_tax_classification",
+                        "w9_ssn_ein": "w9_ssn_ein",
+                        "w9_certified_date": "w9_certified_date",
+                        "advisor_name": "advisor_name",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"us_clients\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "first_name",
+                    "type": "short_text",
+                    "label": "First Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "last_name",
+                    "type": "short_text",
+                    "label": "Last Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "dob",
+                    "type": "date",
+                    "label": "Dob",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "age",
+                    "type": "number",
+                    "label": "Age",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ssn",
+                    "type": "short_text",
+                    "label": "Ssn",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "citizenship",
+                    "type": "dropdown",
+                    "label": "Citizenship",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "us",
+                                "label": "us",
+                                "value": "us"
+                            },
+                            {
+                                "id": "permanent_resident",
+                                "label": "permanent_resident",
+                                "value": "permanent_resident"
+                            },
+                            {
+                                "id": "non_resident_alien",
+                                "label": "non_resident_alien",
+                                "value": "non_resident_alien"
+                            },
+                            {
+                                "id": "dual",
+                                "label": "dual",
+                                "value": "dual"
+                            }
+                        ],
+                        "defaultValue": "us"
+                    }
+                },
+                {
+                    "id": "employer",
+                    "type": "short_text",
+                    "label": "Employer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "occupation",
+                    "type": "short_text",
+                    "label": "Occupation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "annual_income_cents",
+                    "type": "number",
+                    "label": "Annual Income (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "net_worth_cents",
+                    "type": "number",
+                    "label": "Net Worth (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "liquid_net_worth_cents",
+                    "type": "number",
+                    "label": "Liquid Net Worth (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investment_objectives",
+                    "type": "dropdown",
+                    "label": "Investment Objectives",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "growth",
+                                "label": "growth",
+                                "value": "growth"
+                            },
+                            {
+                                "id": "income",
+                                "label": "income",
+                                "value": "income"
+                            },
+                            {
+                                "id": "capital_preservation",
+                                "label": "capital_preservation",
+                                "value": "capital_preservation"
+                            },
+                            {
+                                "id": "speculation",
+                                "label": "speculation",
+                                "value": "speculation"
+                            },
+                            {
+                                "id": "balanced",
+                                "label": "balanced",
+                                "value": "balanced"
+                            }
+                        ],
+                        "defaultValue": "balanced"
+                    }
+                },
+                {
+                    "id": "time_horizon",
+                    "type": "number",
+                    "label": "Time Horizon",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_tolerance",
+                    "type": "number",
+                    "label": "Risk Tolerance",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_score",
+                    "type": "number",
+                    "label": "Risk Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "accredited_investor",
+                    "type": "short_text",
+                    "label": "Accredited Investor",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "portfolio_allocation",
+                    "type": "short_text",
+                    "label": "Portfolio Allocation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "onboarding_stage",
+                    "type": "dropdown",
+                    "label": "Onboarding Stage",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "prospect",
+                                "label": "Prospect",
+                                "value": "Prospect"
+                            },
+                            {
+                                "id": "discovery",
+                                "label": "Discovery",
+                                "value": "Discovery"
+                            },
+                            {
+                                "id": "acat_paperwork",
+                                "label": "ACAT & Paperwork",
+                                "value": "ACAT & Paperwork"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "review_due",
+                                "label": "Review Due",
+                                "value": "Review Due"
+                            }
+                        ],
+                        "defaultValue": "Prospect"
+                    }
+                },
+                {
+                    "id": "crs_acknowledged",
+                    "type": "number",
+                    "label": "Crs Acknowledged",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "crs_ack_date",
+                    "type": "date",
+                    "label": "Crs Ack Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "crs_signer",
+                    "type": "short_text",
+                    "label": "Crs Signer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "crs_advisor_name",
+                    "type": "short_text",
+                    "label": "Crs Advisor Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "w9_legal_name",
+                    "type": "short_text",
+                    "label": "W9 Legal Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "w9_business_name",
+                    "type": "short_text",
+                    "label": "W9 Business Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "w9_tax_classification",
+                    "type": "short_text",
+                    "label": "W9 Tax Classification",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "w9_ssn_ein",
+                    "type": "short_text",
+                    "label": "W9 Ssn Ein",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "w9_certified_date",
+                    "type": "date",
+                    "label": "W9 Certified Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "advisor_name",
+                    "type": "short_text",
+                    "label": "Advisor Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Citizenship",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "citizenship",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-clients",
+                                "titleField": "address",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-risk-assessments",
+            "title": "Risk Assessments",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_risk_assessments\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Risk Assessments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_risk_assessments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "client_age": "client_age",
+                        "client_income_cents": "client_income_cents",
+                        "client_net_worth_cents": "client_net_worth_cents",
+                        "time_horizon": "time_horizon",
+                        "market_reaction": "market_reaction",
+                        "loss_capacity": "loss_capacity",
+                        "investment_experience": "investment_experience",
+                        "risk_score": "risk_score",
+                        "risk_band": "risk_band",
+                        "portfolio_type": "portfolio_type",
+                        "suggested_allocation": "suggested_allocation",
+                        "reg_bi_check": "reg_bi_check",
+                        "rationale": "rationale",
+                        "assessed_date": "assessed_date",
+                        "assessed_by": "assessed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Risk Assessments",
+                    "description": "Connected live to SQLite table \"us_risk_assessments\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_age",
+                    "type": "number",
+                    "label": "Client Age",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_income_cents",
+                    "type": "number",
+                    "label": "Client Income (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_net_worth_cents",
+                    "type": "number",
+                    "label": "Client Net Worth (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "time_horizon",
+                    "type": "number",
+                    "label": "Time Horizon",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "market_reaction",
+                    "type": "dropdown",
+                    "label": "Market Reaction",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sell",
+                                "label": "sell",
+                                "value": "sell"
+                            },
+                            {
+                                "id": "sell_some",
+                                "label": "sell_some",
+                                "value": "sell_some"
+                            },
+                            {
+                                "id": "hold",
+                                "label": "hold",
+                                "value": "hold"
+                            },
+                            {
+                                "id": "buy_more",
+                                "label": "buy_more",
+                                "value": "buy_more"
+                            }
+                        ],
+                        "defaultValue": "hold"
+                    }
+                },
+                {
+                    "id": "loss_capacity",
+                    "type": "number",
+                    "label": "Loss Capacity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investment_experience",
+                    "type": "dropdown",
+                    "label": "Investment Experience",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "none",
+                                "label": "none",
+                                "value": "none"
+                            },
+                            {
+                                "id": "limited",
+                                "label": "limited",
+                                "value": "limited"
+                            },
+                            {
+                                "id": "moderate",
+                                "label": "moderate",
+                                "value": "moderate"
+                            },
+                            {
+                                "id": "extensive",
+                                "label": "extensive",
+                                "value": "extensive"
+                            }
+                        ],
+                        "defaultValue": "moderate"
+                    }
+                },
+                {
+                    "id": "risk_score",
+                    "type": "number",
+                    "label": "Risk Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_band",
+                    "type": "short_text",
+                    "label": "Risk Band",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "portfolio_type",
+                    "type": "dropdown",
+                    "label": "Portfolio Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "conservative",
+                                "label": "Conservative",
+                                "value": "Conservative"
+                            },
+                            {
+                                "id": "moderate",
+                                "label": "Moderate",
+                                "value": "Moderate"
+                            },
+                            {
+                                "id": "aggressive",
+                                "label": "Aggressive",
+                                "value": "Aggressive"
+                            },
+                            {
+                                "id": "speculative",
+                                "label": "Speculative",
+                                "value": "Speculative"
+                            }
+                        ],
+                        "defaultValue": "Moderate"
+                    }
+                },
+                {
+                    "id": "suggested_allocation",
+                    "type": "short_text",
+                    "label": "Suggested Allocation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reg_bi_check",
+                    "type": "short_text",
+                    "label": "Reg Bi Check",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "rationale",
+                    "type": "short_text",
+                    "label": "Rationale",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assessed_date",
+                    "type": "date",
+                    "label": "Assessed Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assessed_by",
+                    "type": "short_text",
+                    "label": "Assessed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Risk Assessments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-risk-assessments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Risk Assessments by Market Reaction",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-risk-assessments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "market_reaction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Risk Assessments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-risk-assessments",
+                                "titleField": "client_age",
+                                "limit": 10,
+                                "subtitleField": "client_income_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-fee-agreements",
+            "title": "Fee Agreements",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_fee_agreements\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Fee Agreements",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_fee_agreements",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "account_value_cents": "account_value_cents",
+                        "fee_tier": "fee_tier",
+                        "effective_bps": "effective_bps",
+                        "annual_fee_cents": "annual_fee_cents",
+                        "quarterly_fee_cents": "quarterly_fee_cents",
+                        "monthly_fee_cents": "monthly_fee_cents",
+                        "billing_frequency": "billing_frequency",
+                        "tier_breakdown_json": "tier_breakdown_json",
+                        "status": "status",
+                        "effective_date": "effective_date",
+                        "client_signer": "client_signer",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Fee Agreements",
+                    "description": "Connected live to SQLite table \"us_fee_agreements\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "account_value_cents",
+                    "type": "number",
+                    "label": "Account Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fee_tier",
+                    "type": "dropdown",
+                    "label": "Fee Tier",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "standard",
+                                "label": "Standard",
+                                "value": "Standard"
+                            },
+                            {
+                                "id": "premium",
+                                "label": "Premium",
+                                "value": "Premium"
+                            },
+                            {
+                                "id": "institutional",
+                                "label": "Institutional",
+                                "value": "Institutional"
+                            }
+                        ],
+                        "defaultValue": "Standard"
+                    }
+                },
+                {
+                    "id": "effective_bps",
+                    "type": "number",
+                    "label": "Effective Bps",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "annual_fee_cents",
+                    "type": "number",
+                    "label": "Annual Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "quarterly_fee_cents",
+                    "type": "number",
+                    "label": "Quarterly Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "monthly_fee_cents",
+                    "type": "number",
+                    "label": "Monthly Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "billing_frequency",
+                    "type": "dropdown",
+                    "label": "Billing Frequency",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "monthly",
+                                "label": "Monthly",
+                                "value": "Monthly"
+                            },
+                            {
+                                "id": "quarterly",
+                                "label": "Quarterly",
+                                "value": "Quarterly"
+                            },
+                            {
+                                "id": "annually",
+                                "label": "Annually",
+                                "value": "Annually"
+                            }
+                        ],
+                        "defaultValue": "Quarterly"
+                    }
+                },
+                {
+                    "id": "tier_breakdown_json",
+                    "type": "short_text",
+                    "label": "Tier Breakdown Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Executed"
+                    }
+                },
+                {
+                    "id": "effective_date",
+                    "type": "date",
+                    "label": "Effective Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_signer",
+                    "type": "short_text",
+                    "label": "Client Signer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Fee Agreements",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-fee-agreements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Fee Agreements by Fee Tier",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-fee-agreements",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "fee_tier",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Fee Agreements",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-fee-agreements",
+                                "titleField": "account_value_cents",
+                                "limit": 10,
+                                "subtitleField": "fee_tier"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-acat-transfers",
+            "title": "ACAT Transfers",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_acat_transfers\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save ACAT Transfers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_acat_transfers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "custodian": "custodian",
+                        "account_number": "account_number",
+                        "transfer_type": "transfer_type",
+                        "assets_to_transfer": "assets_to_transfer",
+                        "estimated_value_cents": "estimated_value_cents",
+                        "transfer_fee_cents": "transfer_fee_cents",
+                        "status": "status",
+                        "initiated_date": "initiated_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "ACAT Transfers",
+                    "description": "Connected live to SQLite table \"us_acat_transfers\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "custodian",
+                    "type": "dropdown",
+                    "label": "Custodian",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "schwab",
+                                "label": "Schwab",
+                                "value": "Schwab"
+                            },
+                            {
+                                "id": "fidelity",
+                                "label": "Fidelity",
+                                "value": "Fidelity"
+                            },
+                            {
+                                "id": "vanguard",
+                                "label": "Vanguard",
+                                "value": "Vanguard"
+                            },
+                            {
+                                "id": "e_trade",
+                                "label": "E*TRADE",
+                                "value": "E*TRADE"
+                            },
+                            {
+                                "id": "bny_pershing",
+                                "label": "BNY Pershing",
+                                "value": "BNY Pershing"
+                            },
+                            {
+                                "id": "lpl_financial",
+                                "label": "LPL Financial",
+                                "value": "LPL Financial"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Schwab"
+                    }
+                },
+                {
+                    "id": "account_number",
+                    "type": "short_text",
+                    "label": "Account Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "transfer_type",
+                    "type": "dropdown",
+                    "label": "Transfer Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "full",
+                                "label": "Full",
+                                "value": "Full"
+                            },
+                            {
+                                "id": "partial",
+                                "label": "Partial",
+                                "value": "Partial"
+                            }
+                        ],
+                        "defaultValue": "Full"
+                    }
+                },
+                {
+                    "id": "assets_to_transfer",
+                    "type": "short_text",
+                    "label": "Assets To Transfer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_value_cents",
+                    "type": "number",
+                    "label": "Estimated Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "transfer_fee_cents",
+                    "type": "number",
+                    "label": "Transfer Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Initiated"
+                    }
+                },
+                {
+                    "id": "initiated_date",
+                    "type": "date",
+                    "label": "Initiated Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total ACAT Transfers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-acat-transfers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "ACAT Transfers by Custodian",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-acat-transfers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "custodian",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent ACAT Transfers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-acat-transfers",
+                                "titleField": "custodian",
+                                "limit": 10,
+                                "subtitleField": "account_number"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-rollovers",
+            "title": "Rollovers",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_rollovers\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Rollovers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_rollovers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "rollover_type": "rollover_type",
+                        "current_custodian": "current_custodian",
+                        "current_account_number": "current_account_number",
+                        "receiving_custodian": "receiving_custodian",
+                        "receiving_account_number": "receiving_account_number",
+                        "estimated_value_cents": "estimated_value_cents",
+                        "direct_or_indirect": "direct_or_indirect",
+                        "roth_tax_acknowledged": "roth_tax_acknowledged",
+                        "sixty_day_deadline": "sixty_day_deadline",
+                        "status": "status",
+                        "initiated_date": "initiated_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Rollovers",
+                    "description": "Connected live to SQLite table \"us_rollovers\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "rollover_type",
+                    "type": "dropdown",
+                    "label": "Rollover Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "traditional_to_traditional",
+                                "label": "Traditional to Traditional",
+                                "value": "Traditional to Traditional"
+                            },
+                            {
+                                "id": "traditional_to_roth",
+                                "label": "Traditional to Roth",
+                                "value": "Traditional to Roth"
+                            },
+                            {
+                                "id": "401k_to_ira",
+                                "label": "401k to IRA",
+                                "value": "401k to IRA"
+                            },
+                            {
+                                "id": "403b_to_ira",
+                                "label": "403b to IRA",
+                                "value": "403b to IRA"
+                            }
+                        ],
+                        "defaultValue": "401k to IRA"
+                    }
+                },
+                {
+                    "id": "current_custodian",
+                    "type": "short_text",
+                    "label": "Current Custodian",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "current_account_number",
+                    "type": "short_text",
+                    "label": "Current Account Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "receiving_custodian",
+                    "type": "short_text",
+                    "label": "Receiving Custodian",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "receiving_account_number",
+                    "type": "short_text",
+                    "label": "Receiving Account Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_value_cents",
+                    "type": "number",
+                    "label": "Estimated Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "direct_or_indirect",
+                    "type": "dropdown",
+                    "label": "Direct Or Indirect",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "direct_trustee_to_trustee_",
+                                "label": "Direct (trustee-to-trustee)",
+                                "value": "Direct (trustee-to-trustee)"
+                            },
+                            {
+                                "id": "indirect_60_day_rollover_",
+                                "label": "Indirect (60-day rollover)",
+                                "value": "Indirect (60-day rollover)"
+                            }
+                        ],
+                        "defaultValue": "Direct (trustee-to-trustee)"
+                    }
+                },
+                {
+                    "id": "roth_tax_acknowledged",
+                    "type": "number",
+                    "label": "Roth Tax Acknowledged",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "sixty_day_deadline",
+                    "type": "short_text",
+                    "label": "Sixty Day Deadline",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Initiated"
+                    }
+                },
+                {
+                    "id": "initiated_date",
+                    "type": "date",
+                    "label": "Initiated Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Rollovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-rollovers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Rollovers by Rollover Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-rollovers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "rollover_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Rollovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-rollovers",
+                                "titleField": "rollover_type",
+                                "limit": 10,
+                                "subtitleField": "current_custodian"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-exchanges-1035",
+            "title": "Exchanges 1035",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_exchanges_1035\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Exchanges 1035",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_exchanges_1035",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "existing_policy_number": "existing_policy_number",
+                        "existing_carrier": "existing_carrier",
+                        "exchange_type": "exchange_type",
+                        "new_carrier": "new_carrier",
+                        "new_policy_type": "new_policy_type",
+                        "estimated_value_cents": "estimated_value_cents",
+                        "has_surrender_charges": "has_surrender_charges",
+                        "surrender_charges_cents": "surrender_charges_cents",
+                        "status": "status",
+                        "initiated_date": "initiated_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Exchanges 1035",
+                    "description": "Connected live to SQLite table \"us_exchanges_1035\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "existing_policy_number",
+                    "type": "short_text",
+                    "label": "Existing Policy Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "existing_carrier",
+                    "type": "dropdown",
+                    "label": "Existing CARrier",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "prudential",
+                                "label": "Prudential",
+                                "value": "Prudential"
+                            },
+                            {
+                                "id": "metlife",
+                                "label": "MetLife",
+                                "value": "MetLife"
+                            },
+                            {
+                                "id": "lincoln_financial",
+                                "label": "Lincoln Financial",
+                                "value": "Lincoln Financial"
+                            },
+                            {
+                                "id": "nationwide",
+                                "label": "Nationwide",
+                                "value": "Nationwide"
+                            },
+                            {
+                                "id": "pacific_life",
+                                "label": "Pacific Life",
+                                "value": "Pacific Life"
+                            },
+                            {
+                                "id": "john_hancock",
+                                "label": "John Hancock",
+                                "value": "John Hancock"
+                            },
+                            {
+                                "id": "allianz_life",
+                                "label": "Allianz Life",
+                                "value": "Allianz Life"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Prudential"
+                    }
+                },
+                {
+                    "id": "exchange_type",
+                    "type": "dropdown",
+                    "label": "Exchange Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "life_insurance",
+                                "label": "Life Insurance",
+                                "value": "Life Insurance"
+                            },
+                            {
+                                "id": "annuity",
+                                "label": "Annuity",
+                                "value": "Annuity"
+                            }
+                        ],
+                        "defaultValue": "Annuity"
+                    }
+                },
+                {
+                    "id": "new_carrier",
+                    "type": "dropdown",
+                    "label": "New CARrier",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "athene",
+                                "label": "Athene",
+                                "value": "Athene"
+                            },
+                            {
+                                "id": "jackson_national",
+                                "label": "Jackson National",
+                                "value": "Jackson National"
+                            },
+                            {
+                                "id": "transamerica",
+                                "label": "Transamerica",
+                                "value": "Transamerica"
+                            },
+                            {
+                                "id": "brighthouse_financial",
+                                "label": "Brighthouse Financial",
+                                "value": "Brighthouse Financial"
+                            },
+                            {
+                                "id": "corebridge_financial",
+                                "label": "Corebridge Financial",
+                                "value": "Corebridge Financial"
+                            },
+                            {
+                                "id": "equitable",
+                                "label": "Equitable",
+                                "value": "Equitable"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Athene"
+                    }
+                },
+                {
+                    "id": "new_policy_type",
+                    "type": "short_text",
+                    "label": "New Policy Type",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_value_cents",
+                    "type": "number",
+                    "label": "Estimated Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "has_surrender_charges",
+                    "type": "dropdown",
+                    "label": "Has Surrender Charges",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            },
+                            {
+                                "id": "unknown",
+                                "label": "Unknown",
+                                "value": "Unknown"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "surrender_charges_cents",
+                    "type": "number",
+                    "label": "Surrender Charges (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Reviewing"
+                    }
+                },
+                {
+                    "id": "initiated_date",
+                    "type": "date",
+                    "label": "Initiated Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Exchanges 1035",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-exchanges-1035",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Exchanges 1035 by Existing CARrier",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-exchanges-1035",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "existing_carrier",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Exchanges 1035",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-exchanges-1035",
+                                "titleField": "existing_policy_number",
+                                "limit": 10,
+                                "subtitleField": "existing_carrier"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-beneficiaries",
+            "title": "Beneficiaries",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_beneficiaries\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Beneficiaries",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_beneficiaries",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "account_label": "account_label",
+                        "primary_json": "primary_json",
+                        "contingent_json": "contingent_json",
+                        "effective_date": "effective_date",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Beneficiaries",
+                    "description": "Connected live to SQLite table \"us_beneficiaries\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "account_label",
+                    "type": "short_text",
+                    "label": "Account Label",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "primary_json",
+                    "type": "short_text",
+                    "label": "Primary Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "contingent_json",
+                    "type": "short_text",
+                    "label": "Contingent Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "effective_date",
+                    "type": "date",
+                    "label": "Effective Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Beneficiaries",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-beneficiaries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Beneficiaries by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-beneficiaries",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Beneficiaries",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-beneficiaries",
+                                "titleField": "account_label",
+                                "limit": 10,
+                                "subtitleField": "primary_json"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-poas",
+            "title": "POAs",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_poas\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save POAs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_poas",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "principal_name": "principal_name",
+                        "agent_name": "agent_name",
+                        "powers_granted_json": "powers_granted_json",
+                        "effective_date": "effective_date",
+                        "witness_1_name": "witness_1_name",
+                        "witness_2_name": "witness_2_name",
+                        "notarized": "notarized",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "POAs",
+                    "description": "Connected live to SQLite table \"us_poas\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "principal_name",
+                    "type": "short_text",
+                    "label": "Principal Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "agent_name",
+                    "type": "short_text",
+                    "label": "Agent Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "powers_granted_json",
+                    "type": "short_text",
+                    "label": "Powers Granted Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "effective_date",
+                    "type": "date",
+                    "label": "Effective Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_1_name",
+                    "type": "short_text",
+                    "label": "Witness 1 Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_2_name",
+                    "type": "short_text",
+                    "label": "Witness 2 Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notarized",
+                    "type": "number",
+                    "label": "Notarized",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total POAs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-poas",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "POAs by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-poas",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent POAs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-poas",
+                                "titleField": "principal_name",
+                                "limit": 10,
+                                "subtitleField": "agent_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-annual-reviews",
+            "title": "Annual Reviews",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_annual_reviews\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Annual Reviews",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_annual_reviews",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "review_date": "review_date",
+                        "current_aum_cents": "current_aum_cents",
+                        "current_annual_fee_cents": "current_annual_fee_cents",
+                        "goal_progress": "goal_progress",
+                        "life_changes_json": "life_changes_json",
+                        "updated_risk_tolerance": "updated_risk_tolerance",
+                        "advisor_notes": "advisor_notes",
+                        "next_review_date": "next_review_date",
+                        "status": "status",
+                        "advisor_name": "advisor_name"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Annual Reviews",
+                    "description": "Connected live to SQLite table \"us_annual_reviews\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "review_date",
+                    "type": "date",
+                    "label": "Review Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "current_aum_cents",
+                    "type": "number",
+                    "label": "Current Aum (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_annual_fee_cents",
+                    "type": "number",
+                    "label": "Current Annual Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "goal_progress",
+                    "type": "number",
+                    "label": "Goal Progress",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "life_changes_json",
+                    "type": "short_text",
+                    "label": "Life Changes Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "updated_risk_tolerance",
+                    "type": "number",
+                    "label": "Updated Risk Tolerance",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "advisor_notes",
+                    "type": "long_text",
+                    "label": "Advisor Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "next_review_date",
+                    "type": "date",
+                    "label": "Next Review Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "executed",
+                                "label": "Executed",
+                                "value": "Executed"
+                            },
+                            {
+                                "id": "superseded",
+                                "label": "Superseded",
+                                "value": "Superseded"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "custodian_pending",
+                                "label": "Custodian Pending",
+                                "value": "Custodian Pending"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "settled",
+                                "label": "Settled",
+                                "value": "Settled"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "funded",
+                                "label": "Funded",
+                                "value": "Funded"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "reviewing",
+                                "label": "Reviewing",
+                                "value": "Reviewing"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "carrier_transfer",
+                                "label": "Carrier Transfer",
+                                "value": "Carrier Transfer"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "pending_notary",
+                                "label": "Pending Notary",
+                                "value": "Pending Notary"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Completed"
+                    }
+                },
+                {
+                    "id": "advisor_name",
+                    "type": "short_text",
+                    "label": "Advisor Name",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Annual Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-annual-reviews",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Annual Reviews by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-annual-reviews",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Annual Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-annual-reviews",
+                                "titleField": "review_date",
+                                "limit": 10,
+                                "subtitleField": "current_aum_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "us-documents",
+            "title": "Documents",
+            "icon": "DollarSign",
+            "description": "Live FormLogic form synced directly to SQLite table \"us_documents\" in Finance OS (US).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Documents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-us-softn-app",
+                    "table": "us_documents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "document_type": "document_type",
+                        "document_name": "document_name",
+                        "reference_code": "reference_code",
+                        "expiry_date": "expiry_date",
+                        "notes": "notes",
+                        "uploaded_by": "uploaded_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Documents",
+                    "description": "Connected live to SQLite table \"us_documents\" in Finance OS (US).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:us-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "document_type",
+                    "type": "dropdown",
+                    "label": "Document Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "tax_return",
+                                "label": "Tax Return",
+                                "value": "Tax Return"
+                            },
+                            {
+                                "id": "legal_document",
+                                "label": "Legal Document",
+                                "value": "Legal Document"
+                            },
+                            {
+                                "id": "statement",
+                                "label": "Statement",
+                                "value": "Statement"
+                            },
+                            {
+                                "id": "insurance",
+                                "label": "Insurance",
+                                "value": "Insurance"
+                            },
+                            {
+                                "id": "form_crs",
+                                "label": "Form CRS",
+                                "value": "Form CRS"
+                            },
+                            {
+                                "id": "w_9_certification",
+                                "label": "W-9 Certification",
+                                "value": "W-9 Certification"
+                            },
+                            {
+                                "id": "id_verification",
+                                "label": "ID Verification",
+                                "value": "ID Verification"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Tax Return"
+                    }
+                },
+                {
+                    "id": "document_name",
+                    "type": "short_text",
+                    "label": "Document Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "reference_code",
+                    "type": "short_text",
+                    "label": "Reference Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "expiry_date",
+                    "type": "date",
+                    "label": "Expiry Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "uploaded_by",
+                    "type": "short_text",
+                    "label": "Uploaded By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Documents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-documents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Documents by Document Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:us-documents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "document_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Documents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:us-documents",
+                                "titleField": "document_type",
+                                "limit": 10,
+                                "subtitleField": "document_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "finance-os-us-softn-app",
+            "name": "Finance OS (US)",
+            "description": "Turnkey US RIA & wealth compliance workbench: client onboarding, SEC Form CRS & W-9 tracking, Reg BI risk tolerance scorer, tiered AUM fee agreement calculator, ACAT/Rollover/1035 transfers hub, 100%-validated beneficiary designations, POA, annual reviews and document vault.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "finance-os-us-softn-forms",
+            "name": "Finance OS (US) Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Finance OS (US)'s SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:finance-os-us-softn-app",
+                "linkedSoftnAppId": "@packApp:finance-os-us-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "us-clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-risk-assessments",
+                    "displayName": "Risk Assessments",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-fee-agreements",
+                    "displayName": "Fee Agreements",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-acat-transfers",
+                    "displayName": "ACAT Transfers",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-rollovers",
+                    "displayName": "Rollovers",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-exchanges-1035",
+                    "displayName": "Exchanges 1035",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-beneficiaries",
+                    "displayName": "Beneficiaries",
+                    "sortOrder": 6,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-poas",
+                    "displayName": "POAs",
+                    "sortOrder": 7,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-annual-reviews",
+                    "displayName": "Annual Reviews",
+                    "sortOrder": 8,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "us-documents",
+                    "displayName": "Documents",
+                    "sortOrder": 9,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_us_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_us_clients",
+                    "name": "Clients by Citizenship",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "citizenship",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_us_risk_assessments",
+                    "name": "Total Risk Assessments",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-risk-assessments",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_us_risk_assessments",
+                    "name": "Risk Assessments by Market Reaction",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-risk-assessments",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "market_reaction",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_us_fee_agreements",
+                    "name": "Total Fee Agreements",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-fee-agreements",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_us_acat_transfers",
+                    "name": "Total ACAT Transfers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:us-acat-transfers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:us-clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Citizenship",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:us-clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "citizenship",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Risk Assessments",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:us-risk-assessments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Risk Assessments by Market Reaction",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:us-risk-assessments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "market_reaction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Fee Agreements",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:us-fee-agreements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total ACAT Transfers",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:us-acat-transfers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

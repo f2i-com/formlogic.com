@@ -32,6 +32,9 @@ export interface PackBrowseOptions {
   sort?: string;
   category?: string;
   tag?: string;
+  itemType?: string;
+  pricing?: string;
+  compatibleWith?: string;
   page?: number;
   limit?: number;
   /** Debounce before a search fires. 0 = immediate (used for non-search-driven surfaces). */
@@ -66,6 +69,9 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
     sort = 'popular',
     category = '',
     tag = '',
+    itemType = '',
+    pricing = '',
+    compatibleWith = '',
     page = 1,
     limit = 12,
     debounceMs = 300,
@@ -76,7 +82,7 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
 
   // The question currently being asked. A settled result carries the key it answered, so
   // "loading" is just "what is on screen is not an answer to this".
-  const key = JSON.stringify({ enabled, search, sort, category, tag, page, limit, retryToken });
+  const key = JSON.stringify({ enabled, search, sort, category, tag, itemType, pricing, compatibleWith, page, limit, retryToken });
 
   // Monotonic request id: only the newest response may apply. A slow earlier query must never
   // overwrite a newer one — the user would see results for a search they have moved on from.
@@ -94,6 +100,9 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
           sort,
           category: category || undefined,
           tag: tag || undefined,
+          itemType: itemType || undefined,
+          pricing: pricing || undefined,
+          compatibleWith: compatibleWith || undefined,
           page,
           limit,
         })
@@ -140,7 +149,7 @@ export function usePackBrowse(options: PackBrowseOptions): PackBrowseResult {
     }
     run();
     return undefined;
-  }, [enabled, search, sort, category, tag, page, limit, debounceMs, key]);
+  }, [enabled, search, sort, category, tag, itemType, pricing, compatibleWith, page, limit, debounceMs, key]);
 
   const retry = useCallback(() => setRetryToken((token) => token + 1), []);
 

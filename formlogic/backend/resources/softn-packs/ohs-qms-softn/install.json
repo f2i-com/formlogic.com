@@ -1,0 +1,4136 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "ohs-qms-softn",
+        "name": "OHS & QMS (SoftN + Forms)",
+        "description": "Turnkey ISO 45001 safety and ISO 9001 quality management system: incident & injury register, interactive 5x5 risk matrix hazard register, CAPA tracker, audits/CARs/NCRs with printable reports, mandatory training matrix, contractor approvals, toolbox talks, complaints and plant register. Includes the full-stack SoftN application plus 12 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "safety",
+            "quality",
+            "ohs",
+            "iso-45001",
+            "iso-9001",
+            "compliance",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "ohs-incidents",
+            "title": "Incidents",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_incidents\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Incidents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_incidents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "incident_code": "incident_code",
+                        "incident_title": "incident_title",
+                        "incident_date": "incident_date",
+                        "incident_time": "incident_time",
+                        "location": "location",
+                        "incident_type": "incident_type",
+                        "severity": "severity",
+                        "lost_time_injury": "lost_time_injury",
+                        "investigation_status": "investigation_status",
+                        "description": "description",
+                        "reported_by": "reported_by",
+                        "witnesses": "witnesses",
+                        "immediate_actions": "immediate_actions",
+                        "root_cause": "root_cause"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Incidents",
+                    "description": "Connected live to SQLite table \"ohs_incidents\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_code",
+                    "type": "short_text",
+                    "label": "Incident Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_title",
+                    "type": "short_text",
+                    "label": "Incident Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_date",
+                    "type": "date",
+                    "label": "Incident Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_time",
+                    "type": "time",
+                    "label": "Incident Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "location",
+                    "type": "short_text",
+                    "label": "Location",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_type",
+                    "type": "dropdown",
+                    "label": "Incident Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "near_miss",
+                                "label": "Near Miss",
+                                "value": "Near Miss"
+                            },
+                            {
+                                "id": "injury",
+                                "label": "Injury",
+                                "value": "Injury"
+                            },
+                            {
+                                "id": "property_damage",
+                                "label": "Property Damage",
+                                "value": "Property Damage"
+                            },
+                            {
+                                "id": "environmental",
+                                "label": "Environmental",
+                                "value": "Environmental"
+                            },
+                            {
+                                "id": "security",
+                                "label": "Security",
+                                "value": "Security"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Near Miss"
+                    }
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "minor",
+                                "label": "Minor",
+                                "value": "Minor"
+                            },
+                            {
+                                "id": "major",
+                                "label": "Major",
+                                "value": "Major"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "lost_time_injury",
+                    "type": "number",
+                    "label": "Lost Time Injury",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investigation_status",
+                    "type": "dropdown",
+                    "label": "Investigation Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "actions_assigned",
+                                "label": "Actions Assigned",
+                                "value": "Actions Assigned"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            }
+                        ],
+                        "defaultValue": "Reported"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reported_by",
+                    "type": "short_text",
+                    "label": "Reported By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witnesses",
+                    "type": "short_text",
+                    "label": "Witnesses",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "immediate_actions",
+                    "type": "short_text",
+                    "label": "Immediate Actions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "root_cause",
+                    "type": "short_text",
+                    "label": "Root Cause",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-incidents",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "incident_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-injuries",
+            "title": "Injuries",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_injuries\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Injuries",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_injuries",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "incident_id": "incident_id",
+                        "employee_name": "employee_name",
+                        "injury_date": "injury_date",
+                        "injury_type": "injury_type",
+                        "body_part": "body_part",
+                        "injury_description": "injury_description",
+                        "treatment": "treatment",
+                        "lost_time": "lost_time",
+                        "lost_time_start": "lost_time_start",
+                        "lost_time_end": "lost_time_end",
+                        "rtw_date": "rtw_date",
+                        "treatment_notes": "treatment_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Injuries",
+                    "description": "Connected live to SQLite table \"ohs_injuries\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_id",
+                    "type": "linked_record",
+                    "label": "Incident",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ohs-incidents",
+                        "displayFieldIds": [
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "injury_date",
+                    "type": "date",
+                    "label": "Injury Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "injury_type",
+                    "type": "dropdown",
+                    "label": "Injury Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "strain_sprain",
+                                "label": "Strain / Sprain",
+                                "value": "Strain / Sprain"
+                            },
+                            {
+                                "id": "laceration_cut",
+                                "label": "Laceration / Cut",
+                                "value": "Laceration / Cut"
+                            },
+                            {
+                                "id": "fracture",
+                                "label": "Fracture",
+                                "value": "Fracture"
+                            },
+                            {
+                                "id": "burn",
+                                "label": "Burn",
+                                "value": "Burn"
+                            },
+                            {
+                                "id": "contusion_bruise",
+                                "label": "Contusion / Bruise",
+                                "value": "Contusion / Bruise"
+                            },
+                            {
+                                "id": "eye_injury",
+                                "label": "Eye Injury",
+                                "value": "Eye Injury"
+                            },
+                            {
+                                "id": "hearing_damage",
+                                "label": "Hearing Damage",
+                                "value": "Hearing Damage"
+                            },
+                            {
+                                "id": "respiratory",
+                                "label": "Respiratory",
+                                "value": "Respiratory"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Strain / Sprain"
+                    }
+                },
+                {
+                    "id": "body_part",
+                    "type": "long_text",
+                    "label": "Body Part",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "injury_description",
+                    "type": "long_text",
+                    "label": "Injury Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "treatment",
+                    "type": "short_text",
+                    "label": "Treatment",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "lost_time",
+                    "type": "dropdown",
+                    "label": "Lost Time",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "lost_time_start",
+                    "type": "short_text",
+                    "label": "Lost Time Start",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "lost_time_end",
+                    "type": "short_text",
+                    "label": "Lost Time End",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "rtw_date",
+                    "type": "date",
+                    "label": "Rtw Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "treatment_notes",
+                    "type": "long_text",
+                    "label": "Treatment Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Injuries",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-injuries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Injuries by Injury Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-injuries",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "injury_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Injuries",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-injuries",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "injury_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-hazards",
+            "title": "Hazards",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_hazards\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Hazards",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_hazards",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "hazard_title": "hazard_title",
+                        "location": "location",
+                        "hazard_type": "hazard_type",
+                        "hazard_description": "hazard_description",
+                        "reported_by": "reported_by",
+                        "likelihood": "likelihood",
+                        "consequence": "consequence",
+                        "risk_score": "risk_score",
+                        "risk_rating": "risk_rating",
+                        "control_type": "control_type",
+                        "control_description": "control_description",
+                        "residual_risk": "residual_risk",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Hazards",
+                    "description": "Connected live to SQLite table \"ohs_hazards\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "hazard_title",
+                    "type": "short_text",
+                    "label": "Hazard Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "location",
+                    "type": "short_text",
+                    "label": "Location",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "hazard_type",
+                    "type": "dropdown",
+                    "label": "Hazard Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "physical",
+                                "label": "Physical",
+                                "value": "Physical"
+                            },
+                            {
+                                "id": "chemical",
+                                "label": "Chemical",
+                                "value": "Chemical"
+                            },
+                            {
+                                "id": "biological",
+                                "label": "Biological",
+                                "value": "Biological"
+                            },
+                            {
+                                "id": "ergonomic",
+                                "label": "Ergonomic",
+                                "value": "Ergonomic"
+                            },
+                            {
+                                "id": "psychosocial",
+                                "label": "Psychosocial",
+                                "value": "Psychosocial"
+                            },
+                            {
+                                "id": "environmental",
+                                "label": "Environmental",
+                                "value": "Environmental"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Physical"
+                    }
+                },
+                {
+                    "id": "hazard_description",
+                    "type": "long_text",
+                    "label": "Hazard Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reported_by",
+                    "type": "short_text",
+                    "label": "Reported By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "likelihood",
+                    "type": "number",
+                    "label": "Likelihood",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "consequence",
+                    "type": "number",
+                    "label": "Consequence",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_score",
+                    "type": "number",
+                    "label": "Risk Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_rating",
+                    "type": "short_text",
+                    "label": "Risk Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "control_type",
+                    "type": "dropdown",
+                    "label": "Control Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "elimination",
+                                "label": "Elimination",
+                                "value": "Elimination"
+                            },
+                            {
+                                "id": "substitution",
+                                "label": "Substitution",
+                                "value": "Substitution"
+                            },
+                            {
+                                "id": "engineering_controls",
+                                "label": "Engineering Controls",
+                                "value": "Engineering Controls"
+                            },
+                            {
+                                "id": "administrative_controls",
+                                "label": "Administrative Controls",
+                                "value": "Administrative Controls"
+                            },
+                            {
+                                "id": "ppe",
+                                "label": "PPE",
+                                "value": "PPE"
+                            }
+                        ],
+                        "defaultValue": "Engineering Controls"
+                    }
+                },
+                {
+                    "id": "control_description",
+                    "type": "long_text",
+                    "label": "Control Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "residual_risk",
+                    "type": "number",
+                    "label": "Residual Risk",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Hazards",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-hazards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Hazards by Hazard Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-hazards",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "hazard_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Hazards",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-hazards",
+                                "titleField": "hazard_title",
+                                "limit": 10,
+                                "subtitleField": "location"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-actions",
+            "title": "Actions",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_actions\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Actions",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_actions",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "action_title": "action_title",
+                        "action_description": "action_description",
+                        "source_type": "source_type",
+                        "source_ref": "source_ref",
+                        "priority": "priority",
+                        "assigned_to": "assigned_to",
+                        "due_date": "due_date",
+                        "status": "status",
+                        "verified_by": "verified_by",
+                        "verified_at": "verified_at",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Actions",
+                    "description": "Connected live to SQLite table \"ohs_actions\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "action_title",
+                    "type": "short_text",
+                    "label": "Action Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "action_description",
+                    "type": "long_text",
+                    "label": "Action Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "source_type",
+                    "type": "dropdown",
+                    "label": "Source Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "incident",
+                                "label": "Incident",
+                                "value": "Incident"
+                            },
+                            {
+                                "id": "hazard",
+                                "label": "Hazard",
+                                "value": "Hazard"
+                            },
+                            {
+                                "id": "audit",
+                                "label": "Audit",
+                                "value": "Audit"
+                            },
+                            {
+                                "id": "corrective_action_request",
+                                "label": "Corrective Action Request",
+                                "value": "Corrective Action Request"
+                            },
+                            {
+                                "id": "non_conformance",
+                                "label": "Non-Conformance",
+                                "value": "Non-Conformance"
+                            },
+                            {
+                                "id": "complaint",
+                                "label": "Complaint",
+                                "value": "Complaint"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            },
+                            {
+                                "id": "non_conformance_report",
+                                "label": "Non-Conformance Report",
+                                "value": "Non-Conformance Report"
+                            },
+                            {
+                                "id": "inspection",
+                                "label": "Inspection",
+                                "value": "Inspection"
+                            },
+                            {
+                                "id": "customer",
+                                "label": "Customer",
+                                "value": "Customer"
+                            },
+                            {
+                                "id": "internal",
+                                "label": "Internal",
+                                "value": "Internal"
+                            },
+                            {
+                                "id": "supplier",
+                                "label": "Supplier",
+                                "value": "Supplier"
+                            }
+                        ],
+                        "defaultValue": "Hazard"
+                    }
+                },
+                {
+                    "id": "source_ref",
+                    "type": "short_text",
+                    "label": "Source Ref",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                },
+                {
+                    "id": "verified_by",
+                    "type": "short_text",
+                    "label": "Verified By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "verified_at",
+                    "type": "number",
+                    "label": "Verified At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Actions",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-actions",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Actions by Source Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-actions",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "source_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Actions",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-actions",
+                                "titleField": "action_title",
+                                "limit": 10,
+                                "subtitleField": "action_description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-audits",
+            "title": "Audits",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_audits\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Audits",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_audits",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "audit_code": "audit_code",
+                        "audit_title": "audit_title",
+                        "audit_type": "audit_type",
+                        "audit_date": "audit_date",
+                        "auditor_name": "auditor_name",
+                        "scope": "scope",
+                        "summary": "summary",
+                        "observations": "observations",
+                        "findings": "findings",
+                        "finding_severity": "finding_severity",
+                        "corrective_actions_required": "corrective_actions_required",
+                        "follow_up_date": "follow_up_date",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Audits",
+                    "description": "Connected live to SQLite table \"ohs_audits\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "audit_code",
+                    "type": "short_text",
+                    "label": "Audit Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "audit_title",
+                    "type": "short_text",
+                    "label": "Audit Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "audit_type",
+                    "type": "dropdown",
+                    "label": "Audit Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "internal",
+                                "label": "Internal",
+                                "value": "Internal"
+                            },
+                            {
+                                "id": "external",
+                                "label": "External",
+                                "value": "External"
+                            },
+                            {
+                                "id": "iso_certification",
+                                "label": "ISO Certification",
+                                "value": "ISO Certification"
+                            },
+                            {
+                                "id": "regulatory",
+                                "label": "Regulatory",
+                                "value": "Regulatory"
+                            },
+                            {
+                                "id": "supplier",
+                                "label": "Supplier",
+                                "value": "Supplier"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Internal"
+                    }
+                },
+                {
+                    "id": "audit_date",
+                    "type": "date",
+                    "label": "Audit Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "auditor_name",
+                    "type": "short_text",
+                    "label": "Auditor Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "scope",
+                    "type": "short_text",
+                    "label": "Scope",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "summary",
+                    "type": "long_text",
+                    "label": "Summary",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "observations",
+                    "type": "short_text",
+                    "label": "Observations",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "findings",
+                    "type": "long_text",
+                    "label": "Findings",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "finding_severity",
+                    "type": "dropdown",
+                    "label": "Finding Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "observation",
+                                "label": "Observation",
+                                "value": "Observation"
+                            },
+                            {
+                                "id": "minor_non_conformance",
+                                "label": "Minor Non-Conformance",
+                                "value": "Minor Non-Conformance"
+                            },
+                            {
+                                "id": "major_non_conformance",
+                                "label": "Major Non-Conformance",
+                                "value": "Major Non-Conformance"
+                            },
+                            {
+                                "id": "critical_non_conformance",
+                                "label": "Critical Non-Conformance",
+                                "value": "Critical Non-Conformance"
+                            },
+                            {
+                                "id": "opportunity_for_improvement",
+                                "label": "Opportunity for Improvement",
+                                "value": "Opportunity for Improvement"
+                            }
+                        ],
+                        "defaultValue": "Observation"
+                    }
+                },
+                {
+                    "id": "corrective_actions_required",
+                    "type": "dropdown",
+                    "label": "Corrective Actions Required",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "follow_up_date",
+                    "type": "date",
+                    "label": "Follow Up Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Audits",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-audits",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Audits by Audit Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-audits",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "audit_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Audits",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-audits",
+                                "titleField": "audit_code",
+                                "limit": 10,
+                                "subtitleField": "audit_title"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-cars",
+            "title": "CARs",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_cars\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save CARs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_cars",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "car_code": "car_code",
+                        "car_title": "car_title",
+                        "car_description": "car_description",
+                        "source_type": "source_type",
+                        "source_reference": "source_reference",
+                        "raised_by": "raised_by",
+                        "raised_date": "raised_date",
+                        "assigned_to": "assigned_to",
+                        "due_date": "due_date",
+                        "priority": "priority",
+                        "root_cause": "root_cause",
+                        "corrective_action": "corrective_action",
+                        "preventive_action": "preventive_action",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "CARs",
+                    "description": "Connected live to SQLite table \"ohs_cars\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "car_code",
+                    "type": "short_text",
+                    "label": "CAR Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "car_title",
+                    "type": "short_text",
+                    "label": "CAR Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "car_description",
+                    "type": "long_text",
+                    "label": "CAR Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "source_type",
+                    "type": "dropdown",
+                    "label": "Source Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "incident",
+                                "label": "Incident",
+                                "value": "Incident"
+                            },
+                            {
+                                "id": "hazard",
+                                "label": "Hazard",
+                                "value": "Hazard"
+                            },
+                            {
+                                "id": "audit",
+                                "label": "Audit",
+                                "value": "Audit"
+                            },
+                            {
+                                "id": "corrective_action_request",
+                                "label": "Corrective Action Request",
+                                "value": "Corrective Action Request"
+                            },
+                            {
+                                "id": "non_conformance",
+                                "label": "Non-Conformance",
+                                "value": "Non-Conformance"
+                            },
+                            {
+                                "id": "complaint",
+                                "label": "Complaint",
+                                "value": "Complaint"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            },
+                            {
+                                "id": "non_conformance_report",
+                                "label": "Non-Conformance Report",
+                                "value": "Non-Conformance Report"
+                            },
+                            {
+                                "id": "inspection",
+                                "label": "Inspection",
+                                "value": "Inspection"
+                            },
+                            {
+                                "id": "customer",
+                                "label": "Customer",
+                                "value": "Customer"
+                            },
+                            {
+                                "id": "internal",
+                                "label": "Internal",
+                                "value": "Internal"
+                            },
+                            {
+                                "id": "supplier",
+                                "label": "Supplier",
+                                "value": "Supplier"
+                            }
+                        ],
+                        "defaultValue": "Audit"
+                    }
+                },
+                {
+                    "id": "source_reference",
+                    "type": "short_text",
+                    "label": "Source Reference",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "raised_by",
+                    "type": "short_text",
+                    "label": "Raised By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "raised_date",
+                    "type": "date",
+                    "label": "Raised Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            }
+                        ],
+                        "defaultValue": "High"
+                    }
+                },
+                {
+                    "id": "root_cause",
+                    "type": "short_text",
+                    "label": "Root Cause",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "corrective_action",
+                    "type": "short_text",
+                    "label": "Corrective Action",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "preventive_action",
+                    "type": "short_text",
+                    "label": "Preventive Action",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total CARs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-cars",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "CARs by Source Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-cars",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "source_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent CARs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-cars",
+                                "titleField": "car_code",
+                                "limit": 10,
+                                "subtitleField": "car_title"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-ncrs",
+            "title": "NCRs",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_ncrs\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save NCRs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_ncrs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ncr_code": "ncr_code",
+                        "ncr_title": "ncr_title",
+                        "ncr_type": "ncr_type",
+                        "ncr_description": "ncr_description",
+                        "severity": "severity",
+                        "source_type": "source_type",
+                        "raised_by": "raised_by",
+                        "raised_date": "raised_date",
+                        "assigned_to": "assigned_to",
+                        "due_date": "due_date",
+                        "root_cause": "root_cause",
+                        "disposition": "disposition",
+                        "corrective_action": "corrective_action",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "NCRs",
+                    "description": "Connected live to SQLite table \"ohs_ncrs\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ncr_code",
+                    "type": "short_text",
+                    "label": "NCR Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ncr_title",
+                    "type": "short_text",
+                    "label": "NCR Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "ncr_type",
+                    "type": "dropdown",
+                    "label": "NCR Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "product",
+                                "label": "Product",
+                                "value": "Product"
+                            },
+                            {
+                                "id": "process",
+                                "label": "Process",
+                                "value": "Process"
+                            },
+                            {
+                                "id": "system",
+                                "label": "System",
+                                "value": "System"
+                            },
+                            {
+                                "id": "supplier",
+                                "label": "Supplier",
+                                "value": "Supplier"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Process"
+                    }
+                },
+                {
+                    "id": "ncr_description",
+                    "type": "long_text",
+                    "label": "NCR Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "minor",
+                                "label": "Minor",
+                                "value": "Minor"
+                            },
+                            {
+                                "id": "major",
+                                "label": "Major",
+                                "value": "Major"
+                            }
+                        ],
+                        "defaultValue": "Minor"
+                    }
+                },
+                {
+                    "id": "source_type",
+                    "type": "dropdown",
+                    "label": "Source Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "incident",
+                                "label": "Incident",
+                                "value": "Incident"
+                            },
+                            {
+                                "id": "hazard",
+                                "label": "Hazard",
+                                "value": "Hazard"
+                            },
+                            {
+                                "id": "audit",
+                                "label": "Audit",
+                                "value": "Audit"
+                            },
+                            {
+                                "id": "corrective_action_request",
+                                "label": "Corrective Action Request",
+                                "value": "Corrective Action Request"
+                            },
+                            {
+                                "id": "non_conformance",
+                                "label": "Non-Conformance",
+                                "value": "Non-Conformance"
+                            },
+                            {
+                                "id": "complaint",
+                                "label": "Complaint",
+                                "value": "Complaint"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            },
+                            {
+                                "id": "non_conformance_report",
+                                "label": "Non-Conformance Report",
+                                "value": "Non-Conformance Report"
+                            },
+                            {
+                                "id": "inspection",
+                                "label": "Inspection",
+                                "value": "Inspection"
+                            },
+                            {
+                                "id": "customer",
+                                "label": "Customer",
+                                "value": "Customer"
+                            },
+                            {
+                                "id": "internal",
+                                "label": "Internal",
+                                "value": "Internal"
+                            },
+                            {
+                                "id": "supplier",
+                                "label": "Supplier",
+                                "value": "Supplier"
+                            }
+                        ],
+                        "defaultValue": "Inspection"
+                    }
+                },
+                {
+                    "id": "raised_by",
+                    "type": "short_text",
+                    "label": "Raised By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "raised_date",
+                    "type": "date",
+                    "label": "Raised Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "root_cause",
+                    "type": "short_text",
+                    "label": "Root Cause",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "disposition",
+                    "type": "dropdown",
+                    "label": "Disposition",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "rework",
+                                "label": "Rework",
+                                "value": "Rework"
+                            },
+                            {
+                                "id": "scrap",
+                                "label": "Scrap",
+                                "value": "Scrap"
+                            },
+                            {
+                                "id": "accept_as_is",
+                                "label": "Accept as Is",
+                                "value": "Accept as Is"
+                            },
+                            {
+                                "id": "return_to_supplier",
+                                "label": "Return to Supplier",
+                                "value": "Return to Supplier"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Rework"
+                    }
+                },
+                {
+                    "id": "corrective_action",
+                    "type": "short_text",
+                    "label": "Corrective Action",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total NCRs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-ncrs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "NCRs by NCR Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-ncrs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "ncr_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent NCRs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-ncrs",
+                                "titleField": "ncr_code",
+                                "limit": 10,
+                                "subtitleField": "ncr_title"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-training",
+            "title": "Training",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_training\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Training",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_training",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "employee_name": "employee_name",
+                        "course_name": "course_name",
+                        "provider": "provider",
+                        "completion_date": "completion_date",
+                        "expiry_date": "expiry_date",
+                        "certificate_number": "certificate_number",
+                        "is_mandatory": "is_mandatory",
+                        "assessment_result": "assessment_result",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Training",
+                    "description": "Connected live to SQLite table \"ohs_training\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "employee_name",
+                    "type": "short_text",
+                    "label": "Employee Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "course_name",
+                    "type": "short_text",
+                    "label": "Course Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "provider",
+                    "type": "short_text",
+                    "label": "Provider",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "completion_date",
+                    "type": "date",
+                    "label": "Completion Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "expiry_date",
+                    "type": "date",
+                    "label": "Expiry Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "certificate_number",
+                    "type": "short_text",
+                    "label": "Certificate Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "is_mandatory",
+                    "type": "dropdown",
+                    "label": "Is Mandatory",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "assessment_result",
+                    "type": "dropdown",
+                    "label": "Assessment Result",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "passed",
+                                "label": "Passed",
+                                "value": "Passed"
+                            },
+                            {
+                                "id": "failed",
+                                "label": "Failed",
+                                "value": "Failed"
+                            },
+                            {
+                                "id": "n_a",
+                                "label": "N/A",
+                                "value": "N/A"
+                            }
+                        ],
+                        "defaultValue": "Passed"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Training",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-training",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Training by Is Mandatory",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-training",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "is_mandatory",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Training",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-training",
+                                "titleField": "employee_name",
+                                "limit": 10,
+                                "subtitleField": "course_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-contractors",
+            "title": "Contractors",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_contractors\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Contractors",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_contractors",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "business_name": "business_name",
+                        "trading_name": "trading_name",
+                        "abn": "abn",
+                        "contact_name": "contact_name",
+                        "contact_email": "contact_email",
+                        "contact_phone": "contact_phone",
+                        "services": "services",
+                        "public_liability": "public_liability",
+                        "workers_comp": "workers_comp",
+                        "licence_details": "licence_details",
+                        "induction_completed": "induction_completed",
+                        "approval_expiry": "approval_expiry"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Contractors",
+                    "description": "Connected live to SQLite table \"ohs_contractors\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "business_name",
+                    "type": "short_text",
+                    "label": "Business Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "trading_name",
+                    "type": "short_text",
+                    "label": "Trading Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "abn",
+                    "type": "short_text",
+                    "label": "ABN",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_name",
+                    "type": "short_text",
+                    "label": "Contact Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_email",
+                    "type": "email",
+                    "label": "Contact Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_phone",
+                    "type": "phone",
+                    "label": "Contact Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "services",
+                    "type": "short_text",
+                    "label": "Services",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "public_liability",
+                    "type": "dropdown",
+                    "label": "Public Liability",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "workers_comp",
+                    "type": "dropdown",
+                    "label": "Workers Comp",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            },
+                            {
+                                "id": "exempt_sole_trader_",
+                                "label": "Exempt (sole trader)",
+                                "value": "Exempt (sole trader)"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "licence_details",
+                    "type": "long_text",
+                    "label": "Licence Details",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "induction_completed",
+                    "type": "dropdown",
+                    "label": "Induction Completed",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "approval_expiry",
+                    "type": "date",
+                    "label": "Approval Expiry",
+                    "required": true,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Contractors",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-contractors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Contractors by Public Liability",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-contractors",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "public_liability",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Contractors",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-contractors",
+                                "titleField": "business_name",
+                                "limit": 10,
+                                "subtitleField": "public_liability"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-complaints",
+            "title": "Complaints",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_complaints\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Complaints",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_complaints",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "complaint_title": "complaint_title",
+                        "complaint_type": "complaint_type",
+                        "complaint_source": "complaint_source",
+                        "complainant_name": "complainant_name",
+                        "complainant_contact": "complainant_contact",
+                        "received_date": "received_date",
+                        "complaint_description": "complaint_description",
+                        "priority": "priority",
+                        "assigned_to": "assigned_to",
+                        "investigation": "investigation",
+                        "resolution": "resolution",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Complaints",
+                    "description": "Connected live to SQLite table \"ohs_complaints\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "complaint_title",
+                    "type": "short_text",
+                    "label": "Complaint Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "complaint_type",
+                    "type": "dropdown",
+                    "label": "Complaint Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "safety",
+                                "label": "Safety",
+                                "value": "Safety"
+                            },
+                            {
+                                "id": "environmental",
+                                "label": "Environmental",
+                                "value": "Environmental"
+                            },
+                            {
+                                "id": "quality",
+                                "label": "Quality",
+                                "value": "Quality"
+                            },
+                            {
+                                "id": "service",
+                                "label": "Service",
+                                "value": "Service"
+                            },
+                            {
+                                "id": "conduct",
+                                "label": "Conduct",
+                                "value": "Conduct"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Quality"
+                    }
+                },
+                {
+                    "id": "complaint_source",
+                    "type": "dropdown",
+                    "label": "Complaint Source",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "customer",
+                                "label": "Customer",
+                                "value": "Customer"
+                            },
+                            {
+                                "id": "employee",
+                                "label": "Employee",
+                                "value": "Employee"
+                            },
+                            {
+                                "id": "contractor",
+                                "label": "Contractor",
+                                "value": "Contractor"
+                            },
+                            {
+                                "id": "public",
+                                "label": "Public",
+                                "value": "Public"
+                            },
+                            {
+                                "id": "regulator",
+                                "label": "Regulator",
+                                "value": "Regulator"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Customer"
+                    }
+                },
+                {
+                    "id": "complainant_name",
+                    "type": "short_text",
+                    "label": "Complainant Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "complainant_contact",
+                    "type": "short_text",
+                    "label": "Complainant Contact",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "received_date",
+                    "type": "date",
+                    "label": "Received Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "complaint_description",
+                    "type": "long_text",
+                    "label": "Complaint Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investigation",
+                    "type": "short_text",
+                    "label": "Investigation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "resolution",
+                    "type": "short_text",
+                    "label": "Resolution",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "controlled",
+                                "label": "Controlled",
+                                "value": "Controlled"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "verified_closed",
+                                "label": "Verified Closed",
+                                "value": "Verified Closed"
+                            },
+                            {
+                                "id": "contained",
+                                "label": "Contained",
+                                "value": "Contained"
+                            },
+                            {
+                                "id": "investigating",
+                                "label": "Investigating",
+                                "value": "Investigating"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Complaints",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-complaints",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Complaints by Complaint Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-complaints",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "complaint_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Complaints",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-complaints",
+                                "titleField": "complaint_title",
+                                "limit": 10,
+                                "subtitleField": "complaint_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-meetings",
+            "title": "Meetings",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_meetings\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Meetings",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_meetings",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "meeting_title": "meeting_title",
+                        "meeting_type": "meeting_type",
+                        "meeting_date": "meeting_date",
+                        "meeting_time": "meeting_time",
+                        "location": "location",
+                        "facilitator": "facilitator",
+                        "attendees": "attendees",
+                        "agenda": "agenda",
+                        "minutes": "minutes",
+                        "action_items": "action_items"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Meetings",
+                    "description": "Connected live to SQLite table \"ohs_meetings\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "meeting_title",
+                    "type": "short_text",
+                    "label": "Meeting Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "meeting_type",
+                    "type": "dropdown",
+                    "label": "Meeting Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "toolbox_talk",
+                                "label": "Toolbox Talk",
+                                "value": "Toolbox Talk"
+                            },
+                            {
+                                "id": "safety_committee",
+                                "label": "Safety Committee",
+                                "value": "Safety Committee"
+                            },
+                            {
+                                "id": "incident_review",
+                                "label": "Incident Review",
+                                "value": "Incident Review"
+                            },
+                            {
+                                "id": "training_session",
+                                "label": "Training Session",
+                                "value": "Training Session"
+                            },
+                            {
+                                "id": "management_review",
+                                "label": "Management Review",
+                                "value": "Management Review"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Toolbox Talk"
+                    }
+                },
+                {
+                    "id": "meeting_date",
+                    "type": "date",
+                    "label": "Meeting Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "meeting_time",
+                    "type": "time",
+                    "label": "Meeting Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "location",
+                    "type": "short_text",
+                    "label": "Location",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "facilitator",
+                    "type": "short_text",
+                    "label": "Facilitator",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "attendees",
+                    "type": "short_text",
+                    "label": "Attendees",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "agenda",
+                    "type": "short_text",
+                    "label": "Agenda",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "minutes",
+                    "type": "short_text",
+                    "label": "Minutes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "action_items",
+                    "type": "short_text",
+                    "label": "Action Items",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Meetings",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-meetings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Meetings by Meeting Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-meetings",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "meeting_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Meetings",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-meetings",
+                                "titleField": "meeting_title",
+                                "limit": 10,
+                                "subtitleField": "meeting_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ohs-plant",
+            "title": "Plant",
+            "icon": "ShieldCheck",
+            "description": "Live FormLogic form synced directly to SQLite table \"ohs_plant\" in OHS & QMS.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Plant",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:ohs-qms-softn-app",
+                    "table": "ohs_plant",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "asset_name": "asset_name",
+                        "category": "category",
+                        "manufacturer": "manufacturer",
+                        "model": "model",
+                        "serial_number": "serial_number",
+                        "purchase_date": "purchase_date",
+                        "equipment_location": "equipment_location",
+                        "last_service_date": "last_service_date",
+                        "next_service_date": "next_service_date",
+                        "inspection_frequency": "inspection_frequency",
+                        "registration_number": "registration_number",
+                        "registration_expiry": "registration_expiry",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Plant",
+                    "description": "Connected live to SQLite table \"ohs_plant\" in OHS & QMS.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "asset_name",
+                    "type": "short_text",
+                    "label": "Asset Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "vehicle",
+                                "label": "Vehicle",
+                                "value": "Vehicle"
+                            },
+                            {
+                                "id": "forklift",
+                                "label": "Forklift",
+                                "value": "Forklift"
+                            },
+                            {
+                                "id": "crane_lifting",
+                                "label": "Crane / Lifting",
+                                "value": "Crane / Lifting"
+                            },
+                            {
+                                "id": "scaffold",
+                                "label": "Scaffold",
+                                "value": "Scaffold"
+                            },
+                            {
+                                "id": "power_tool",
+                                "label": "Power Tool",
+                                "value": "Power Tool"
+                            },
+                            {
+                                "id": "pressure_vessel",
+                                "label": "Pressure Vessel",
+                                "value": "Pressure Vessel"
+                            },
+                            {
+                                "id": "electrical_equipment",
+                                "label": "Electrical Equipment",
+                                "value": "Electrical Equipment"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Forklift"
+                    }
+                },
+                {
+                    "id": "manufacturer",
+                    "type": "short_text",
+                    "label": "Manufacturer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "model",
+                    "type": "short_text",
+                    "label": "Model",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "serial_number",
+                    "type": "short_text",
+                    "label": "Serial Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "purchase_date",
+                    "type": "date",
+                    "label": "Purchase Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "equipment_location",
+                    "type": "short_text",
+                    "label": "Equipment Location",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "last_service_date",
+                    "type": "date",
+                    "label": "Last Service Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "next_service_date",
+                    "type": "date",
+                    "label": "Next Service Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "inspection_frequency",
+                    "type": "dropdown",
+                    "label": "Inspection Frequency",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "daily",
+                                "label": "Daily",
+                                "value": "Daily"
+                            },
+                            {
+                                "id": "weekly",
+                                "label": "Weekly",
+                                "value": "Weekly"
+                            },
+                            {
+                                "id": "monthly",
+                                "label": "Monthly",
+                                "value": "Monthly"
+                            },
+                            {
+                                "id": "quarterly",
+                                "label": "Quarterly",
+                                "value": "Quarterly"
+                            },
+                            {
+                                "id": "annually",
+                                "label": "Annually",
+                                "value": "Annually"
+                            }
+                        ],
+                        "defaultValue": "Monthly"
+                    }
+                },
+                {
+                    "id": "registration_number",
+                    "type": "short_text",
+                    "label": "Registration Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "registration_expiry",
+                    "type": "date",
+                    "label": "Registration Expiry",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Plant",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-plant",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Plant by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ohs-plant",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Plant",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ohs-plant",
+                                "titleField": "asset_name",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "ohs-qms-softn-app",
+            "name": "OHS & QMS",
+            "description": "Turnkey ISO 45001 safety and ISO 9001 quality management system: incident & injury register, interactive 5x5 risk matrix hazard register, CAPA tracker, audits/CARs/NCRs with printable reports, mandatory training matrix, contractor approvals, toolbox talks, complaints and plant register.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "ohs-qms-softn-forms",
+            "name": "OHS & QMS Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to OHS & QMS's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:ohs-qms-softn-app",
+                "linkedSoftnAppId": "@packApp:ohs-qms-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "ohs-incidents",
+                    "displayName": "Incidents",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-injuries",
+                    "displayName": "Injuries",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-hazards",
+                    "displayName": "Hazards",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-actions",
+                    "displayName": "Actions",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-audits",
+                    "displayName": "Audits",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-cars",
+                    "displayName": "CARs",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-ncrs",
+                    "displayName": "NCRs",
+                    "sortOrder": 6,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-training",
+                    "displayName": "Training",
+                    "sortOrder": 7,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-contractors",
+                    "displayName": "Contractors",
+                    "sortOrder": 8,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-complaints",
+                    "displayName": "Complaints",
+                    "sortOrder": 9,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-meetings",
+                    "displayName": "Meetings",
+                    "sortOrder": 10,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ohs-plant",
+                    "displayName": "Plant",
+                    "sortOrder": 11,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_ohs_incidents",
+                    "name": "Total Incidents",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-incidents",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_ohs_incidents",
+                    "name": "Incidents by Incident Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-incidents",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "incident_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_ohs_injuries",
+                    "name": "Total Injuries",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-injuries",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_ohs_injuries",
+                    "name": "Injuries by Injury Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-injuries",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "injury_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_ohs_hazards",
+                    "name": "Total Hazards",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-hazards",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_ohs_actions",
+                    "name": "Total Actions",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ohs-actions",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Injuries",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-injuries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Injuries by Injury Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-injuries",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "injury_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Hazards",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-hazards",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Actions",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ohs-actions",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

@@ -1,0 +1,50 @@
+{
+    "id": "customer-service-softn",
+    "slug": "customer-service-softn",
+    "name": "Service Desk — SoftN App & Linked Forms",
+    "shortName": "Service Desk",
+    "description": "Turnkey customer support helpdesk with ticket triage queue, 1-click escalations, bug tracker, upvotable feature board, refunds desk, live NPS calculator, and searchable knowledge base. Includes the full-stack SoftN application (PHP + SQLite) plus 7 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "LifeBuoy",
+    "category": "Business apps",
+    "tags": [
+        "customer-service",
+        "support",
+        "crm",
+        "tickets",
+        "feedback",
+        "helpdesk",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "customer-service-softn.softn",
+    "softnPackAppId": "customer-service-softn-app",
+    "formsPackAppId": "customer-service-softn-forms",
+    "companionPackSlug": "customer-service",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "support_tickets",
+        "bug_reports",
+        "feature_requests",
+        "refund_requests",
+        "escalations",
+        "customer_feedback",
+        "kb_articles"
+    ],
+    "formCount": 7,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/customer-service.png"
+        }
+    ]
+}

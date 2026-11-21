@@ -1,0 +1,2051 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "grillstack-burger-ops-softn",
+        "name": "GrillStack (SoftN + Forms)",
+        "description": "Turnkey burger shop command center: live order counter with Rush toggle, multi-station kitchen pass KDS (Grill, Fryer, Assembly, Drinks), menu & ingredient builds, prep & par stock, crew shifts with break tracking, and nightly till reconciliation. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "burgers",
+            "kitchen",
+            "orders",
+            "restaurant",
+            "hospitality",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "menu-items",
+            "title": "Menu Items",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"menu_items\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Menu Items",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "menu_items",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "item_name": "item_name",
+                        "category": "category",
+                        "price_cents": "price_cents",
+                        "prep_station": "prep_station",
+                        "ingredients_json": "ingredients_json",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Menu Items",
+                    "description": "Connected live to SQLite table \"menu_items\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "item_name",
+                    "type": "short_text",
+                    "label": "Item Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "burger",
+                                "label": "Burger",
+                                "value": "Burger"
+                            },
+                            {
+                                "id": "side",
+                                "label": "Side",
+                                "value": "Side"
+                            },
+                            {
+                                "id": "drink",
+                                "label": "Drink",
+                                "value": "Drink"
+                            },
+                            {
+                                "id": "dessert",
+                                "label": "Dessert",
+                                "value": "Dessert"
+                            },
+                            {
+                                "id": "combo",
+                                "label": "Combo",
+                                "value": "Combo"
+                            },
+                            {
+                                "id": "bun",
+                                "label": "Bun",
+                                "value": "Bun"
+                            },
+                            {
+                                "id": "patty",
+                                "label": "Patty",
+                                "value": "Patty"
+                            },
+                            {
+                                "id": "sauce",
+                                "label": "Sauce",
+                                "value": "Sauce"
+                            },
+                            {
+                                "id": "salad",
+                                "label": "Salad",
+                                "value": "Salad"
+                            },
+                            {
+                                "id": "packaging",
+                                "label": "Packaging",
+                                "value": "Packaging"
+                            }
+                        ],
+                        "defaultValue": "Burger"
+                    }
+                },
+                {
+                    "id": "price_cents",
+                    "type": "number",
+                    "label": "Price (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "prep_station",
+                    "type": "dropdown",
+                    "label": "Prep Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "grill",
+                                "label": "Grill",
+                                "value": "Grill"
+                            },
+                            {
+                                "id": "fryer",
+                                "label": "Fryer",
+                                "value": "Fryer"
+                            },
+                            {
+                                "id": "cold_station",
+                                "label": "Cold station",
+                                "value": "Cold station"
+                            },
+                            {
+                                "id": "drinks",
+                                "label": "Drinks",
+                                "value": "Drinks"
+                            }
+                        ],
+                        "defaultValue": "Grill"
+                    }
+                },
+                {
+                    "id": "ingredients_json",
+                    "type": "short_text",
+                    "label": "Ingredients Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "off_menu",
+                                "label": "Off menu",
+                                "value": "Off menu"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Menu Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:menu-items",
+                                "titleField": "item_name",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "shop-orders",
+            "title": "Shop Orders",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"shop_orders\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Shop Orders",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "shop_orders",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "order_number": "order_number",
+                        "order_day": "order_day",
+                        "order_type": "order_type",
+                        "customer_name": "customer_name",
+                        "items_json": "items_json",
+                        "items_summary": "items_summary",
+                        "status": "status",
+                        "priority": "priority",
+                        "total_cents": "total_cents",
+                        "notes": "notes",
+                        "created_by": "created_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Shop Orders",
+                    "description": "Connected live to SQLite table \"shop_orders\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_number",
+                    "type": "short_text",
+                    "label": "Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_day",
+                    "type": "short_text",
+                    "label": "Order Day",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "order_type",
+                    "type": "dropdown",
+                    "label": "Order Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "dine_in",
+                                "label": "Dine-in",
+                                "value": "Dine-in"
+                            },
+                            {
+                                "id": "takeaway",
+                                "label": "Takeaway",
+                                "value": "Takeaway"
+                            },
+                            {
+                                "id": "delivery",
+                                "label": "Delivery",
+                                "value": "Delivery"
+                            }
+                        ],
+                        "defaultValue": "Takeaway"
+                    }
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "items_json",
+                    "type": "short_text",
+                    "label": "Items Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "items_summary",
+                    "type": "long_text",
+                    "label": "Items Summary",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "preparing",
+                                "label": "Preparing",
+                                "value": "Preparing"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "plated",
+                                "label": "Plated",
+                                "value": "Plated"
+                            },
+                            {
+                                "id": "held",
+                                "label": "Held",
+                                "value": "Held"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "reviewed",
+                                "label": "Reviewed",
+                                "value": "Reviewed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "New"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "rush",
+                                "label": "Rush",
+                                "value": "Rush"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "created_by",
+                    "type": "short_text",
+                    "label": "Created By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Shop Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:shop-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Shop Orders by Order Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:shop-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "order_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Shop Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:shop-orders",
+                                "titleField": "order_number",
+                                "limit": 10,
+                                "subtitleField": "order_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "kitchen-tickets",
+            "title": "Kitchen Tickets",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"kitchen_tickets\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Kitchen Tickets",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "kitchen_tickets",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "order_id": "order_id",
+                        "order_number": "order_number",
+                        "customer_name": "customer_name",
+                        "order_type": "order_type",
+                        "priority": "priority",
+                        "station": "station",
+                        "ticket_items": "ticket_items",
+                        "status": "status",
+                        "staff_member": "staff_member",
+                        "started_at": "started_at",
+                        "completed_at": "completed_at",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Kitchen Tickets",
+                    "description": "Connected live to SQLite table \"kitchen_tickets\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_id",
+                    "type": "linked_record",
+                    "label": "Order",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:shop-orders",
+                        "displayFieldIds": [
+                            "order_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "order_number",
+                    "type": "short_text",
+                    "label": "Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_type",
+                    "type": "dropdown",
+                    "label": "Order Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "dine_in",
+                                "label": "Dine-in",
+                                "value": "Dine-in"
+                            },
+                            {
+                                "id": "takeaway",
+                                "label": "Takeaway",
+                                "value": "Takeaway"
+                            },
+                            {
+                                "id": "delivery",
+                                "label": "Delivery",
+                                "value": "Delivery"
+                            }
+                        ],
+                        "defaultValue": "Takeaway"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "rush",
+                                "label": "Rush",
+                                "value": "Rush"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "grill",
+                                "label": "Grill",
+                                "value": "Grill"
+                            },
+                            {
+                                "id": "fryer",
+                                "label": "Fryer",
+                                "value": "Fryer"
+                            },
+                            {
+                                "id": "assembly",
+                                "label": "Assembly",
+                                "value": "Assembly"
+                            },
+                            {
+                                "id": "drinks",
+                                "label": "Drinks",
+                                "value": "Drinks"
+                            }
+                        ],
+                        "defaultValue": "Grill"
+                    }
+                },
+                {
+                    "id": "ticket_items",
+                    "type": "short_text",
+                    "label": "Ticket Items",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "preparing",
+                                "label": "Preparing",
+                                "value": "Preparing"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "plated",
+                                "label": "Plated",
+                                "value": "Plated"
+                            },
+                            {
+                                "id": "held",
+                                "label": "Held",
+                                "value": "Held"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "reviewed",
+                                "label": "Reviewed",
+                                "value": "Reviewed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                },
+                {
+                    "id": "staff_member",
+                    "type": "short_text",
+                    "label": "Staff Member",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "started_at",
+                    "type": "number",
+                    "label": "Started At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "completed_at",
+                    "type": "number",
+                    "label": "Completed At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Kitchen Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Kitchen Tickets by Order Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "order_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Kitchen Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:kitchen-tickets",
+                                "titleField": "order_number",
+                                "limit": 10,
+                                "subtitleField": "order_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "prep-stock",
+            "title": "Prep Stock",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"prep_stock\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Prep Stock",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "prep_stock",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ingredient": "ingredient",
+                        "category": "category",
+                        "opening_count": "opening_count",
+                        "current_count": "current_count",
+                        "par_level": "par_level",
+                        "unit": "unit",
+                        "status": "status",
+                        "last_checked": "last_checked"
+                    },
+                    "createdAtColumn": null,
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Prep Stock",
+                    "description": "Connected live to SQLite table \"prep_stock\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ingredient",
+                    "type": "short_text",
+                    "label": "Ingredient",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "burger",
+                                "label": "Burger",
+                                "value": "Burger"
+                            },
+                            {
+                                "id": "side",
+                                "label": "Side",
+                                "value": "Side"
+                            },
+                            {
+                                "id": "drink",
+                                "label": "Drink",
+                                "value": "Drink"
+                            },
+                            {
+                                "id": "dessert",
+                                "label": "Dessert",
+                                "value": "Dessert"
+                            },
+                            {
+                                "id": "combo",
+                                "label": "Combo",
+                                "value": "Combo"
+                            },
+                            {
+                                "id": "bun",
+                                "label": "Bun",
+                                "value": "Bun"
+                            },
+                            {
+                                "id": "patty",
+                                "label": "Patty",
+                                "value": "Patty"
+                            },
+                            {
+                                "id": "sauce",
+                                "label": "Sauce",
+                                "value": "Sauce"
+                            },
+                            {
+                                "id": "salad",
+                                "label": "Salad",
+                                "value": "Salad"
+                            },
+                            {
+                                "id": "packaging",
+                                "label": "Packaging",
+                                "value": "Packaging"
+                            }
+                        ],
+                        "defaultValue": "Patty"
+                    }
+                },
+                {
+                    "id": "opening_count",
+                    "type": "number",
+                    "label": "Opening Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_count",
+                    "type": "number",
+                    "label": "Current Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "par_level",
+                    "type": "number",
+                    "label": "Par Level",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "units",
+                                "label": "Units",
+                                "value": "Units"
+                            },
+                            {
+                                "id": "kg",
+                                "label": "kg",
+                                "value": "kg"
+                            },
+                            {
+                                "id": "litres",
+                                "label": "Litres",
+                                "value": "Litres"
+                            },
+                            {
+                                "id": "boxes",
+                                "label": "Boxes",
+                                "value": "Boxes"
+                            }
+                        ],
+                        "defaultValue": "Units"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "preparing",
+                                "label": "Preparing",
+                                "value": "Preparing"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "plated",
+                                "label": "Plated",
+                                "value": "Plated"
+                            },
+                            {
+                                "id": "held",
+                                "label": "Held",
+                                "value": "Held"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "reviewed",
+                                "label": "Reviewed",
+                                "value": "Reviewed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "last_checked",
+                    "type": "number",
+                    "label": "Last Checked",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Prep Stock",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:prep-stock",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Prep Stock by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:prep-stock",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Prep Stock",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:prep-stock",
+                                "titleField": "ingredient",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "staff-shifts",
+            "title": "Staff Shifts",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"staff_shifts\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Staff Shifts",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "staff_shifts",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "staff_member": "staff_member",
+                        "role": "role",
+                        "shift_date": "shift_date",
+                        "start_time": "start_time",
+                        "end_time": "end_time",
+                        "break_taken": "break_taken",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Staff Shifts",
+                    "description": "Connected live to SQLite table \"staff_shifts\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "staff_member",
+                    "type": "short_text",
+                    "label": "Staff Member",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "grill",
+                                "label": "Grill",
+                                "value": "Grill"
+                            },
+                            {
+                                "id": "front_counter",
+                                "label": "Front counter",
+                                "value": "Front counter"
+                            },
+                            {
+                                "id": "runner",
+                                "label": "Runner",
+                                "value": "Runner"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "Manager",
+                                "value": "Manager"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "grill_crew",
+                                "label": "grill_crew",
+                                "value": "grill_crew"
+                            },
+                            {
+                                "id": "front_counter",
+                                "label": "front_counter",
+                                "value": "front_counter"
+                            },
+                            {
+                                "id": "runner",
+                                "label": "runner",
+                                "value": "runner"
+                            }
+                        ],
+                        "defaultValue": "Grill"
+                    }
+                },
+                {
+                    "id": "shift_date",
+                    "type": "date",
+                    "label": "Shift Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "end_time",
+                    "type": "time",
+                    "label": "End Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "break_taken",
+                    "type": "dropdown",
+                    "label": "Break Taken",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "not_yet",
+                                "label": "Not yet",
+                                "value": "Not yet"
+                            }
+                        ],
+                        "defaultValue": "Not yet"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Staff Shifts",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-shifts",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Staff Shifts by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-shifts",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Staff Shifts",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:staff-shifts",
+                                "titleField": "staff_member",
+                                "limit": 10,
+                                "subtitleField": "role"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "daily-closes",
+            "title": "Daily Closes",
+            "icon": "Flame",
+            "description": "Live FormLogic form synced directly to SQLite table \"daily_closes\" in GrillStack.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Daily Closes",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:grillstack-burger-ops-softn-app",
+                    "table": "daily_closes",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "close_date": "close_date",
+                        "cash_cents": "cash_cents",
+                        "eftpos_cents": "eftpos_cents",
+                        "delivery_cents": "delivery_cents",
+                        "pos_cents": "pos_cents",
+                        "waste_notes": "waste_notes",
+                        "cleaning_json": "cleaning_json",
+                        "manager": "manager",
+                        "issues": "issues",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Daily Closes",
+                    "description": "Connected live to SQLite table \"daily_closes\" in GrillStack.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "close_date",
+                    "type": "date",
+                    "label": "Close Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "cash_cents",
+                    "type": "number",
+                    "label": "Cash (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "eftpos_cents",
+                    "type": "number",
+                    "label": "Eftpos (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "delivery_cents",
+                    "type": "number",
+                    "label": "Delivery (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "pos_cents",
+                    "type": "number",
+                    "label": "Pos (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "waste_notes",
+                    "type": "long_text",
+                    "label": "Waste Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cleaning_json",
+                    "type": "short_text",
+                    "label": "Cleaning Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager",
+                    "type": "short_text",
+                    "label": "Manager",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issues",
+                    "type": "short_text",
+                    "label": "Issues",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "preparing",
+                                "label": "Preparing",
+                                "value": "Preparing"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "plated",
+                                "label": "Plated",
+                                "value": "Plated"
+                            },
+                            {
+                                "id": "held",
+                                "label": "Held",
+                                "value": "Held"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "reviewed",
+                                "label": "Reviewed",
+                                "value": "Reviewed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Submitted"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Daily Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:daily-closes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Daily Closes by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:daily-closes",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Daily Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:daily-closes",
+                                "titleField": "close_date",
+                                "limit": 10,
+                                "subtitleField": "cash_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "grillstack-burger-ops-softn-app",
+            "name": "GrillStack",
+            "description": "Turnkey burger shop command center: live order counter with Rush toggle, multi-station kitchen pass KDS (Grill, Fryer, Assembly, Drinks), menu & ingredient builds, prep & par stock, crew shifts with break tracking, and nightly till reconciliation.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "grillstack-burger-ops-softn-forms",
+            "name": "GrillStack Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to GrillStack's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:grillstack-burger-ops-softn-app",
+                "linkedSoftnAppId": "@packApp:grillstack-burger-ops-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "menu-items",
+                    "displayName": "Menu Items",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "shop-orders",
+                    "displayName": "Shop Orders",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "kitchen-tickets",
+                    "displayName": "Kitchen Tickets",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "prep-stock",
+                    "displayName": "Prep Stock",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "staff-shifts",
+                    "displayName": "Staff Shifts",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "daily-closes",
+                    "displayName": "Daily Closes",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_menu_items",
+                    "name": "Total Menu Items",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-items",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_menu_items",
+                    "name": "Menu Items by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:menu-items",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_shop_orders",
+                    "name": "Total Shop Orders",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:shop-orders",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_shop_orders",
+                    "name": "Shop Orders by Order Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:shop-orders",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "order_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_kitchen_tickets",
+                    "name": "Total Kitchen Tickets",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:kitchen-tickets",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_prep_stock",
+                    "name": "Total Prep Stock",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:prep-stock",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Menu Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Menu Items by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:menu-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Shop Orders",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:shop-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Shop Orders by Order Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:shop-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "order_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Kitchen Tickets",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Prep Stock",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:prep-stock",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

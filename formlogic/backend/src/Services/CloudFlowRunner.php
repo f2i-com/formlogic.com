@@ -67,6 +67,10 @@ class CloudFlowRunner
         // executes recursively in-process. Same guard/refusal contract as the browser
         // and desktop invokers; a cloud-ineligible child is a routeable child failure.
         'flow_call',
+        // Cross-app composition (same account): invoke any hosted SoftN / container app
+        // backend route or perform CRUD on any app's SQLite database table under the same owner.
+        'native_app_request',
+        'native_record_action',
     ];
 
     /** Maximum awaited flow_call depth (plan §8.8; the ancestry includes the root flow). */
@@ -79,6 +83,7 @@ class CloudFlowRunner
     private FlowService $flowService;
     /** @var null|callable(string, string, array, ?string): array{status: int, body: string} */
     private $httpTransport;
+    private ?NativeRecordEventRouter $recordEvents = null;
 
     public function __construct(
         MySQLConnection $mysql,
@@ -89,11 +94,18 @@ class CloudFlowRunner
         private string $siteBaseUrl = '',
         ?callable $httpTransport = null,
         private int $maxWallClockSeconds = self::MAX_WALL_CLOCK_SECONDS,
+        private ?AppService $apps = null,
+        private ?NativeAppService $nativeApps = null,
     ) {
         $this->mysql = $mysql->getConnection();
         $this->flowService = new FlowService($mysql);
         $this->siteBaseUrl = rtrim($siteBaseUrl, '/');
         $this->httpTransport = $httpTransport;
+    }
+
+    public function setRecordEventRouter(?NativeRecordEventRouter $router): void
+    {
+        $this->recordEvents = $router;
     }
 
     /**
@@ -222,6 +234,53 @@ class CloudFlowRunner
             'result' => $outcome['result'],
             'nodesExecuted' => $outcome['nodesExecuted'],
         ];
+    }
+
+    /**
+     * Claim and execute an already-queued `flow_run_logs` row synchronously in the cloud
+     * (used by NativeRecordEventRouter when a database record event triggers a cloud-eligible flow).
+     * Returns null when the flow is not cloud-eligible or another runner already claimed the row.
+     *
+     * @param array<string, mixed> $flow
+     * @param array<string, mixed> $inputs
+     * @return array<string, mixed>|null
+     */
+    public function runQueuedRun(string $runId, array $flow, string $userId, array $inputs): ?array
+    {
+        $flow['flowJson'] = $this->effectiveGraph($flow);
+        if (self::validateCloudEligible($flow['flowJson'] ?? null) !== []) {
+            return null;
+        }
+        // Claim atomically: only one runner executes a queued run.
+        $claim = $this->mysql->prepare("
+            UPDATE flow_run_logs
+            SET status = 'running', runtime = 'cloud', execution_location = 'cloud',
+                run_by_user_id = COALESCE(run_by_user_id, :run_by), started_at = NOW()
+            WHERE id = :id AND status = 'queued'
+        ");
+        $claim->execute(['id' => $runId, 'run_by' => $userId]);
+        if ($claim->rowCount() !== 1) {
+            return null;
+        }
+        try {
+            $this->plans->checkAndIncrement($userId, 'cloud_flow_runs', 1);
+        } catch (\RuntimeException $e) {
+            $this->finalizeRun($runId, 'error', null, ['code' => 'flow_credits_exceeded', 'message' => $e->getMessage()]);
+            return ['ok' => true, 'runId' => $runId, 'status' => 'error', 'error' => ['code' => 'flow_credits_exceeded', 'message' => $e->getMessage()]];
+        }
+        try {
+            $outcome = $this->execute($flow, $userId, $inputs, null, [(string) $flow['id']], $runId);
+        } catch (CloudFlowNodeError $e) {
+            $status = $e->flowErrorCode === 'timeout' ? 'timeout' : 'error';
+            $this->finalizeRun($runId, $status, null, ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId]);
+            return ['ok' => true, 'runId' => $runId, 'status' => $status, 'error' => ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId]];
+        } catch (\Throwable $e) {
+            error_log('CloudFlowRunner: queued run ' . $runId . ' failed unexpectedly: ' . $e->getMessage());
+            $this->finalizeRun($runId, 'error', null, ['code' => 'node_failed', 'message' => 'The flow run failed']);
+            return ['ok' => true, 'runId' => $runId, 'status' => 'error', 'error' => ['code' => 'node_failed', 'message' => 'The flow run failed']];
+        }
+        $this->finalizeRun($runId, 'done', $outcome['result'], null);
+        return ['ok' => true, 'runId' => $runId, 'status' => 'done', 'result' => $outcome['result'], 'nodesExecuted' => $outcome['nodesExecuted']];
     }
 
     /**
@@ -530,6 +589,12 @@ class CloudFlowRunner
 
             case 'connector_request':
                 return $this->runConnectorRequest($node, $data, $scope, $flow, $userId);
+
+            case 'native_app_request':
+                return $this->runNativeAppRequest($node, $data, $scope, $flow, $userId);
+
+            case 'native_record_action':
+                return $this->runNativeRecordAction($node, $data, $scope, $flow, $userId);
 
             default:
                 // Defense in depth: validateCloudEligible runs before any credit is touched,
@@ -1429,6 +1494,232 @@ class CloudFlowRunner
             "Node '{$node['id']}': child_flow_failed: flow '{$targetId}' {$childError['code']}: {$childError['message']}",
             $node['id']
         );
+    }
+
+    /**
+     * Cross-app node (`native_app_request`): invoke any SoftN `.logic` or container backend route
+     * owned by the same account as the flow. Supports `{{interpolation}}` in appId, path, query,
+     * headers and body.
+     *
+     * @param array<string, mixed> $node
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $scope
+     * @param array<string, mixed> $flow
+     * @return array<string, mixed>
+     */
+    private function runNativeAppRequest(array $node, array $data, array $scope, array $flow, string $userId): array
+    {
+        if ($this->apps === null || $this->nativeApps === null) {
+            throw new CloudFlowNodeError('runner_unavailable', "Node '{$node['id']}': native app calls are not configured on this server", $node['id']);
+        }
+        $ctx = $this->scopeToContext($scope);
+        $rawAppRef = is_string($data['appId'] ?? null) ? trim($this->interpolateTemplate($data['appId'], $ctx)) : '';
+        if ($rawAppRef === '') {
+            $rawAppRef = is_string($flow['appId'] ?? null) ? (string) $flow['appId'] : '';
+        }
+        if ($rawAppRef === '') {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': select a target app (appId)", $node['id']);
+        }
+        $owner = (string) ($flow['ownerUserId'] ?? $userId);
+        $targetApp = $this->apps->getApp($rawAppRef) ?? $this->apps->getAppBySlug($rawAppRef);
+        if (!$targetApp || ($targetApp['ownerId'] ?? null) !== $owner) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app not found or owned by another account", $node['id']);
+        }
+        $targetAppId = (string) $targetApp['id'];
+        $project = $this->nativeApps->project($targetAppId);
+        if (!$project || !NativeAppService::hasBackend($project)) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app has no hosted backend", $node['id']);
+        }
+        $method = strtoupper(trim($this->interpolateTemplate(is_string($data['method'] ?? null) ? $data['method'] : 'GET', $ctx)));
+        $path = trim($this->interpolateTemplate(is_string($data['path'] ?? null) ? $data['path'] : '', $ctx));
+        if ($path === '' || !str_starts_with($path, '/') || str_contains($path, '..') || str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': invalid backend path '{$path}'", $node['id']);
+        }
+        $query = array_key_exists('query', $data) ? $this->resolveDeep($data['query'], $scope) : [];
+        $body = array_key_exists('body', $data) ? $this->resolveDeep($data['body'], $scope) : null;
+        if (is_string($body) && $body !== '') {
+            $decodedBody = json_decode($body, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $body = $decodedBody;
+            }
+        }
+        $headersIn = is_array($data['headers'] ?? null) ? $this->resolveDeep($data['headers'], $scope) : [];
+        $headers = [];
+        if (is_array($headersIn)) {
+            foreach ($headersIn as $k => $v) {
+                if (!is_string($k) || !is_scalar($v)) continue;
+                $lk = strtolower(trim($k));
+                if ($lk === '' || str_starts_with($lk, 'x-formlogic-')) continue;
+                $headers[$lk] = (string) $v;
+            }
+        }
+        $identity = [
+            'appId' => $targetAppId,
+            'userId' => $owner,
+            'roleId' => 'owner',
+            'authenticated' => true,
+            'via' => 'flow',
+            'formlogic' => ['appId' => $targetAppId, 'userId' => $owner, 'roleId' => 'owner'],
+        ];
+        $groupAppIds = $this->apps->sharedDatabaseGroupAppIds($targetAppId);
+        $subscriptions = $this->flowService->nativeRecordSubscriptionsForApps($groupAppIds);
+        try {
+            if (NativeAppService::hasContainerBackend($project)) {
+                if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], true)) {
+                    throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': unsupported HTTP method '{$method}'", $node['id']);
+                }
+                $queryStr = is_string($query) ? ltrim($query, '?') : (is_array($query) ? http_build_query($query) : '');
+                $bodyBase64 = '';
+                if ($body !== null && !in_array($method, ['GET', 'HEAD'], true)) {
+                    if (!isset($headers['content-type']) && is_array($body)) {
+                        $headers['content-type'] = 'application/json';
+                    }
+                    $rawBody = is_string($body) ? $body : json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+                    $bodyBase64 = base64_encode($rawBody);
+                }
+                $rawResult = $this->nativeApps->containerRequest($targetAppId, [
+                    'method' => $method,
+                    'path' => $path,
+                    'query' => $queryStr,
+                    'headers' => (object) $headers,
+                    'bodyBase64' => $bodyBase64,
+                    'client_ip' => '127.0.0.1',
+                ], $identity, (int) ($project['version'] ?? 0), $subscriptions);
+                $decodedText = base64_decode($rawResult['bodyBase64'], true);
+                $decodedText = is_string($decodedText) ? $decodedText : '';
+                $parsed = json_decode($decodedText, true);
+                $respBody = json_last_error() === JSON_ERROR_NONE ? $parsed : $decodedText;
+                if ($this->recordEvents !== null) {
+                    try { $this->nativeApps->dispatchRecordEvents($targetAppId, $this->recordEvents->for($targetAppId)); } catch (\Throwable) {}
+                }
+                return [
+                    'status' => $rawResult['status'],
+                    'ok' => $rawResult['status'] >= 200 && $rawResult['status'] < 300,
+                    'body' => $respBody,
+                    'headers' => $rawResult['headers'],
+                    'appId' => $targetAppId,
+                ];
+            }
+            if (!in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true) || !preg_match('~^/api/[a-zA-Z0-9/_-]+$~D', $path)) {
+                throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': SoftN .logic routes require GET/POST/PUT/DELETE under /api/...", $node['id']);
+            }
+            $nativeRes = $this->nativeApps->request($targetAppId, [
+                'method' => $method,
+                'path' => $path,
+                'query' => (object) (is_array($query) ? $query : []),
+                'body' => $body !== null ? $body : (object) [],
+                'headers' => (object) ['authorization' => (string) ($headers['authorization'] ?? ''), 'idempotency-key' => (string) ($headers['idempotency-key'] ?? '')],
+                'client_ip' => '127.0.0.1',
+                'photos' => false,
+            ], $identity, $subscriptions, (int) ($project['version'] ?? 0));
+            if ($this->recordEvents !== null) {
+                try { $this->nativeApps->dispatchRecordEvents($targetAppId, $this->recordEvents->for($targetAppId)); } catch (\Throwable) {}
+            }
+            $status = (int) ($nativeRes['status'] ?? 500);
+            return [
+                'status' => $status,
+                'ok' => $status >= 200 && $status < 300,
+                'body' => $nativeRes['body'] ?? null,
+                'appId' => $targetAppId,
+            ];
+        } catch (CloudFlowNodeError $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': " . $e->getMessage(), $node['id']);
+        }
+    }
+
+    /**
+     * Cross-app database node (`native_record_action`): list, read, create, update, or delete rows
+     * in any SoftN app's SQLite database owned by the same account (follows shared DB links and
+     * hides sensitive columns via NativeRecordStore).
+     *
+     * @param array<string, mixed> $node
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $scope
+     * @param array<string, mixed> $flow
+     * @return array<string, mixed>
+     */
+    private function runNativeRecordAction(array $node, array $data, array $scope, array $flow, string $userId): array
+    {
+        if ($this->apps === null || $this->nativeApps === null) {
+            throw new CloudFlowNodeError('runner_unavailable', "Node '{$node['id']}': native database actions are not configured on this server", $node['id']);
+        }
+        $ctx = $this->scopeToContext($scope);
+        $rawAppRef = is_string($data['appId'] ?? null) ? trim($this->interpolateTemplate($data['appId'], $ctx)) : '';
+        if ($rawAppRef === '') {
+            $rawAppRef = is_string($flow['appId'] ?? null) ? (string) $flow['appId'] : '';
+        }
+        if ($rawAppRef === '') {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': select a target app (appId)", $node['id']);
+        }
+        $owner = (string) ($flow['ownerUserId'] ?? $userId);
+        $targetApp = $this->apps->getApp($rawAppRef) ?? $this->apps->getAppBySlug($rawAppRef);
+        if (!$targetApp || ($targetApp['ownerId'] ?? null) !== $owner) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app not found or owned by another account", $node['id']);
+        }
+        $targetAppId = (string) $targetApp['id'];
+        $table = is_string($data['table'] ?? null) ? trim($this->interpolateTemplate($data['table'], $ctx)) : '';
+        $operation = strtolower(trim(is_string($data['operation'] ?? null) ? $this->interpolateTemplate($data['operation'], $ctx) : 'list'));
+        if ($table === '') {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': select a database table", $node['id']);
+        }
+        try {
+            if ($operation === 'list') {
+                $opts = [];
+                if (isset($data['q']) && is_string($data['q']) && $data['q'] !== '') {
+                    $opts['q'] = $this->interpolateTemplate($data['q'], $ctx);
+                }
+                if (isset($data['limit']) && is_numeric($data['limit'])) {
+                    $opts['limit'] = max(1, min((int) $data['limit'], 250));
+                }
+                if (isset($data['filter'])) {
+                    $opts['filter'] = $this->resolveDeep($data['filter'], $scope);
+                }
+                $offset = isset($data['offset']) && is_numeric($data['offset']) ? max(0, (int) $data['offset']) : 0;
+                $res = $this->nativeApps->records($targetAppId, $table, $offset, null, $opts);
+                $rows = is_array($res['rows'] ?? null) ? $res['rows'] : [];
+                return [
+                    'table' => $table,
+                    'rows' => $rows,
+                    'count' => count($rows),
+                    'total' => (int) ($res['total'] ?? count($rows)),
+                    'first' => $rows[0] ?? null,
+                    'found' => count($rows) > 0,
+                    'appId' => $targetAppId,
+                ];
+            }
+            if (!in_array($operation, ['read', 'create', 'update', 'delete'], true)) {
+                throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': unsupported operation '{$operation}' (use list, read, create, update, or delete)", $node['id']);
+            }
+            $input = ['table' => $table, 'action' => $operation];
+            if (array_key_exists('key', $data) && $data['key'] !== null) {
+                $input['key'] = $this->resolveDeep($data['key'], $scope);
+            }
+            if (array_key_exists('values', $data) && $data['values'] !== null) {
+                $input['values'] = $this->resolveDeep($data['values'], $scope);
+            }
+            if ($operation === 'update' || $operation === 'delete') {
+                // Auto-read latest revision if caller omitted it so flow updates/deletes stay ergonomic.
+                if (empty($data['revision']) && isset($input['key'])) {
+                    $current = $this->nativeApps->manageRecord($targetAppId, ['table' => $table, 'action' => 'read', 'key' => $input['key']]);
+                    $input['revision'] = $current['record']['revision'] ?? null;
+                } elseif (isset($data['revision'])) {
+                    $input['revision'] = is_string($data['revision']) ? $this->interpolateTemplate($data['revision'], $ctx) : $data['revision'];
+                }
+            }
+            $groupAppIds = $this->apps->sharedDatabaseGroupAppIds($targetAppId);
+            $subscriptions = $operation === 'read' ? [] : $this->flowService->nativeRecordSubscriptionsForApps($groupAppIds);
+            $res = $this->nativeApps->manageRecord($targetAppId, $input, $subscriptions);
+            if ($operation !== 'read' && $this->recordEvents !== null) {
+                try { $this->nativeApps->dispatchRecordEvents($targetAppId, $this->recordEvents->for($targetAppId)); } catch (\Throwable) {}
+            }
+            return $res + ['table' => $table, 'appId' => $targetAppId];
+        } catch (CloudFlowNodeError $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': " . $e->getMessage(), $node['id']);
+        }
     }
 
     private function finalizeRun(string $runId, string $status, mixed $result, ?array $error): void

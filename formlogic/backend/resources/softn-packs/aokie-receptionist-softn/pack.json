@@ -1,0 +1,52 @@
+{
+    "id": "aokie-receptionist-softn",
+    "slug": "aokie-receptionist-softn",
+    "name": "Aokie Receptionist — SoftN App & Linked Forms",
+    "shortName": "Aokie Receptionist",
+    "description": "Turnkey AI phone & front-desk console: two-pane live call console with structured Caller/AI transcripts, two-pane SMS inbox with AI draft approval, appointments & orders desk, follow-up tasks queue, callers CRM, Bluetooth dongle hardware events log and AI persona/routing configuration. Includes the full-stack SoftN application (PHP + SQLite) plus 10 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "PhoneCall",
+    "category": "Business apps",
+    "tags": [
+        "receptionist",
+        "phone",
+        "aokie",
+        "desktop",
+        "flows",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "aokie-receptionist-softn.softn",
+    "softnPackAppId": "aokie-receptionist-softn-app",
+    "formsPackAppId": "aokie-receptionist-softn-forms",
+    "companionPackSlug": "aokie-receptionist",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "ak_customers",
+        "ak_calls",
+        "ak_transcript_turns",
+        "ak_sms_threads",
+        "ak_sms_messages",
+        "ak_appointments",
+        "ak_orders",
+        "ak_tasks",
+        "ak_hardware_events",
+        "ak_receptionist_config"
+    ],
+    "formCount": 10,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/aokie-receptionist.png"
+        }
+    ]
+}

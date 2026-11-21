@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink } from 'react-router-dom';
-import { ArrowRight, BookOpen, Boxes, Braces, CreditCard, LayoutGrid, Menu, Monitor, Moon, Sun, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Boxes, Braces, CreditCard, LayoutGrid, Menu, Monitor, Moon, PhoneCall, Sun, X } from 'lucide-react';
 import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
 import { useUIStore } from '../../stores/uiStore';
@@ -65,6 +65,7 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
         <div id="lv2-nav-links" className={`lv2-nav__links${open ? ' lv2-open' : ''}`}>
           <a href="/#platform" onClick={close}><LayoutGrid size={16} aria-hidden="true" />Product</a>
           <a href="/#portable-apps" onClick={close}><Braces size={16} aria-hidden="true" />Build apps</a>
+          <a href="/#aokie" onClick={close}><PhoneCall size={16} aria-hidden="true" />Aokie</a>
           <a href="/#desktop" onClick={close}><Monitor size={16} aria-hidden="true" />OAIY</a>
           <NavLink to="/packs" onClick={close}><Boxes size={16} aria-hidden="true" />Marketplace</NavLink>
           <a href="/#pricing" onClick={close}><CreditCard size={16} aria-hidden="true" />Pricing</a>

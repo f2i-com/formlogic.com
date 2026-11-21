@@ -8,7 +8,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-public_beta-7657F6?style=for-the-badge&labelColor=090F1D" alt="Public beta" />
-  <img src="https://img.shields.io/badge/marketplace-29_app_packs-4CC7D8?style=for-the-badge&labelColor=090F1D" alt="29 marketplace app packs" />
+  <img src="https://img.shields.io/badge/marketplace-58+_apps_%26_packs-4CC7D8?style=for-the-badge&labelColor=090F1D" alt="58+ marketplace apps and packs" />
   <img src="https://img.shields.io/badge/form_builder-23_field_types-C9FB68?style=for-the-badge&labelColor=090F1D" alt="23 form field types" />
   <img src="https://img.shields.io/badge/deploy-cloud_%7C_self--hosted-8268FF?style=for-the-badge&labelColor=090F1D" alt="Cloud or self-hosted" />
 </p>
@@ -32,13 +32,36 @@
 
 ## From a form to a connected app
 
-**Install an editable app.** The 29 business packs now include 32 editable app workspaces, their linked forms, record stores, roles, reports and workflows. Download the complete source ZIP or customise an installed copy in App Studio. Operators can add or change pack folders without rebuilding the site. Packs can also carry native `.logic` routes and SQLite migrations. [Pack folders and project format](docs/PACK_PROJECTS.md).
+**Bidirectional Forms + SoftN SQLite + Marketplace.** FormLogic ships **58+ free marketplace packages** — 29 classic Forms Packs plus **29 full-stack SoftN business apps paired with schema-matched FormLogic Forms & Charts** sharing one live SQLite database. Creators can also publish and sell private, source-hidden `.softn` apps and modular plugins with live ephemeral SQLite sandboxes. [Pack folders and project format](docs/PACK_PROJECTS.md).
 
-1. **Start with your data.** Create a form visually, use AI, or choose a marketplace starter.
-2. **Build the workspace.** Add screens, dashboards, reports, branding, members and roles in App Studio.
-3. **Connect the work.** Use flows and scripts to turn submissions and device events into the next action.
-4. **Make it your own.** Import an editable project ZIP, open the embedded Visual Builder or AI Studio, and host its private `.logic` backend and SQLite database.
-5. **Share the same records.** Add forms to another app without copying the data, or move a complete integration after reviewing its permissions.
+1. **Start with Forms or a SoftN App.** Turn any Form App's forms into a **Unified SQLite Database** (syncing form fields to live SQLite tables and spinning up a SoftN app on top in 1 click) — or upload/install a **SoftN App first** and use the **1-Click Admin Panel CRUD Builder** to generate live CRUD forms, KPIs, and charts straight from its SQLite tables.
+2. **Share one database across apps & API backends.** Link multiple SoftN apps, Form Apps, and dedicated external **API Backends** (callable via scoped API keys) to the exact same SQLite database.
+3. **Connect the work with Flows.** Trigger flows from form submissions, SQLite table changes, or programmatically over the API, and call sibling apps in the same account.
+4. **Test privately in the Marketplace.** Launch any SoftN app or modular plugin in a private, source-hidden live sandbox (with its own ephemeral SQLite database and 1-click Reset) before installing or buying.
+5. **Build visually or via MCP.** Use the Form Builder, App Studio, Visual Builder, AI Studio, or connect Claude/Cursor/Codex via FormLogic's 59-tool **MCP server** (`/api/mcp`).
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/unified-sqlite-db.jpg" alt="Unified SQLite Database panel turning FormLogic forms into live SQLite tables shared with SoftN apps" width="100%" />
+      <p><strong>Forms → Unified SQLite → SoftN App.</strong> Every form becomes a real SQLite table that SoftN apps and Form Apps read and write live.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/admin-crud-builder.jpg" alt="1-Click Admin Panel CRUD Builder selecting SQLite tables to generate CRUD forms and charts" width="100%" />
+      <p><strong>SoftN App → 1-Click Admin Panel CRUD.</strong> Select SQLite tables and generate CRUD forms, KPIs, and charts in one click.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/images/marketplace-sandbox.jpg" alt="FormLogic Marketplace live private sandbox running a SoftN business app with isolated SQLite backend" width="100%" />
+      <p><strong>Private Source-Hidden Sandboxes.</strong> Demo and sell SoftN apps and modular plugins with real temporary SQLite backends while keeping source code private.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/images/pottery-live-home.jpg" alt="Live embedded Kiln & Wheel Pottery Studio SoftN app on the FormLogic homepage backed by SQLite" width="100%" />
+      <p><strong>Live Embedded SoftN Apps.</strong> Host interactive full-stack apps (PHP, Rust, JS, Python, SoftN) backed by SQLite with zero server setup.</p>
+    </td>
+  </tr>
+</table>
 
 <table>
   <tr>

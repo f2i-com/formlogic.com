@@ -111,13 +111,17 @@ function CodeBlock({ title, children }: { title?: string; children: React.ReactN
 
 // Bump when the /screenshots images are replaced: Apache serves them without Cache-Control,
 // so browsers heuristically cache by Last-Modified and would keep showing the old captures.
-const SCREENSHOT_VERSION = '2026-11-13';
+const SCREENSHOT_VERSION = '2026-11-22';
 const SCREENSHOT_SIZES: Record<string, [number, number]> = {
   '/images/dashboard-demo/desktop-dark.jpg': [2880, 2000],
   '/images/hosted-app/desktop-dark.jpg': [1776, 1350],
   '/images/docs/connect-ai.jpg': [2880, 2000],
   '/images/docs/aokie-front-desk.png': [1440, 1000],
-  '/images/docs/starter-apps.jpg': [2160, 1560],
+  '/images/docs/starter-apps.jpg': [2880, 1800],
+  '/images/docs/marketplace-sandbox.jpg': [2880, 1800],
+  '/images/docs/unified-sqlite-db.jpg': [2400, 1200],
+  '/images/docs/admin-crud-builder.jpg': [2880, 1800],
+  '/images/docs/pottery-live-home.jpg': [2880, 1600],
   '/images/docs/app-studio-steps.jpg': [1136, 423],
   '/images/docs/softn-app-page.jpg': [1184, 900],
   '/images/docs/softn-source-editor.jpg': [1376, 756],
@@ -597,9 +601,18 @@ export function Docs() {
                 <>In <C>Settings</C>, choose who can use it, then <C>Publish</C>. Visitors open it at <C>/app/&lt;its address&gt;</C>, or at a domain you connect.</>,
               ]} />
               <Figure src="/images/docs/javascript-app-create.jpg" alt="Create app with the Pottery classes ZIP selected for upload" caption="Review the ZIP and its backend before creating the app." />
-              <Figure src="/images/hosted-app/desktop-dark.jpg" alt="The app’s own page: a pottery studio’s class timetable running in the preview, beside Upload a new build, Edit the backend code and how the app is hosted" caption="The uploaded app running on its page. The places left come from the app’s own database; the classes are fictional." />
-              <div className="mx-auto max-w-sm"><Figure src="/images/docs/javascript-app-visitor.jpg" alt="The same class timetable on a phone, as a visitor who is not signed in sees it at the app’s address" caption="Published, the app as a visitor’s phone shows it." /></div>
+              <Figure src="/images/docs/pottery-live-home.jpg" alt="Live embedded Kiln & Wheel Pottery Studio SoftN app running directly on the FormLogic homepage with a real SQLite backend" caption="A live embedded FormLogic app (Kiln & Wheel Pottery Studio) backed by an isolated real SQLite database." />
               <P>In a website build, <C>fetch(&apos;/api/…&apos;)</C> reaches the app’s own backend and a path such as <C>/assets/app.js</C> loads from its files. FormLogic keeps local storage separate for each visitor and app. To use an external API or font service, add its origin under <C>Settings → Outside sites</C>. Hash routing works across supported browsers, including Safari. <GuideLink file="docs/JAVASCRIPT_APPS.md">Website hosting and browser limits</GuideLink>.</P>
+
+              <h3 id="shared-sqlite" tabIndex={-1} className="scroll-mt-24 text-lg font-semibold mt-6 mb-3 outline-none">Unified SQLite databases, shared backends &amp; 1-click Admin Panels</h3>
+              <P>Forms and SoftN apps in FormLogic work seamlessly in <strong className="text-gray-900 dark:text-white">both directions</strong> over the exact same live SQLite database (WAL mode):</P>
+              <Bullets items={[
+                <><strong className="text-gray-900 dark:text-white">Forms first → Unified SQLite → SoftN App</strong> — in any Form App&apos;s <C>App Studio → Data</C> (or <C>Settings → Manage</C>), turn on <C>Unified SQLite Database</C>. Every form becomes a live SQLite table that stays synced as you add or edit fields, and you can spin up a connected SoftN app or external API backend on top of those tables in one click.</>,
+                <><strong className="text-gray-900 dark:text-white">SoftN App first → 1-Click Admin Panel CRUD Builder</strong> — open any hosted SoftN app and click <C>Build Admin Panel (CRUD)</C> on Overview or Data. Check the SQLite tables you want to manage and FormLogic generates live Create / Edit / Delete forms, KPI cards, charts, and a dedicated Admin Panel synced directly to SQLite.</>,
+                <><strong className="text-gray-900 dark:text-white">Share one SQLite DB across multiple apps &amp; API backends</strong> — link sibling SoftN apps or spin up a dedicated <C>+ API Backend</C> sharing the same database, then invoke its routes externally from third-party apps with scoped API keys (<C>POST /api/v1/apps/&lt;slug&gt;/invoke</C>).</>,
+              ]} />
+              <Figure src="/images/docs/unified-sqlite-db.jpg" alt="Unified SQLite Database panel inside Form App Studio Data showing form tables synced to SQLite with one-click SoftN App creation" caption="Unified SQLite Database: turn any Form App's forms into live SQLite tables shared with SoftN apps." />
+              <Figure src="/images/docs/admin-crud-builder.jpg" alt="1-Click Admin Panel CRUD Builder showing SQLite table checkbox cards, row counts, and Build Admin Panel action" caption="1-Click Admin Panel CRUD Builder: select SQLite tables and generate live CRUD forms & charts in one click." />
               <h3 className="text-lg font-semibold mt-6 mb-3">Use your existing forms and records</h3>
               <Steps items={[
                 <>Open your app&apos;s <C>App Studio → Screens</C> and choose <C>Create connected dashboard</C>.</>,
@@ -674,28 +687,25 @@ export function Docs() {
               <P><GuideLink file="docs/CONNECTED_APPS.md">App composition and portable front desk</GuideLink> · <GuideLink file="docs/AOKIE_OPERATIONS.md">Aokie operations</GuideLink> · <GuideLink file="docs/AOKIE_TROUBLESHOOTING.md">Call and audio troubleshooting</GuideLink>.</P>
             </section>
 
-            {/* Packs */}
+            {/* Packs & Marketplace */}
             <section className="mb-14">
-              <H2 id="packs" icon={Package}>Packs &amp; templates</H2>
-              <P>The 29 bundled packs include 32 editable app workspaces. Installation creates a draft with its forms, linked record stores, roles, reports and workflows. Open App Studio to customise the screens, backend actions and automations, then publish when ready. Dashboard &amp; reports retains access to each pack’s specialist tools.</P>
-              <P>Choose <C>Download app sources</C> on a pack’s detail page for an installable ZIP containing a separate editable project ZIP for each app. Import the outer ZIP to recreate the complete pack. Downloads contain source and definitions; existing records and account credentials stay on the server.</P>
-              <Tip>Operators can add or edit <C>backend/storage/pack-projects/&lt;id&gt;/</C> with <C>pack.json</C>, <C>install.json</C> and app project folders. The live catalogue refreshes without a rebuild. Existing installations stay unchanged. Packs also support native <C>.logic</C> routes and SQLite migrations. <GuideLink file="docs/PACK_PROJECTS.md">Folder format, backend options and examples</GuideLink>.</Tip>
-              <P>Packs provide starter forms, screens and workflows for a business use case. Browse <Link to="/packs" className="text-primary-600 dark:text-primary-400 underline underline-offset-4">Starter apps</Link> without signing in, including Aokie, trades, hospitality, customer service and team operations.</P>
-              <Figure src="/images/docs/starter-apps.jpg" alt="The public FormLogic starter-app catalogue" caption="The current starter-app catalogue, available before sign-in." />
+              <H2 id="packs" icon={Package}>Marketplace, SoftN packs &amp; modular plugins</H2>
+              <P>The FormLogic Marketplace brings together <strong className="text-gray-900 dark:text-white">58+ ready-to-use packs and full-stack SoftN apps</strong> — including 29 free business SoftN apps paired with schema-matched FormLogic Forms &amp; Charts, 29 classic Forms Packs, and modular sellable Plugins.</P>
               <Bullets items={[
-                <>Open a pack to inspect its forms and capabilities. Use the live demo link where a seeded demo is available.</>,
-                <>Sign in, complete the capability review and install it into your account. Configure roles, connections and workflows for your own use.</>,
-                <>If the live marketplace is unavailable, the gallery labels its bundled preview. You can browse that catalogue, but installation requires a working server connection.</>,
-                <>Built something useful? In the builder, choose <C>Publish as pack</C> to share your work with the marketplace.</>,
+                <><strong className="text-gray-900 dark:text-white">Private Source-Hidden Live Sandboxes</strong> — publish or sell any <C>.softn</C> app or plugin with private source hosting. Visitors launch an isolated live sandbox (including a real temporary SQLite backend with 1-click Reset) while only the live page DOM is served and your source code and backend stay protected.</>,
+                <><strong className="text-gray-900 dark:text-white">3 Install Modes for SoftN + Forms Packs</strong> — install the complete <C>SoftN App + Linked Forms</C> sharing one live SQLite database, install <C>SoftN App Only</C>, or choose <C>Link Forms Only</C> to attach the forms to an existing app&apos;s database.</>,
+                <><strong className="text-gray-900 dark:text-white">Modular Plugins (including SoftN Apps as Plugins)</strong> — publish reusable SoftN extensions on the Marketplace, manage installed plugins under <C>My Plugins &amp; Licenses</C>, and attach them to any app from <C>App Settings → Manage → Modular Plugins</C>.</>,
               ]} />
-
+              <Figure src="/images/docs/starter-apps.jpg" alt="FormLogic Marketplace gallery showing SoftN Apps, Modular Plugins, and Forms Packs with type and pricing filters" caption="Browse SoftN apps, modular plugins, and forms packs in the FormLogic Marketplace." />
+              <Figure src="/images/docs/marketplace-sandbox.jpg" alt="Marketplace SoftN pack detail page with live interactive sandbox running an isolated SQLite backend and three install modes" caption="Test any SoftN app live in an isolated SQLite sandbox before installing with linked forms." />
+              <Tip>Operators can add or edit <C>backend/storage/pack-projects/&lt;id&gt;/</C> or <C>backend/resources/softn-packs/&lt;id&gt;/</C> without rebuilding the frontend. <GuideLink file="docs/PACK_PROJECTS.md">Folder format, backend options and examples</GuideLink>.</Tip>
             </section>
 
             {/* Flows & Desktop */}
             <section className="mb-14">
-              <H2 id="flows" icon={Workflow}>Automations &amp; OAIY</H2>
-              <P>Saved flows can run on an OAIY computer linked to your account, even when you use FormLogic on another device. Choose <strong>Desktop relay</strong> and select the <strong>Linked computer</strong> in the test panel. Inputs and final results are encrypted end to end; flow definitions and routing status remain on FormLogic. Service/plugin commands and records use the authenticated HTTPS API. Queue and completion status are shown; individual node progress depends on the runtime.</P>
-              <P>Open <strong>Automations</strong> to build a flow: an event starts it, nodes read or transform data, and actions write records or use an approved connector. Begin with a manual test, inspect the run history and then enable the trigger you need. Workspace flows support <C>form.submitted</C>; connector events such as Aokie calls need a flow within an app.</P>
+              <H2 id="flows" icon={Workflow}>Automations, database triggers &amp; OAIY</H2>
+              <P>Flows connect your forms, SQLite databases, sibling apps, and paired OAIY computers. Trigger a flow automatically from <C>form.submitted</C> or any SoftN SQLite table event (<C>record.created</C>, <C>record.updated</C>, <C>record.deleted</C>), invoke flows programmatically via API key (<C>POST /api/v1/flows/&lt;slug&gt;/invoke</C>), or chain steps across multiple apps in the same account using the <C>Call App API</C> node.</P>
+              <P>Saved flows can also run on an OAIY computer linked to your account, even when you use FormLogic on another device. Choose <strong>Desktop relay</strong> and select the <strong>Linked computer</strong> in the test panel. Inputs and final results are encrypted end to end; flow definitions and routing status remain on FormLogic.</P>
 
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">Browser runs</strong> execute while the workspace is open. Check the selected execution target when testing.</>,

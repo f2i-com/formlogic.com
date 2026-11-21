@@ -123,7 +123,9 @@ const SEARCH_TERMS: Readonly<Record<string, string>> = {
   profile: 'name email timezone', notifications: 'email alerts', appearance: 'theme colour color dark light',
   'form-defaults': 'navigation defaults', ai: 'site ai provider model chat', 'local-runtime': 'oaiy pairing computer',
   'linked-desktops': 'computer connection relay', mcp: 'mcp connection token assistant', 'two-factor': '2fa mfa authenticator',
-  passes: 'access receipts age verification', vault: 'encryption keys', audit: 'history log', backup: 'import restore download',
+  passes: 'access receipts age verification', vault: 'encryption keys', audit: 'history log',
+  'api-keys': 'api key keys token external app apps invoke flow flows integration bearer flk',
+  backup: 'import restore download',
   trash: 'recover deleted', danger: 'remove account',
 };
 
@@ -174,7 +176,7 @@ const EXPIRY_OPTIONS = [
 
 // A line of help under a control, and a native select drawn as the text fields are.
 const HELP = 'text-xs leading-5 text-gray-500 dark:text-slate-400';
-const SELECT = 'block w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900/60 dark:text-white max-sm:min-h-11';
+const SELECT = 'block w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm leading-5 text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900/60 dark:text-white max-sm:min-h-11';
 const TEXT_LINK = 'cursor-pointer font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300';
 // A section's address is its first panel's hash, and when a page loads the browser brings the
 // element its hash names into view by itself. For those five panels that has to be the top of
@@ -653,6 +655,8 @@ export function Settings() {
   };
 
   const AVAILABLE_SCOPES = [
+    { id: 'apps:invoke', label: 'Apps: Invoke Backends', description: 'Call hosted SoftN, PHP, Rust, JS & Python app APIs externally' },
+    { id: 'flows:run', label: 'Flows: Run Programmatically', description: 'Trigger Cloud & Desktop flows via API and read results' },
     { id: 'forms:read', label: 'Forms: Read', description: 'List forms, get metadata and fields' },
     { id: 'responses:read', label: 'Responses: Read', description: 'List and fetch responses, analytics' },
     { id: 'responses:write', label: 'Responses: Write', description: 'Submit new responses' },
@@ -1026,13 +1030,19 @@ export function Settings() {
           </div>
 
           {/* The keys are a table: it takes the page's whole width, under the panels. */}
-          <Panel id="api-keys" title="API keys" icon={<Key className="h-4 w-4" />} description="Manage API keys for external integrations"
+          <Panel id="api-keys" title="API keys" icon={<Key className="h-4 w-4" />} description="Connect external apps to invoke your SoftN backends, run flows, and read or submit forms"
             actions={!showCreateKey && (
-              <Button size="sm" variant="secondary" onClick={() => setShowCreateKey(true)} leftIcon={<Plus className="h-4 w-4" />}>
+              <Button size="sm" variant="primary" onClick={() => setShowCreateKey(true)} leftIcon={<Plus className="h-4 w-4" />}>
                 Create API key
               </Button>
             )}>
             <div className="@container space-y-3">
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-3 text-xs leading-5 text-slate-600 dark:border-slate-700/70 dark:bg-slate-800/40 dark:text-slate-300">
+                <p className="font-semibold text-slate-800 dark:text-slate-100">External App &amp; Flow API</p>
+                <p className="mt-1">
+                  Pass your key as <code className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-800 ring-1 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700">Authorization: Bearer flk_...</code> to invoke hosted app backends (<code className="font-mono text-[11px]">POST /api/v1/apps/&#123;appId&#125;/invoke</code>) or run flows (<code className="font-mono text-[11px]">POST /api/v1/flows/&#123;flowId&#125;/run</code>).
+                </p>
+              </div>
               {/* Created key display (one-time) */}
               {createdKey && (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">

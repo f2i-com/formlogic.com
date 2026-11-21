@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiln &amp; Wheel Pottery Studio</title>
+  <style>
+    :root {
+      --bg: #faf6f1;
+      --surface: #ffffff;
+      --surface-soft: #f5eee6;
+      --ink: #1e2329;
+      --muted: #626b75;
+      --line: #e7ddd1;
+      --accent: #c25934;
+      --accent-dark: #a34625;
+      --accent-soft: #fdf0eb;
+      --ok: #15803d;
+      --ok-soft: #ecfdf3;
+      --warn: #b45309;
+      --warn-soft: #fffbeb;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+    .shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      background: linear-gradient(135deg, #291f1a 0%, #3e2b22 100%);
+      color: #fff;
+      padding: 14px 16px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #e07a52, #b84a27);
+      display: grid;
+      place-items: center;
+      flex: none;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.28);
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 11.5px;
+      color: rgba(255,255,255,0.74);
+    }
+    .live-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: rgba(34, 197, 94, 0.16);
+      border: 1px solid rgba(74, 222, 128, 0.35);
+      color: #bbf7d0;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      flex: none;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.25);
+    }
+    .tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    .tab-group {
+      display: inline-flex;
+      background: var(--surface-soft);
+      padding: 3px;
+      border-radius: 10px;
+      gap: 2px;
+    }
+    .tab-btn {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12.5px;
+      padding: 6px 11px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+    }
+    .count-chip {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+    }
+    .add-btn {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .add-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .main {
+      padding: 12px 14px 16px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      font-size: 12.5px;
+      font-weight: 500;
+    }
+    .banner.ok {
+      background: var(--ok-soft);
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+    .banner.err {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+    .banner button {
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      text-decoration: underline;
+      white-space: nowrap;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: 0 1px 2px rgba(30, 35, 41, 0.04);
+      transition: border-color 0.15s;
+    }
+    .card.open {
+      border-color: var(--accent);
+      box-shadow: 0 4px 14px rgba(194, 89, 52, 0.1);
+    }
+    .card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .card-title {
+      margin: 0;
+      font-size: 14.5px;
+      font-weight: 700;
+      letter-spacing: -0.015em;
+    }
+    .meta-row {
+      margin-top: 3px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+    }
+    .price-col {
+      text-align: right;
+      flex: none;
+    }
+    .price {
+      font-size: 16px;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+    .per {
+      font-size: 11px;
+      color: var(--muted);
+      display: block;
+    }
+    .card-foot {
+      margin-top: 10px;
+      padding-top: 9px;
+      border-top: 1px solid #f2ebe3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .pill.spots { background: var(--ok-soft); color: var(--ok); }
+    .pill.low { background: var(--warn-soft); color: var(--warn); }
+    .pill.full { background: #f1f5f9; color: #64748b; }
+    .pill.level { background: var(--surface-soft); color: #5c4b41; }
+    .btn {
+      border: 0;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 650;
+      padding: 7px 13px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.08s;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent-dark); }
+    .btn:active:not(:disabled) { transform: translateY(1px); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn.ghost {
+      background: var(--surface-soft);
+      color: var(--ink);
+    }
+    .btn.ghost:hover:not(:disabled) { background: #eadfd3; }
+    .btn.danger {
+      background: #fef2f2;
+      color: #b91c1c;
+      border: 1px solid #fecaca;
+      padding: 5px 10px;
+      font-size: 12px;
+    }
+    .btn.danger:hover:not(:disabled) { background: #fee2e2; }
+    .book-form {
+      margin-top: 11px;
+      padding-top: 11px;
+      border-top: 1px dashed var(--line);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .book-form .full { grid-column: 1 / -1; }
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 650;
+      color: var(--muted);
+      margin-bottom: 3px;
+    }
+    .field input, .field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: #fffdfb;
+      border-radius: 8px;
+      padding: 7px 9px;
+      font-size: 13px;
+      color: var(--ink);
+      outline: none;
+    }
+    .field input:focus, .field select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(194, 89, 52, 0.12);
+    }
+    .form-actions {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .booking-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .empty {
+      text-align: center;
+      padding: 28px 14px;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+    }
+    .db-foot {
+      margin-top: auto;
+      padding: 8px 14px;
+      border-top: 1px solid var(--line);
+      background: var(--surface-soft);
+      font-size: 11.5px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .db-foot code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      background: rgba(255,255,255,0.75);
+      padding: 1px 5px;
+      border-radius: 5px;
+      color: var(--ink);
+    }
+    @media (max-width: 440px) {
+      .book-form { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3h8l-1 5c2.2 1.4 3.5 3.8 3.5 6.5A6.5 6.5 0 0 1 12 21a6.5 6.5 0 0 1-6.5-6.5C5.5 11.8 6.8 9.4 9 8L8 3Z"/>
+            <path d="M8.5 8h7"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Kiln &amp; Wheel Studio</h1>
+          <p>Live pottery timetable &middot; real SQLite bookings</p>
+        </div>
+      </div>
+      <span class="live-pill"><span class="live-dot"></span>SQLite Live</span>
+    </header>
+
+    <nav class="tabs" aria-label="Studio views">
+      <div class="tab-group" role="tablist">
+        <button type="button" class="tab-btn active" id="tab-classes" role="tab" aria-selected="true">
+          Classes <span class="count-chip" id="count-classes">-</span>
+        </button>
+        <button type="button" class="tab-btn" id="tab-bookings" role="tab" aria-selected="false">
+          Bookings <span class="count-chip" id="count-bookings">-</span>
+        </button>
+      </div>
+      <button type="button" class="add-btn" id="btn-toggle-new">+ New class</button>
+    </nav>
+
+    <main class="main" id="content">
+      <div class="empty">Loading classes from SQLite...</div>
+    </main>
+
+    <footer class="db-foot">
+      <span><code>app.db</code> &middot; Real FormLogic SQLite backend</span>
+      <span id="db-stats">Connecting...</span>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var state = {
+        tab: 'classes',
+        classes: [],
+        bookings: [],
+        meta: null,
+        openClassId: null,
+        showAddClass: false,
+        busy: false,
+        banner: null,
+      };
+
+      var contentEl = document.getElementById('content');
+      var tabClasses = document.getElementById('tab-classes');
+      var tabBookings = document.getElementById('tab-bookings');
+      var countClasses = document.getElementById('count-classes');
+      var countBookings = document.getElementById('count-bookings');
+      var dbStats = document.getElementById('db-stats');
+      var btnToggleNew = document.getElementById('btn-toggle-new');
+
+      function esc(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      async function apiFetch(path, options) {
+        var res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options || {}));
+        var data = {};
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok) {
+          throw new Error(data.error || ('Request failed (' + res.status + ')'));
+        }
+        return data;
+      }
+
+      function applyPayload(data, okMessage) {
+        state.classes = Array.isArray(data.classes) ? data.classes : [];
+        state.bookings = Array.isArray(data.bookings) ? data.bookings : [];
+        state.meta = data.meta || null;
+        if (okMessage) {
+          state.banner = { kind: 'ok', text: okMessage };
+        }
+        render();
+      }
+
+      async function loadState() {
+        try {
+          var data = await apiFetch('/api/classes');
+          applyPayload(data);
+        } catch (err) {
+          state.banner = { kind: 'err', text: err.message || 'Could not load classes.' };
+          render();
+        }
+      }
+
+      function render() {
+        tabClasses.classList.toggle('active', state.tab === 'classes');
+        tabBookings.classList.toggle('active', state.tab === 'bookings');
+        tabClasses.setAttribute('aria-selected', state.tab === 'classes' ? 'true' : 'false');
+        tabBookings.setAttribute('aria-selected', state.tab === 'bookings' ? 'true' : 'false');
+        countClasses.textContent = String(state.classes.length);
+        countBookings.textContent = String(state.bookings.length);
+
+        if (state.meta) {
+          dbStats.textContent = state.meta.openSpots + ' open spots | ' + state.meta.totalBookings + ' bookings | ' + state.meta.queryMs + 'ms';
+        }
+
+        var html = '';
+        if (state.banner) {
+          html += '<div class="banner ' + state.banner.kind + '" role="status">'
+            + '<span>' + esc(state.banner.text) + '</span>'
+            + (state.banner.kind === 'ok' && state.tab === 'classes'
+              ? '<button type="button" data-action="goto-bookings">View bookings &rarr;</button>'
+              : '<button type="button" data-action="dismiss-banner">Dismiss</button>')
+            + '</div>';
+        }
+
+        if (state.showAddClass) {
+          html += '<div class="card open">'
+            + '<div class="card-head"><div><h2 class="card-title">Add a workshop to SQLite</h2>'
+            + '<div class="meta-row">Creates a real row in the <code>classes</code> table</div></div></div>'
+            + '<form class="book-form" id="new-class-form">'
+            + '<div class="field full"><label for="nc-title">Class title</label><input id="nc-title" name="title" required placeholder="e.g. Tea Bowl Trimming" /></div>'
+            + '<div class="field"><label for="nc-schedule">Day &amp; time</label><input id="nc-schedule" name="schedule" value="Thu, 6:30 PM" required /></div>'
+            + '<div class="field"><label for="nc-instructor">Instructor</label><input id="nc-instructor" name="instructor" value="Maya Chen" required /></div>'
+            + '<div class="field"><label for="nc-price">Price (USD)</label><input id="nc-price" name="price_usd" type="number" min="15" max="350" value="64" required /></div>'
+            + '<div class="field"><label for="nc-cap">Capacity</label><input id="nc-cap" name="capacity" type="number" min="2" max="20" value="8" required /></div>'
+            + '<div class="form-actions">'
+            + '<button type="button" class="btn ghost" data-action="close-new">Cancel</button>'
+            + '<button type="submit" class="btn"' + (state.busy ? ' disabled' : '') + '>Save to SQLite</button>'
+            + '</div></form></div>';
+        }
+
+        if (state.tab === 'classes') {
+          if (state.classes.length === 0) {
+            html += '<div class="empty">No classes scheduled yet.</div>';
+          } else {
+            for (var i = 0; i < state.classes.length; i++) {
+              var c = state.classes[i];
+              var isOpen = state.openClassId === c.id;
+              var spotsClass = c.spots_left === 0 ? 'full' : (c.spots_left <= 2 ? 'low' : 'spots');
+              var spotsText = c.spots_left === 0
+                ? 'Class full'
+                : (c.spots_left + ' of ' + c.capacity + ' spots left');
+              html += '<article class="card' + (isOpen ? ' open' : '') + '">'
+                + '<div class="card-head">'
+                + '<div>'
+                + '<h2 class="card-title">' + esc(c.title) + '</h2>'
+                + '<div class="meta-row"><span>' + esc(c.schedule) + '</span><span>&middot;</span><span>' + esc(c.instructor) + '</span><span>&middot;</span><span>' + esc(c.clay_type) + '</span></div>'
+                + '</div>'
+                + '<div class="price-col"><span class="price">$' + esc(c.price_usd) + '</span><span class="per">per seat</span></div>'
+                + '</div>'
+                + '<div class="card-foot">'
+                + '<div class="badges">'
+                + '<span class="pill ' + spotsClass + '">' + esc(spotsText) + '</span>'
+                + '<span class="pill level">' + esc(c.level) + '</span>'
+                + '</div>'
+                + '<button type="button" class="btn' + (isOpen ? ' ghost' : '') + '" data-action="toggle-book" data-id="' + c.id + '"'
+                + (c.spots_left === 0 && !isOpen ? ' disabled' : '') + '>'
+                + (isOpen ? 'Close' : (c.spots_left === 0 ? 'Sold out' : 'Book a spot'))
+                + '</button>'
+                + '</div>';
+
+              if (isOpen) {
+                var maxSeats = Math.min(3, Math.max(1, c.spots_left));
+                var seatOpts = '';
+                for (var s = 1; s <= maxSeats; s++) {
+                  seatOpts += '<option value="' + s + '">' + s + ' seat' + (s === 1 ? '' : 's') + ' ($' + (s * c.price_usd) + ')</option>';
+                }
+                html += '<form class="book-form" data-class-id="' + c.id + '">'
+                  + '<div class="field"><label for="bk-name-' + c.id + '">Your name</label>'
+                  + '<input id="bk-name-' + c.id + '" name="guest_name" required placeholder="Alex Rivera" /></div>'
+                  + '<div class="field"><label for="bk-email-' + c.id + '">Email</label>'
+                  + '<input id="bk-email-' + c.id + '" name="guest_email" type="email" required placeholder="alex@example.com" /></div>'
+                  + '<div class="field"><label for="bk-seats-' + c.id + '">Seats</label>'
+                  + '<select id="bk-seats-' + c.id + '" name="seats">' + seatOpts + '</select></div>'
+                  + '<div class="field"><label for="bk-note-' + c.id + '">Optional note</label>'
+                  + '<input id="bk-note-' + c.id + '" name="note" placeholder="Left-handed wheel, glaze..." /></div>'
+                  + '<div class="form-actions">'
+                  + '<button type="button" class="btn ghost" data-action="toggle-book" data-id="' + c.id + '">Cancel</button>'
+                  + '<button type="submit" class="btn"' + (state.busy ? ' disabled' : '') + '>Confirm booking</button>'
+                  + '</div></form>';
+              }
+              html += '</article>';
+            }
+          }
+        } else {
+          if (state.bookings.length === 0) {
+            html += '<div class="empty">No bookings in SQLite yet. Switch to Classes to book a spot!</div>';
+          } else {
+            for (var j = 0; j < state.bookings.length; j++) {
+              var b = state.bookings[j];
+              html += '<article class="card">'
+                + '<div class="booking-row">'
+                + '<div>'
+                + '<h2 class="card-title">' + esc(b.guest_name) + ' &middot; <span style="color:var(--accent)">' + esc(b.seats) + ' seat' + (b.seats === 1 ? '' : 's') + '</span></h2>'
+                + '<div class="meta-row"><span><strong>' + esc(b.class_title) + '</strong></span><span>&middot;</span><span>' + esc(b.class_schedule) + '</span><span>&middot;</span><span>$' + esc(b.seats * b.unit_price) + '</span></div>'
+                + '<div class="meta-row"><span>' + esc(b.guest_email) + '</span>' + (b.note ? ('<span>&middot;</span><span>&ldquo;' + esc(b.note) + '&rdquo;</span>') : '') + '</div>'
+                + '</div>'
+                + '<button type="button" class="btn danger" data-action="cancel-booking" data-id="' + b.id + '"' + (state.busy ? ' disabled' : '') + '>Cancel</button>'
+                + '</div></article>';
+            }
+          }
+        }
+
+        contentEl.innerHTML = html;
+      }
+
+      tabClasses.addEventListener('click', function () {
+        state.tab = 'classes';
+        render();
+      });
+      tabBookings.addEventListener('click', function () {
+        state.tab = 'bookings';
+        render();
+      });
+      btnToggleNew.addEventListener('click', function () {
+        state.showAddClass = !state.showAddClass;
+        if (state.showAddClass) state.tab = 'classes';
+        render();
+      });
+
+      contentEl.addEventListener('click', async function (e) {
+        var btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        var action = btn.getAttribute('data-action');
+        if (action === 'dismiss-banner') {
+          state.banner = null;
+          render();
+          return;
+        }
+        if (action === 'goto-bookings') {
+          state.tab = 'bookings';
+          render();
+          return;
+        }
+        if (action === 'close-new') {
+          state.showAddClass = false;
+          render();
+          return;
+        }
+        if (action === 'toggle-book') {
+          var cid = Number(btn.getAttribute('data-id'));
+          state.openClassId = state.openClassId === cid ? null : cid;
+          state.banner = null;
+          render();
+          return;
+        }
+        if (action === 'cancel-booking' && !state.busy) {
+          var bid = Number(btn.getAttribute('data-id'));
+          state.busy = true;
+          render();
+          try {
+            var data = await apiFetch('/api/bookings/' + bid, { method: 'DELETE' });
+            applyPayload(data, data.message || 'Booking cancelled.');
+          } catch (err) {
+            state.banner = { kind: 'err', text: err.message || 'Could not cancel booking.' };
+            render();
+          } finally {
+            state.busy = false;
+            render();
+          }
+        }
+      });
+
+      contentEl.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        if (state.busy) return;
+        var form = e.target;
+        var fd = new FormData(form);
+        state.busy = true;
+        state.banner = null;
+        render();
+
+        try {
+          if (form.id === 'new-class-form') {
+            var resNew = await apiFetch('/api/classes', {
+              method: 'POST',
+              body: JSON.stringify({
+                title: String(fd.get('title') || ''),
+                schedule: String(fd.get('schedule') || ''),
+                instructor: String(fd.get('instructor') || ''),
+                price_usd: Number(fd.get('price_usd') || 64),
+                capacity: Number(fd.get('capacity') || 8),
+              }),
+            });
+            state.showAddClass = false;
+            applyPayload(resNew, resNew.message || 'Class added to SQLite!');
+          } else {
+            var classId = Number(form.getAttribute('data-class-id'));
+            var resBook = await apiFetch('/api/bookings', {
+              method: 'POST',
+              body: JSON.stringify({
+                class_id: classId,
+                guest_name: String(fd.get('guest_name') || ''),
+                guest_email: String(fd.get('guest_email') || ''),
+                seats: Number(fd.get('seats') || 1),
+                note: String(fd.get('note') || ''),
+              }),
+            });
+            state.openClassId = null;
+            applyPayload(resBook, resBook.message || 'Spot booked in SQLite!');
+          }
+        } catch (err) {
+          state.banner = { kind: 'err', text: err.message || 'Could not save.' };
+          render();
+        } finally {
+          state.busy = false;
+          render();
+        }
+      });
+
+      loadState();
+    })();
+  </script>
+</body>
+</html>

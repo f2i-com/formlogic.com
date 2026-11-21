@@ -30,6 +30,8 @@ import {
   ShieldCheck,
   AlertTriangle,
   X,
+  Workflow,
+  KeyRound,
 } from 'lucide-react';
 import { Header } from '../components/layout/Header';
 import { PageBody } from '../components/layout/PageBody';
@@ -780,7 +782,7 @@ export function Dashboard() {
     bumpOnboarding((n) => n + 1);
   }, [onboardingKey]);
   const onWelcomeBlank = () => { dismissWelcome(); handleCreateForm(); };
-  const onWelcomeTemplate = () => { dismissWelcome(); handleCreateForm(); };
+  const onWelcomeTemplate = () => { dismissWelcome(); setShowPackImport(true); };
 
   // Gentle post-signup security nudge: suggest two-factor auth to NEW accounts
   // (first 14 days) that haven't enabled it. Optional by design — dismissal
@@ -1290,18 +1292,28 @@ export function Dashboard() {
           </div>
         )}
 
-        {!showGettingStarted && <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-primary-200/70 bg-linear-to-br from-primary-50 via-white to-white p-4 dark:border-slate-700 dark:from-slate-800 dark:via-slate-900 dark:to-slate-900 @2xl/dash:p-5 @5xl/dash:flex-row @5xl/dash:items-center @5xl/dash:justify-between">
-          <p className="min-w-0 max-w-2xl text-lg font-semibold leading-snug tracking-tight text-gray-900 dark:text-slate-100 @2xl/dash:text-xl" aria-live="polite">
-            {appsLine}{appsLine && headline ? ' ' : null}{headline}
-          </p>
-          <div className="flex flex-wrap gap-2 @5xl/dash:flex-none">
-            {!appsOnly && <Button size="sm" onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />}>
-              Create a form
-            </Button>}
-            <Button size="sm" variant={appsOnly ? 'primary' : 'outline'} onClick={() => navigate('/apps/new')} leftIcon={<Plus className="h-4 w-4" />}>Create an app</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />}>
-              Start from a template
-            </Button>
+        {!showGettingStarted && <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-primary-200/70 bg-linear-to-br from-primary-50 via-white to-white p-5 shadow-xs dark:border-slate-700 dark:from-slate-800/90 dark:via-slate-900 dark:to-slate-900 @2xl/dash:p-6">
+          <div className="flex flex-col gap-3 @5xl/dash:flex-row @5xl/dash:items-center @5xl/dash:justify-between">
+            <p className="min-w-0 max-w-2xl text-lg font-semibold leading-snug tracking-tight text-gray-900 dark:text-slate-100 @2xl/dash:text-xl" aria-live="polite">
+              {appsLine}{appsLine && headline ? ' ' : null}{headline}
+            </p>
+            <div className="flex flex-wrap gap-2.5 @5xl/dash:flex-none">
+              <Button size="md" variant={appsOnly ? 'primary' : 'outline'} onClick={() => navigate('/apps/new')} leftIcon={<Boxes className="h-4 w-4" />} className="min-h-10 font-semibold">
+                Create an app
+              </Button>
+              {!appsOnly && <Button size="md" onClick={handleCreateForm} leftIcon={<Plus className="h-4 w-4" />} className="min-h-10 font-semibold">
+                Create a form
+              </Button>}
+              <Button size="md" variant="outline" onClick={() => navigate('/flows')} leftIcon={<Workflow className="h-4 w-4" />} className="min-h-10 font-semibold">
+                Automations
+              </Button>
+              <Button size="md" variant="outline" onClick={() => setShowPackImport(true)} leftIcon={<Package className="h-4 w-4" />} className="min-h-10 font-semibold">
+                Templates
+              </Button>
+              <Button size="md" variant="outline" onClick={() => navigate('/settings#api-keys')} leftIcon={<KeyRound className="h-4 w-4" />} className="min-h-10 font-semibold">
+                API Keys
+              </Button>
+            </div>
           </div>
         </div>}
 
@@ -1342,10 +1354,9 @@ export function Dashboard() {
             app-first spine by leading with a single form. On first run the hero owns the
             invitation and this band stands down. */}
         {storageMode === 'api' && !showGettingStarted && (
-          <details className="mb-5 rounded-xl border border-gray-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60">
-            <summary className="cursor-pointer p-4 text-sm font-medium text-gray-700 dark:text-slate-200">Build something new with AI or the visual builders</summary>
-            <div className="px-4 pb-1"><CreateBand /></div>
-          </details>
+          <div className="mb-6">
+            <CreateBand />
+          </div>
         )}
 
         {/* Quick find — jump straight to any form's records/builder/analytics. */}
@@ -1465,8 +1476,9 @@ export function Dashboard() {
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
+                  const statsPending = statsLoading || (storageMode === 'api' && !statsReady && !statsFailed);
                   const n = storageMode === 'api' ? displayedResponseCounts[form.id] : formResponses.length;
-                  const pulseUnavailable = storageMode === 'api' && !pulseByForm[form.id] && !statsLoading;
+                  const pulseUnavailable = storageMode === 'api' && !pulseByForm[form.id] && !statsPending;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
                   const periodResponses = days.reduce((sum, day) => sum + day.count, 0);
                   return (
@@ -1585,7 +1597,7 @@ export function Dashboard() {
                                 <FileText className="h-3.5 w-3.5 flex-none" />
                                 {fieldCount} field{fieldCount === 1 ? '' : 's'}
                               </span>
-                              {statsLoading ? (
+                              {statsPending ? (
                                 <Skeleton className="h-3 w-20" />
                               ) : (
                                 <span className="flex items-center gap-1.5 tabular-nums">
@@ -1602,7 +1614,7 @@ export function Dashboard() {
                                   <BarChart3 className="h-3.5 w-3.5 flex-none text-primary-500" />
                                   Last 14 days
                                 </span>
-                                {statsLoading ? (
+                                {statsPending ? (
                                   <Skeleton className="h-3 w-10" />
                                 ) : (
                                   <span className="flex-none text-[10px] font-semibold tabular-nums text-gray-500 dark:text-slate-400">
@@ -1610,7 +1622,7 @@ export function Dashboard() {
                                   </span>
                                 )}
                               </div>
-                              {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={statsLoading} />}
+                              {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={statsPending} />}
                               <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">
                                 <span>14 days ago</span>
                                 <span>Today</span>

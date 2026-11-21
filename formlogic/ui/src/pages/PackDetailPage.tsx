@@ -23,13 +23,20 @@ import {
   CheckCircle,
   ExternalLink,
   ShieldAlert,
+  ShieldCheck,
+  Box,
+  Puzzle,
+  CreditCard,
+  Database,
+  KeyRound,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { LoadFailure } from '../components/ui/LoadFailure';
 import { Badge } from '../components/ui/Badge';
 import { PackIcon } from '../components/ui/PackIcon';
 import { Panel } from '../components/ui/Panel';
-import { api, type CatalogPack, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../lib/api';
+import { MarketplaceDemoFrame } from '../components/marketplace/MarketplaceDemoFrame';
+import { api, type CatalogPack, type MarketplaceLicense, type PackVersionInfo, type PackRatingEntry, type PackData, type PackDescribeResult } from '../lib/api';
 import { PackScreenshots } from '../components/builder/PackScreenshots';
 import { TrustBadge, CapabilityReview } from '../components/builder/TrustBadge';
 import { reviewableConnectorGrants } from '../lib/packTrust';
@@ -45,7 +52,15 @@ type PackDetail = CatalogPack & {
   versions: PackVersionInfo[];
   formTitles?: string[];
   appNames?: string[];
+  compatiblePlugins?: CatalogPack[];
 };
+
+function formatPriceLabel(cents?: number, billing?: string, currency = 'USD'): string {
+  if (!cents || cents <= 0 || billing === 'free') return 'Free';
+  const amt = (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2);
+  const sym = currency === 'USD' ? '$' : `${currency} `;
+  return billing === 'subscription' ? `${sym}${amt}/mo` : `${sym}${amt}`;
+}
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -86,6 +101,17 @@ function PackDetailContent() {
   // Demo app(s) for this pack (by catalog slug) so any visitor can view it live.
   const [demoApps, setDemoApps] = useState<Array<{ slug: string; name: string }>>([]);
   const [launchingDemo, setLaunchingDemo] = useState(false);
+
+  // Marketplace commerce & SoftN/Plugin protected install state
+  const [activeLicense, setActiveLicense] = useState<MarketplaceLicense | null>(null);
+  const [purchasing, setPurchasing] = useState(false);
+  const [installedAppId, setInstalledAppId] = useState<string | null>(null);
+  const [installedMgmtAppId, setInstalledMgmtAppId] = useState<string | null>(null);
+  const [installedPluginSuccess, setInstalledPluginSuccess] = useState(false);
+  const [attachAppId, setAttachAppId] = useState<string>('');
+  const [bundleMode, setBundleMode] = useState<'bundle' | 'softn_only' | 'link_forms'>('bundle');
+  const [linkTargetSoftnAppId, setLinkTargetSoftnAppId] = useState<string>('');
+  const myApps = useAppStore((s) => s.apps);
 
   // Ratings
   const [ratings, setRatings] = useState<PackRatingEntry[]>([]);
@@ -198,6 +224,108 @@ function PackDetailContent() {
   useEffect(() => {
     if (pack) return deferEffect(() => { void checkInstalled(); });
   }, [pack, checkInstalled]);
+
+  // Check if signed-in member already owns an active license for this Marketplace SoftN app / plugin
+  useEffect(() => {
+    if (!pack || !user || isDemo) return;
+    if (pack.itemType !== 'softn_app' && pack.itemType !== 'plugin') return;
+    if (typeof api.getMarketplaceLicenses !== 'function') return;
+    let cancelled = false;
+    return deferEffect(() => {
+      void api.getMarketplaceLicenses().then((res) => {
+        if (cancelled || !res.data?.licenses) return;
+        const found = res.data.licenses.find((l) => l.catalogId === pack.id) ?? null;
+        setActiveLicense(found);
+      }).catch(() => {});
+      if (pack.itemType === 'plugin' && myApps.length === 0) {
+        void fetchApps();
+      }
+      return () => { cancelled = true; };
+    });
+  }, [pack, user, isDemo, myApps.length, fetchApps]);
+
+  const handlePurchaseLicense = useCallback(async () => {
+    if (!user) { goSignIn(); return; }
+    if (!slug || !pack || purchasing) return;
+    setPurchasing(true);
+    try {
+      const res = await api.purchaseMarketplaceItem(slug, { provider: 'sandbox_checkout' });
+      if (res.error || !res.data?.license) {
+        toast.error('Checkout failed', res.error || 'Could not complete license purchase.');
+        return;
+      }
+      setActiveLicense(res.data.license);
+      toast.success('License activated!', `Key: ${res.data.license.licenseKey}`);
+    } catch (err) {
+      toast.error('Checkout failed', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setPurchasing(false);
+    }
+  }, [user, goSignIn, slug, pack, purchasing]);
+
+  const handleInstallSoftnOrPlugin = useCallback(async (overrideMode?: 'bundle' | 'softn_only' | 'link_forms') => {
+    if (!user) { goSignIn(); return; }
+    if (!slug || !pack || installing) return;
+    const effectiveMode = overrideMode ?? (pack.bundledSoftnPack ? bundleMode : undefined);
+    if (effectiveMode === 'link_forms' && !linkTargetSoftnAppId) {
+      toast.info('Choose a SoftN app first', 'Pick one of your installed SoftN apps to link these schema-matched forms to.');
+      return;
+    }
+    setInstalling(true);
+    try {
+      const res = await api.installMarketplaceItem(slug, {
+        mode: effectiveMode,
+        targetAppId: effectiveMode === 'link_forms' ? linkTargetSoftnAppId : undefined,
+        attachToAppId: pack.itemType === 'plugin' && attachAppId ? attachAppId : undefined,
+        shareDatabase: false,
+      });
+      if (res.error || !res.data?.success) {
+        toast.error('Install failed', res.error || 'Could not install package.');
+        return;
+      }
+      setInstalled(true);
+      if (res.data.license) setActiveLicense(res.data.license);
+      if (pack.bundledSoftnPack) {
+        if (res.data.softnApp?.id) setInstalledAppId(res.data.softnApp.id);
+        if (res.data.managementApp?.id) setInstalledMgmtAppId(res.data.managementApp.id);
+        else if (!res.data.softnApp && res.data.app?.id) setInstalledMgmtAppId(res.data.app.id);
+        const formCount = res.data.forms?.length ?? 0;
+        const appCount = res.data.apps?.length ?? 0;
+        toast.success(
+          effectiveMode === 'link_forms'
+            ? 'Forms linked to your SoftN app!'
+            : effectiveMode === 'softn_only'
+              ? 'SoftN App installed!'
+              : 'Free Pack installed (SoftN App + Linked Forms)!',
+          effectiveMode === 'link_forms'
+            ? `Created ${formCount} live SQLite-backed form(s) connected directly to your SoftN app.`
+            : `Installed ${appCount} app(s)${formCount > 0 ? ` and ${formCount} schema-matched SQLite form(s)` : ''}.`
+        );
+        await Promise.all([fetchApps(), refreshForms()]);
+      } else if (res.data.kind === 'softn_app' && res.data.app) {
+        setInstalledAppId(res.data.app.id);
+        toast.success(
+          'SoftN App installed!',
+          res.data.sourceProtected
+            ? 'Installed privately into your workspace (source protected).'
+            : 'Installed into your workspace.'
+        );
+        await fetchApps();
+      } else if (res.data.kind === 'plugin') {
+        setInstalledPluginSuccess(true);
+        toast.success(
+          'Modular Plugin installed!',
+          res.data.attachment
+            ? 'Installed and attached to your selected app.'
+            : 'Installed into My Plugins. Attach it to any app from Settings → Modular Plugins.'
+        );
+      }
+    } catch (err) {
+      toast.error('Install failed', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setInstalling(false);
+    }
+  }, [user, goSignIn, slug, pack, installing, bundleMode, linkTargetSoftnAppId, attachAppId, fetchApps, refreshForms]);
 
   // Import an already-downloaded pack (shared by the direct + consent-confirmed paths).
   // SAFE-001: `approvedConnectorGrants` is ALWAYS explicit — the reviewed set from the consent
@@ -420,25 +548,87 @@ function PackDetailContent() {
 
   // ── The page's controls, the same in both layouts ──────────────────────────────────────────
 
-  // Only offer the live demo to signed-out / demo visitors — starting the demo swaps the
-  // auth cookie, which would sign a real logged-in user out of their own account.
-  const demoButtons = (!user || isDemo) && demoApps.map((d) => (
+  const isSoftnMarketplaceItem = pack.itemType === 'softn_app' || pack.itemType === 'plugin';
+  const isPrivateSource = pack.sourceVisibility === 'private';
+  const isPaid = (pack.priceCents ?? 0) > 0 && pack.billingModel !== 'free';
+  const isPublisher = !!user && pack.publisherId === user.id;
+  const needsPurchase = isSoftnMarketplaceItem && isPaid && !isPublisher && !activeLicense;
+  const priceText = formatPriceLabel(pack.priceCents, pack.billingModel, pack.currency);
+  const compatiblePlugins = pack.compatiblePlugins ?? [];
+
+  // Only offer the legacy shared-demo link to signed-out / demo visitors — starting that swaps the
+  // auth cookie. SoftN Marketplace listings use the inline <MarketplaceDemoFrame> instead (works for everyone!).
+  const demoButtons = !pack.demoEnabled && (!user || isDemo) && demoApps.map((d) => (
     <Button key={d.slug} variant="outline" className={touch} onClick={() => launchDemo(d.slug)} isLoading={launchingDemo}>
       {!launchingDemo && <ExternalLink className="mr-1.5 h-4 w-4" />}
       {demoApps.length > 1 ? `View ${d.name} demo` : 'View demo'}
     </Button>
   ));
-  const sourcesButton = pack.folderSource && (
-    <Button variant="outline" className={touch} isLoading={downloadingSources} onClick={async () => {
-      if (downloadingSources) return;
-      setDownloadingSources(true);
-      try { await downloadPackProjects(pack.slug); }
-      catch (error) { toast.error('Download failed', error instanceof Error ? error.message : 'Please try again.'); }
-      finally { setDownloadingSources(false); }
-    }}>Download app sources</Button>
+  const sourcesButton = pack.folderSource && !isPrivateSource && (
+    pack.bundledSoftnPack ? (
+      <a
+        href={`/api/packs/catalog/${encodeURIComponent(pack.slug)}/download?format=softn`}
+        className={cn(
+          'inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800',
+          touch
+        )}
+      >
+        <Download className="h-4 w-4" />
+        Download .softn
+      </a>
+    ) : (
+      <Button variant="outline" className={touch} isLoading={downloadingSources} onClick={async () => {
+        if (downloadingSources) return;
+        setDownloadingSources(true);
+        try { await downloadPackProjects(pack.slug); }
+        catch (error) { toast.error('Download failed', error instanceof Error ? error.message : 'Please try again.'); }
+        finally { setDownloadingSources(false); }
+      }}>Download app sources</Button>
+    )
   );
   // The demo account has everything pre-installed — offer only the live view, not install.
-  const installButton = !isDemo && (installed ? (
+  const installButton = !isDemo && (isSoftnMarketplaceItem ? (
+    (installedAppId || installedMgmtAppId) ? (
+      <div className="flex flex-wrap items-center gap-2">
+        {installedAppId && (
+          <Button variant="primary" className={touch} onClick={() => navigate(`/apps/${installedAppId}/web`)} rightIcon={<ArrowRight className="h-4 w-4" />}>
+            Open SoftN App
+          </Button>
+        )}
+        {installedMgmtAppId && (
+          <Button variant="outline" className={touch} onClick={() => navigate(`/apps/${installedMgmtAppId}/studio`)} rightIcon={<ArrowRight className="h-4 w-4" />}>
+            Open Forms &amp; Charts
+          </Button>
+        )}
+      </div>
+    ) : installedPluginSuccess ? (
+      <Button variant="primary" className={touch} onClick={() => navigate('/packs?tab=plugins')} rightIcon={<ArrowRight className="h-4 w-4" />}>
+        Manage Installed Plugin
+      </Button>
+    ) : needsPurchase ? (
+      <Button variant="primary" className={touch} onClick={() => void handlePurchaseLicense()} isLoading={purchasing}>
+        {!purchasing && <CreditCard className="mr-1.5 h-4 w-4" />}
+        {user ? `Buy License — ${priceText}` : `Sign in to buy (${priceText})`}
+      </Button>
+    ) : (
+      <Button variant="primary" className={touch} onClick={() => void handleInstallSoftnOrPlugin()} isLoading={installing}>
+        {!installing && (pack.itemType === 'plugin' ? <Puzzle className="mr-1.5 h-4 w-4" /> : <Box className="mr-1.5 h-4 w-4" />)}
+        {installing
+          ? 'Installing…'
+          : !user
+            ? 'Sign in to install'
+            : pack.bundledSoftnPack
+              ? (bundleMode === 'softn_only'
+                ? 'Install SoftN App Only'
+                : bundleMode === 'link_forms'
+                  ? 'Link Forms to SoftN App'
+                  : 'Install Free Pack (SoftN + Forms)')
+              : pack.itemType === 'plugin'
+                ? 'Install Plugin'
+                : 'Install SoftN App'}
+      </Button>
+    )
+  ) : installed ? (
     <Button variant="outline" className={touch} disabled>
       <CheckCircle className="mr-1.5 h-4 w-4 text-green-500" />
       Installed
@@ -449,6 +639,172 @@ function PackDetailContent() {
       {installing && !consent ? 'Installing…' : (user ? 'Install pack' : 'Sign in to install')}
     </Button>
   ));
+
+  const ownedSoftnApps = myApps.filter((a) => a.status !== 'archived' && !!a.settings?.softnApp);
+  const bundledInstallOptions = !isDemo && pack.bundledSoftnPack && !installedAppId && !installedMgmtAppId && (
+    <div className="mt-3 space-y-2.5 rounded-xl border border-primary-200/80 bg-primary-50/50 p-3.5 dark:border-primary-500/30 dark:bg-primary-500/10">
+      <p className="text-xs font-semibold text-primary-950 dark:text-primary-100">
+        Choose how to install this Free SoftN + Forms pack:
+      </p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {([
+          ['bundle', 'SoftN App + Forms', 'Installs both sharing one live SQLite DB'],
+          ['softn_only', 'SoftN App Only', 'Standalone full-stack PHP + SQLite app'],
+          ['link_forms', 'Link Forms Only', 'Attach forms to an existing SoftN app'],
+        ] as const).map(([modeKey, label, hint]) => (
+          <button
+            key={modeKey}
+            type="button"
+            onClick={() => setBundleMode(modeKey)}
+            className={cn(
+              'cursor-pointer rounded-xl border px-3 py-2 text-left transition',
+              bundleMode === modeKey
+                ? 'border-primary-500 bg-white text-primary-950 shadow-sm dark:bg-slate-900 dark:text-white'
+                : 'border-slate-200/80 bg-white/60 text-slate-700 hover:border-primary-300 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300'
+            )}
+          >
+            <div className="text-xs font-semibold">{label}</div>
+            <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{hint}</div>
+          </button>
+        ))}
+      </div>
+      {bundleMode === 'link_forms' && (
+        <div>
+          <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+            Target SoftN app in your workspace
+            <select
+              value={linkTargetSoftnAppId}
+              onChange={(e) => setLinkTargetSoftnAppId(e.target.value)}
+              className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+            >
+              <option value="">Choose one of your installed SoftN apps…</option>
+              {ownedSoftnApps.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+
+  const companionBanner = (pack.companionSoftnSlug || pack.companionPackSlug) && (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-indigo-200/80 bg-indigo-50/60 px-4 py-3 text-sm dark:border-indigo-500/30 dark:bg-indigo-500/10">
+      <div className="flex items-center gap-2.5 text-indigo-950 dark:text-indigo-100">
+        <Database className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+        <span>
+          {pack.companionSoftnSlug
+            ? 'Also available as a Free Full-Stack SoftN App + Schema-Matched Forms Pack with a live interactive SQLite sandbox.'
+            : 'Also available as a standalone FormLogic Forms-only pack.'}
+        </span>
+      </div>
+      <Link
+        to={`/packs/${pack.companionSoftnSlug || pack.companionPackSlug}`}
+        className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+      >
+        {pack.companionSoftnSlug ? 'Open SoftN + Forms Pack' : 'View Forms-only Pack'}
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </div>
+  );
+
+  const pluginQuickAttach = !isDemo && user && pack.itemType === 'plugin' && !needsPurchase && !installedPluginSuccess && myApps.filter(a => a.status !== 'archived').length > 0 && (
+    <div className="mt-3 rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-3 dark:border-indigo-500/30 dark:bg-indigo-500/10">
+      <label className="block text-xs font-semibold text-indigo-900 dark:text-indigo-200">
+        Optional: attach immediately to one of your apps
+        <select
+          value={attachAppId}
+          onChange={(e) => setAttachAppId(e.target.value)}
+          className="mt-1.5 h-9 w-full rounded-lg border border-indigo-200 bg-white px-2.5 text-xs font-normal text-slate-900 dark:border-indigo-500/40 dark:bg-slate-900 dark:text-white"
+        >
+          <option value="">Install to My Plugins only</option>
+          {myApps.filter(a => a.status !== 'archived').map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+
+  const marketplaceStatusBadges = isSoftnMarketplaceItem && (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <span className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold',
+        isPaid ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300'
+      )}>
+        {priceText}
+      </span>
+      <span className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold',
+        pack.itemType === 'plugin'
+          ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300'
+          : 'bg-primary-50 text-primary-700 dark:bg-primary-500/15 dark:text-primary-300'
+      )}>
+        {pack.itemType === 'plugin' ? <Puzzle className="h-3.5 w-3.5" /> : <Box className="h-3.5 w-3.5" />}
+        {pack.itemType === 'plugin' ? 'Modular SoftN Plugin' : 'SoftN Application'}
+      </span>
+      {isPrivateSource && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Source Protected
+        </span>
+      )}
+      {pack.pluginMeta?.hasBackend && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <Database className="h-3.5 w-3.5 text-indigo-500" />
+          {pack.pluginMeta.backendRuntime || 'SoftN'} backend
+        </span>
+      )}
+      {activeLicense && (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 font-mono text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">
+          <KeyRound className="h-3.5 w-3.5" />
+          Licensed ({activeLicense.licenseKey})
+        </span>
+      )}
+    </div>
+  );
+
+  const liveSandboxPanel = pack.demoEnabled && (
+    <MarketplaceDemoFrame
+      slug={pack.slug}
+      name={pack.name}
+      sourceProtected={isPrivateSource}
+      hasBackend={!!pack.pluginMeta?.hasBackend}
+      backendRuntime={pack.pluginMeta?.backendRuntime}
+      renderMode={pack.pluginMeta?.renderMode}
+    />
+  );
+
+  const compatiblePluginsPanel = compatiblePlugins.length > 0 && (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900 sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+          <Puzzle className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+          Compatible Modular Plugins ({compatiblePlugins.length})
+        </h2>
+        <Link to="/packs?type=plugin" className="text-xs font-medium text-primary-600 hover:underline dark:text-primary-400">
+          Browse all plugins
+        </Link>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {compatiblePlugins.map((plg) => (
+          <Link
+            key={plg.id}
+            to={`/packs/${plg.slug}`}
+            className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3 transition hover:border-indigo-400 dark:border-slate-700 dark:hover:border-indigo-400"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">{plg.name}</p>
+              {plg.description && <p className="mt-0.5 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{plg.description}</p>}
+            </div>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+              {formatPriceLabel(plg.priceCents, plg.billingModel, plg.currency)}
+            </span>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
 
   // Pre-install capability review + server-computed trust (spec §30.1)
   const consentPanel = consent && (
@@ -730,11 +1086,19 @@ function PackDetailContent() {
                 icon={<PackIcon icon={pack.icon} className="h-4 w-4" emojiClassName="text-base leading-none" />}
                 actions={<TrustBadge trust={trust} />}
               >
+                {marketplaceStatusBadges}
                 <div className="flex flex-wrap items-center gap-2">
                   {installButton}
                   {sourcesButton}
                   {demoButtons}
                 </div>
+                {pluginQuickAttach}
+                {bundledInstallOptions}
+                {isPrivateSource && (
+                  <p className="mt-3 rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3 text-xs leading-5 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    Hosted privately on FormLogic. You can try the live sandbox{pack.pluginMeta?.hasBackend ? ' (including its isolated backend)' : ''} right on this page and install it directly into your workspace without exposing the creator&rsquo;s source code.
+                  </p>
+                )}
                 {pack.description && (
                   <p className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-700 dark:text-slate-300">{pack.description}</p>
                 )}
@@ -762,10 +1126,13 @@ function PackDetailContent() {
               </Panel>
               {consentPanel}
             </div>
-            {/* What it looks like, what it holds and what others made of it. */}
+            {/* What it looks like, live sandbox, what it holds and what others made of it. */}
             <div className="grid min-w-0 gap-4">
+              {companionBanner}
+              {liveSandboxPanel}
               {/* Dashboard preview(s) — one per app, aspect-true, click to enlarge */}
               <PackScreenshots shots={shots} maxHeight="max-h-[36rem]" />
+              {compatiblePluginsPanel}
               {(appNames.length > 0 || formTitles.length > 0) && (
                 <Panel title="What’s inside">
                   <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,13rem),1fr))] gap-4">{insideLists}</div>
@@ -838,6 +1205,7 @@ function PackDetailContent() {
       </header>
 
       <div className="mx-auto max-w-4xl space-y-5 px-4 pb-12 sm:px-6">
+        {marketplaceStatusBadges}
         {pack.description && <p className="max-w-[75ch] whitespace-pre-line wrap-anywhere text-base leading-relaxed text-slate-700 dark:text-slate-300">{pack.description}</p>}
         {/* Stats + install. Zero-value social proof stays hidden: no star row or
             download count until the pack has actually been rated/installed. */}
@@ -859,14 +1227,18 @@ function PackDetailContent() {
               <span>{plural(pack.downloadCount, 'install')}</span>
             </div>
           )}
-          <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
-            <FileText className="h-4 w-4" aria-hidden="true" />
-            <span>{plural(pack.formCount, 'form')}</span>
-          </div>
-          <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
-            <LayoutGrid className="h-4 w-4" aria-hidden="true" />
-            <span>{plural(pack.appCount, 'app')}</span>
-          </div>
+          {!isSoftnMarketplaceItem && (
+            <>
+              <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+                <FileText className="h-4 w-4" aria-hidden="true" />
+                <span>{plural(pack.formCount, 'form')}</span>
+              </div>
+              <div className="font-mono flex items-center gap-1.5 text-xs text-gray-500 dark:text-slate-400">
+                <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+                <span>{plural(pack.appCount, 'app')}</span>
+              </div>
+            </>
+          )}
           <div className="flex-1" />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {demoButtons}
@@ -875,10 +1247,14 @@ function PackDetailContent() {
           </div>
         </div>
 
+        {companionBanner}
+        {bundledInstallOptions}
+        {liveSandboxPanel}
         {pack.folderSource && <p className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm leading-6 text-primary-950 dark:border-primary-800 dark:bg-primary-950/40 dark:text-primary-100">Includes an editable app workspace, linked forms and record storage. Install to create your own copy, then customise its screens, backend actions, forms and automations in App Studio. The source download includes each editable app as a project ZIP and the complete installation package.</p>}
         {consentPanel}
 
         <PackScreenshots shots={shots} maxHeight="max-h-[420px]" />
+        {compatiblePluginsPanel}
         {pack.tags.length > 0 && <div className="flex flex-wrap gap-2" aria-label="Related templates">
           {pack.tags.map(tag => <Link key={tag} to={{ pathname: '/packs', search: new URLSearchParams({ tag }).toString() }}
             className="inline-flex min-h-9 max-w-full items-center rounded-md border border-slate-200 px-2.5 text-sm text-slate-700 hover:border-primary-400 hover:text-primary-700 dark:border-slate-700 dark:text-slate-300 dark:hover:text-primary-300">

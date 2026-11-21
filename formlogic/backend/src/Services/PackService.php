@@ -397,6 +397,65 @@ class PackService
                 $appSummary[] = ['id' => $appId, 'name' => $packApp['name']];
             }
 
+            // 5b. Resolve cross-app `@packApp:<packAppId>` links for unified SoftN + Forms packs:
+            //     - Forms with `settings.nativeTableBinding.appId = "@packApp:<id>"` bind live to the installed SoftN app's SQLite table
+            //     - Companion Form Apps with `settings.sharedDatabaseAppId` / `linkedSoftnAppId` bind to the installed SoftN app
+            if ($appIdByPackId !== []) {
+                foreach ($packData['forms'] ?? [] as $packForm) {
+                    $pfId = (string) ($packForm['packFormId'] ?? '');
+                    $realFormId = $formIdMap[$pfId] ?? null;
+                    $ntb = is_array($packForm['settings']['nativeTableBinding'] ?? null) ? $packForm['settings']['nativeTableBinding'] : null;
+                    if ($realFormId === null || $ntb === null) continue;
+                    $ref = is_string($ntb['appId'] ?? null) ? $ntb['appId'] : '';
+                    if (!str_starts_with($ref, '@packApp:')) continue;
+                    $targetPackAppId = substr($ref, 9);
+                    $realTargetAppId = $appIdByPackId[$targetPackAppId] ?? null;
+                    if ($realTargetAppId === null) continue;
+                    $existingForm = $this->formService->getForm($realFormId);
+                    $resolvedSettings = is_array($existingForm['settings'] ?? null) ? $existingForm['settings'] : [];
+                    $resolvedNtb = is_array($resolvedSettings['nativeTableBinding'] ?? null) ? $resolvedSettings['nativeTableBinding'] : $ntb;
+                    $resolvedNtb['appId'] = $realTargetAppId;
+                    $resolvedSettings['nativeTableBinding'] = $resolvedNtb;
+                    $updFormStmt = $this->mysql->prepare('UPDATE forms SET settings = :settings WHERE id = :id');
+                    $updFormStmt->execute([
+                        'settings' => json_encode($resolvedSettings, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                        'id' => $realFormId,
+                    ]);
+                }
+
+                foreach ($packData['apps'] ?? [] as $packApp) {
+                    $paId = (string) ($packApp['packAppId'] ?? '');
+                    $realAppId = $appIdByPackId[$paId] ?? null;
+                    if ($realAppId === null) continue;
+                    $rawSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
+                    $sharedRef = is_string($rawSettings['sharedDatabaseAppId'] ?? null) ? $rawSettings['sharedDatabaseAppId'] : '';
+                    $linkedRef = is_string($rawSettings['linkedSoftnAppId'] ?? null) ? $rawSettings['linkedSoftnAppId'] : '';
+                    $changed = false;
+                    $existingApp = $this->appService->getApp($realAppId);
+                    $resolvedAppSettings = is_array($existingApp['settings'] ?? null) ? $existingApp['settings'] : [];
+                    if (str_starts_with($sharedRef, '@packApp:')) {
+                        $targetId = $appIdByPackId[substr($sharedRef, 9)] ?? null;
+                        if ($targetId !== null && $targetId !== $realAppId) {
+                            $resolvedAppSettings['sharedDatabaseAppId'] = $targetId;
+                            $changed = true;
+                            if (isset($packApp['nativeProject'])) {
+                                ($this->native ??= new NativeAppService())->setSharedDatabaseLink($realAppId, $targetId);
+                            }
+                        }
+                    }
+                    if (str_starts_with($linkedRef, '@packApp:')) {
+                        $targetId = $appIdByPackId[substr($linkedRef, 9)] ?? null;
+                        if ($targetId !== null && $targetId !== $realAppId) {
+                            $resolvedAppSettings['linkedSoftnAppId'] = $targetId;
+                            $changed = true;
+                        }
+                    }
+                    if ($changed) {
+                        $this->appService->updateApp($realAppId, ['settings' => $resolvedAppSettings]);
+                    }
+                }
+            }
+
             // 6. FormLogic Flows: flow definitions + event bindings for the imported app(s), created
             //    inside the SAME transaction with @pack: form refs remapped to the new form ids.
             $this->importPackFlows($packData, $appIdByPackId, $formIdMap, $userId);

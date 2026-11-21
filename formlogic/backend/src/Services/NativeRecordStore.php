@@ -724,7 +724,15 @@ final class NativeRecordStore
             }
         };
         foreach ($events as $event) {
-            $deliver($event['id'], $event['event_name'], json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR), json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR), $readRow);
+            $data = json_decode($event['data_json'], true, 64, JSON_THROW_ON_ERROR);
+            if (is_array($data) && is_array($data['record'] ?? null)) {
+                foreach (array_keys($data['record']) as $colName) {
+                    if (is_string($colName) && self::hidden($colName)) {
+                        unset($data['record'][$colName]);
+                    }
+                }
+            }
+            $deliver($event['id'], $event['event_name'], $data, json_decode($event['bindings_json'], true, 64, JSON_THROW_ON_ERROR), $readRow);
             $this->acknowledgeEvent->execute([$event['id']]);
         }
         return count($events);

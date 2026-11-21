@@ -59,6 +59,7 @@ class ReportService
         private SQLiteConnection $sqlite,
         private ?FormService $formService = null,
         private MySQLConnection|PDO|null $mysql = null,
+        private ?NativeAppService $nativeApps = null,
     ) {}
 
     private ?FormEncryptionService $formEncryption = null;
@@ -100,6 +101,17 @@ class ReportService
         $this->assertNotPrivateForm($formId);
         foreach ($joins as $j) {
             $this->assertNotPrivateForm((string) ($j['formId'] ?? ''));
+        }
+
+        // Forms bound to a SoftN / container app's SQLite table (`settings.nativeTableBinding`)
+        // run charts, KPIs, and tables directly over the live SQLite table (read-only).
+        if ($this->mysql !== null && $formId !== '') {
+            $pdo = $this->mysql instanceof MySQLConnection ? $this->mysql->getConnection() : $this->mysql;
+            $native = $this->nativeApps ?? new NativeAppService();
+            $binding = (new NativeTableFormBridge($pdo, $native))->resolveBinding($formId);
+            if ($binding !== null) {
+                return $this->runNativeTableReport($native, $binding, $spec, $fields, $timezone);
+            }
         }
 
         if (!$this->sqlite->formDatabaseExists($formId)) {
@@ -538,6 +550,268 @@ class ReportService
             foreach ($attached as $alias) {
                 try { $db->exec("DETACH DATABASE $alias"); } catch (\Throwable $e) { /* connection closes at request end anyway */ }
             }
+        }
+    }
+
+    /**
+     * Execute a safe no-code report spec directly against a SoftN / container app's SQLite table
+     * bound via `forms.settings.nativeTableBinding`. Strictly read-only (`PRAGMA query_only=ON`),
+     * column-whitelisted against non-hidden schema columns, parameterized, and row-capped.
+     *
+     * @param array<string, mixed> $binding
+     * @param array<string, mixed> $spec
+     * @param list<array<string, mixed>> $fields
+     * @return array<string, mixed>
+     */
+    private function runNativeTableReport(NativeAppService $native, array $binding, array $spec, array $fields, string $timezone = 'UTC'): array
+    {
+        $viz = in_array($spec['viz'] ?? null, self::VIZ, true) ? (string) $spec['viz'] : 'table';
+        try {
+            return $native->withDatabase((string) $binding['appId'], function (PDO $db) use ($binding, $spec, $fields, $timezone, $viz): array {
+                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500;');
+                $table = (string) $binding['table'];
+                $quotedTable = '"' . str_replace('"', '""', $table) . '"';
+                $exists = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_'");
+                $exists->execute([$table]);
+                if ($exists->fetchColumn() === false) {
+                    return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];
+                }
+                $actualCols = [];
+                foreach ($db->query("PRAGMA table_info({$quotedTable})")->fetchAll(PDO::FETCH_ASSOC) as $c) {
+                    $name = (string) ($c['name'] ?? '');
+                    if ($name !== '' && !NativeRecordStore::hidden($name) && !str_contains(strtoupper((string) ($c['type'] ?? '')), 'BLOB')) {
+                        $actualCols[$name] = true;
+                    }
+                }
+                $baseFieldById = [];
+                foreach ($fields as $f) {
+                    if (!empty($f['id'])) $baseFieldById[$f['id']] = $f;
+                }
+                $colMap = [];
+                foreach ($binding['columns'] as $fid => $colName) {
+                    if (isset($actualCols[$colName])) {
+                        $colMap[$fid] = $colName;
+                    }
+                }
+                $createdAtCol = is_string($binding['createdAtColumn'] ?? null) && isset($actualCols[$binding['createdAtColumn']]) ? $binding['createdAtColumn'] : null;
+                $statusCol = is_string($binding['statusColumn'] ?? null) && isset($actualCols[$binding['statusColumn']]) ? $binding['statusColumn'] : null;
+                $quote = static fn(string $c): string => 'r."' . str_replace('"', '""', $c) . '"';
+
+                try { $tz = new \DateTimeZone($timezone !== '' ? $timezone : 'UTC'); } catch (\Throwable) { $tz = new \DateTimeZone('UTC'); }
+                $nowLocal = new \DateTime('now', $tz);
+
+                $refExpr = static function (string $ref) use ($colMap, $createdAtCol, $statusCol, $quote): ?string {
+                    if ($ref === '__submitted_at') return $createdAtCol !== null ? $quote($createdAtCol) : null;
+                    if ($ref === '__status') return $statusCol !== null ? $quote($statusCol) : "'submitted'";
+                    if (str_contains($ref, '::')) return null;
+                    return isset($colMap[$ref]) ? $quote($colMap[$ref]) : null;
+                };
+                $refField = static function (string $ref) use ($baseFieldById): ?array {
+                    if ($ref === '__submitted_at') return ['type' => 'datetime', 'label' => 'Created'];
+                    if ($ref === '__status') return ['type' => 'short_text', 'label' => 'Status'];
+                    return $baseFieldById[$ref] ?? null;
+                };
+
+                $params = [];
+                $where = ['1=1'];
+                $pi = 0;
+                $filterConds = [];
+                foreach (array_slice((array) ($spec['filters'] ?? []), 0, self::MAX_FILTERS) as $flt) {
+                    if (!is_array($flt)) continue;
+                    $ref = (string) ($flt['field'] ?? '');
+                    $expr = $refExpr($ref);
+                    if ($expr === null) continue;
+                    $fdef = $refField($ref);
+                    $isNumeric = in_array($fdef['type'] ?? '', self::NUMERIC_TYPES, true);
+                    $isDate = in_array($fdef['type'] ?? '', self::DATE_TYPES, true) || $ref === '__submitted_at';
+                    $op = (string) ($flt['op'] ?? 'eq');
+
+                    if ($op === 'empty') { $filterConds[] = "($expr IS NULL OR $expr = '')"; continue; }
+                    if ($op === 'notempty') { $filterConds[] = "($expr IS NOT NULL AND $expr != '')"; continue; }
+                    if (in_array($op, self::DATE_OPS, true)) {
+                        if ($op === 'last_n_days') {
+                            $n = max(1, min((int) ($flt['value'] ?? 30), 3650));
+                            $p = ':p' . $pi++;
+                            $params[$p] = (clone $nowLocal)->modify("-{$n} days")->format('Y-m-d');
+                            $filterConds[] = "date($expr) >= $p";
+                        } elseif ($op === 'this_month') {
+                            $p = ':p' . $pi++;
+                            $params[$p] = $nowLocal->format('Y-m');
+                            $filterConds[] = "strftime('%Y-%m', $expr) = $p";
+                        } elseif ($op === 'this_year') {
+                            $p = ':p' . $pi++;
+                            $params[$p] = $nowLocal->format('Y');
+                            $filterConds[] = "strftime('%Y', $expr) = $p";
+                        } elseif ($op === 'today') {
+                            $p = ':p' . $pi++;
+                            $params[$p] = $nowLocal->format('Y-m-d');
+                            $filterConds[] = "date($expr) = $p";
+                        }
+                        continue;
+                    }
+                    if ($op === 'contains') {
+                        $p = ':p' . $pi++;
+                        $filterConds[] = "CAST($expr AS TEXT) LIKE $p ESCAPE '!'";
+                        $params[$p] = '%' . strtr((string) ($flt['value'] ?? ''), ['!' => '!!', '%' => '!%', '_' => '!_']) . '%';
+                        continue;
+                    }
+                    if (isset(self::OPS[$op])) {
+                        $p = ':p' . $pi++;
+                        $params[$p] = (string) ($flt['value'] ?? '');
+                        if ($isNumeric) {
+                            $filterConds[] = "CAST($expr AS REAL) " . self::OPS[$op] . " CAST($p AS REAL)";
+                        } elseif ($isDate) {
+                            $filterConds[] = "date($expr) " . self::OPS[$op] . " date($p)";
+                        } else {
+                            $filterConds[] = "$expr " . self::OPS[$op] . " $p";
+                        }
+                    }
+                }
+                if (($spec['filterMode'] ?? '') === 'any' && count($filterConds) >= 2) {
+                    $where[] = '(' . implode(' OR ', $filterConds) . ')';
+                } else {
+                    array_push($where, ...$filterConds);
+                }
+                $drPreset = is_array($spec['dateRange'] ?? null) ? (string) ($spec['dateRange']['preset'] ?? '') : '';
+                if (in_array($drPreset, self::RANGE_PRESETS, true)) {
+                    $dref = (string) ($spec['dateRange']['field'] ?? '__submitted_at');
+                    $dexpr = $refExpr($dref);
+                    if ($dexpr !== null) {
+                        $params[':drange'] = match ($drPreset) {
+                            '7d' => (clone $nowLocal)->modify('-7 days')->format('Y-m-d'),
+                            '30d' => (clone $nowLocal)->modify('-30 days')->format('Y-m-d'),
+                            '90d' => (clone $nowLocal)->modify('-90 days')->format('Y-m-d'),
+                            'thisMonth' => $nowLocal->format('Y-m-01'),
+                            default => $nowLocal->format('Y-01-01'),
+                        };
+                        $where[] = "date($dexpr) >= :drange";
+                    }
+                }
+                $from = "{$quotedTable} r";
+                $whereSql = implode(' AND ', $where);
+                $limit = max(1, min((int) ($spec['limit'] ?? 100), 1000));
+
+                $aggExpr = static function (array $measure) use ($refExpr, $refField): string {
+                    $fn = in_array($measure['fn'] ?? 'count', self::AGGS, true) ? (string) $measure['fn'] : 'count';
+                    if ($fn === 'count') return 'COUNT(*)';
+                    $mref = (string) ($measure['field'] ?? '');
+                    $mexpr = $refExpr($mref);
+                    if ($mexpr === null) return 'COUNT(*)';
+                    if ($fn === 'countDistinct') return "COUNT(DISTINCT $mexpr)";
+                    if (!in_array($refField($mref)['type'] ?? '', self::NUMERIC_TYPES, true)) return 'COUNT(*)';
+                    return strtoupper($fn) . "(CAST(NULLIF($mexpr, '') AS REAL))";
+                };
+
+                if ($viz === 'kpi') {
+                    $stmt = $db->prepare("SELECT " . $aggExpr($spec['measure'] ?? ['fn' => 'count']) . " AS val FROM $from WHERE $whereSql");
+                    $stmt->execute($params);
+                    $kpi = ['viz' => 'kpi', 'value' => (float) ($stmt->fetchColumn() ?: 0)];
+                    $stmt->closeCursor();
+                    return $kpi;
+                }
+
+                if (in_array($viz, self::SERIES_VIZ, true) && !empty($spec['groupBy']['field'])) {
+                    $gref = (string) $spec['groupBy']['field'];
+                    $gcol = $refExpr($gref);
+                    if ($gcol === null) return ['viz' => $viz, 'series' => []];
+                    $bucket = (string) ($spec['groupBy']['bucket'] ?? 'none');
+                    if (!in_array($bucket, self::BUCKETS, true)) $bucket = 'none';
+                    $isDateBucket = $bucket !== 'none';
+                    $key = match ($bucket) {
+                        'month' => "strftime('%Y-%m', $gcol)",
+                        'year'  => "strftime('%Y', $gcol)",
+                        'day'   => "date($gcol)",
+                        default => "CAST($gcol AS TEXT)",
+                    };
+                    $agg = $aggExpr($spec['measure'] ?? ['fn' => 'count']);
+                    $sbRef = (in_array($viz, self::SERIESBY_VIZ, true) && is_array($spec['seriesBy'] ?? null))
+                        ? (string) ($spec['seriesBy']['field'] ?? '') : '';
+                    $sbExpr = $sbRef !== '' ? $refExpr($sbRef) : null;
+                    if ($sbExpr !== null) {
+                        $pivotInner = "SELECT $key AS k, CAST($sbExpr AS TEXT) AS s, $agg AS v FROM $from WHERE $whereSql GROUP BY k, s";
+                        $pivotSql = $isDateBucket
+                            ? "SELECT k, s, v FROM ($pivotInner ORDER BY k DESC LIMIT :lim) sub ORDER BY k ASC"
+                            : "$pivotInner ORDER BY k ASC LIMIT :lim";
+                        $stmt = $db->prepare($pivotSql);
+                        foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+                        $stmt->bindValue(':lim', self::MAX_PIVOT_CELLS, PDO::PARAM_INT);
+                        $stmt->execute();
+                        return ['viz' => $viz, 'series' => $this->pivotSeries(
+                            $stmt->fetchAll(PDO::FETCH_ASSOC),
+                            $refField($gref),
+                            $refField($sbRef),
+                            (int) ($spec['seriesBy']['limit'] ?? 5),
+                            min($limit, 50),
+                            $isDateBucket || (($spec['seriesSort'] ?? '') === 'label'),
+                            ($spec['sort'] ?? 'desc') === 'asc',
+                            $isDateBucket
+                        )];
+                    }
+                    $seriesSort = (string) ($spec['seriesSort'] ?? '');
+                    $orderBy = ($isDateBucket || $seriesSort === 'label')
+                        ? 'k ASC'
+                        : ('v ' . ((($spec['sort'] ?? 'desc') === 'asc') ? 'ASC' : 'DESC'));
+                    $seriesInner = "SELECT $key AS k, $agg AS v FROM $from WHERE $whereSql GROUP BY k";
+                    $seriesSql = $isDateBucket
+                        ? "SELECT k, v FROM ($seriesInner ORDER BY k DESC LIMIT :lim) sub ORDER BY k ASC"
+                        : "$seriesInner ORDER BY $orderBy LIMIT :lim";
+                    $stmt = $db->prepare($seriesSql);
+                    foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+                    $stmt->bindValue(':lim', min($limit, 50), PDO::PARAM_INT);
+                    $stmt->execute();
+                    $gfield = $refField($gref);
+                    $series = [];
+                    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $rrow) {
+                        $label = ($rrow['k'] === null || $rrow['k'] === '') ? '—' : $this->optLabel($gfield, (string) $rrow['k']);
+                        $series[] = ['label' => $label, 'value' => (float) $rrow['v']];
+                    }
+                    return ['viz' => $viz, 'series' => $series];
+                }
+
+                // Table view
+                $refs = array_values(array_filter((array) ($spec['columns'] ?? []), static fn($ref) => $refExpr((string) $ref) !== null));
+                $refs = array_slice($refs, 0, 30);
+                if (empty($refs)) {
+                    foreach ($fields as $f) {
+                        if (count($refs) >= 6) break;
+                        $fid = (string) ($f['id'] ?? '');
+                        if ($fid !== '' && $refExpr($fid) !== null && !in_array($f['type'] ?? '', self::SKIP_TYPES, true)) {
+                            $refs[] = $fid;
+                        }
+                    }
+                }
+                if (empty($refs)) return ['viz' => 'table', 'columns' => [], 'rows' => []];
+                $selects = [];
+                $columns = [];
+                foreach ($refs as $i => $ref) {
+                    $selects[] = $refExpr((string) $ref) . " AS c$i";
+                    $columns[] = ['id' => "c$i", 'label' => $refField((string) $ref)['label'] ?? (string) $ref];
+                }
+                $orderSql = $createdAtCol !== null ? ($quote($createdAtCol) . ' DESC') : 'r.rowid DESC';
+                if (isset($spec['sort']['by'])) {
+                    $sortExpr = $refExpr((string) $spec['sort']['by']);
+                    if ($sortExpr !== null) {
+                        $sdir = (($spec['sort']['dir'] ?? 'asc') === 'desc') ? 'DESC' : 'ASC';
+                        $orderSql = "$sortExpr $sdir";
+                    }
+                }
+                $stmt = $db->prepare('SELECT ' . implode(', ', $selects) . " FROM $from WHERE $whereSql ORDER BY $orderSql LIMIT :lim");
+                foreach ($params as $k => $v) $stmt->bindValue($k, $v);
+                $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+                $stmt->execute();
+                $rows = [];
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $rrow) {
+                    $row = [];
+                    foreach ($refs as $i => $ref) {
+                        $col = "c$i";
+                        $row[$col] = $this->displayValue($refField((string) $ref), $rrow[$col] ?? null);
+                    }
+                    $rows[] = $row;
+                }
+                return ['viz' => 'table', 'columns' => $columns, 'rows' => $rows];
+            });
+        } catch (\Throwable) {
+            return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];
         }
     }
 

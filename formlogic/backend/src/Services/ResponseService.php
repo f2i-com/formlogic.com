@@ -99,6 +99,13 @@ class ResponseService
      */
     /** N3b op log — injected via DI (setDataOperationLog); null = legacy behaviour. */
     private ?DataOperationLogService $dataOperationLog = null;
+    /** Bridge for forms bound directly to a hosted SoftN app SQLite table (`settings.nativeTableBinding`). */
+    private ?NativeTableFormBridge $nativeTableBridge = null;
+
+    public function setNativeTableBridge(?NativeTableFormBridge $bridge): void
+    {
+        $this->nativeTableBridge = $bridge;
+    }
 
     /**
      * Wire the signed operation log (docs/FORMLOGIC_DATA_NODES.md §12).
@@ -1388,6 +1395,10 @@ class ResponseService
     {
         $this->assertOptionsReadableOnPrivate($formId, $options);
 
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            return $this->nativeTableBridge->listResponses($binding, $options);
+        }
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return [];
         }
@@ -1929,7 +1940,19 @@ class ResponseService
      */
     public function getResponsesByIds(string $formId, array $responseIds): array
     {
-        if (empty($responseIds) || !$this->sqlite->formDatabaseExists($formId)) {
+        if (empty($responseIds)) {
+            return [];
+        }
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $out = [];
+            foreach (array_slice($responseIds, 0, 250) as $rid) {
+                if (!is_string($rid)) continue;
+                $row = $this->nativeTableBridge->getResponse($binding, $rid);
+                if ($row !== null) $out[] = $row;
+            }
+            return $out;
+        }
+        if (!$this->sqlite->formDatabaseExists($formId)) {
             return [];
         }
 
@@ -1998,6 +2021,16 @@ class ResponseService
             $this->assertNotPrivate($formId);
         }
         $this->assertOptionsReadableOnPrivate($formId, $options);
+
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $opts = $options;
+            if ($searchQuery !== '') {
+                $opts['search'] = $searchQuery;
+            }
+            $rows = $this->nativeTableBridge->listResponses($binding, $opts);
+            $total = $searchQuery !== '' ? count($rows) : $this->nativeTableBridge->countResponses($binding);
+            return ['responses' => $rows, 'total' => $total];
+        }
 
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return ['responses' => [], 'total' => 0];
@@ -2135,6 +2168,10 @@ class ResponseService
      */
     public function getResponse(string $formId, string $responseId): ?array
     {
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            return $this->nativeTableBridge->getResponse($binding, $responseId);
+        }
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return null;
         }
@@ -2222,6 +2259,16 @@ class ResponseService
         // a form that no longer exists (orphaned file + a guaranteed MySQL FK 500).
         if (!$this->formExists($formId)) {
             throw new \RuntimeException('Form not found');
+        }
+
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $created = $this->nativeTableBridge->createResponse($binding, $data);
+            if ($this->flowService !== null) {
+                try {
+                    $this->flowService->enqueueSubmissionBindings($formId, (string) $created['id'], is_array($created['answers'] ?? null) ? $created['answers'] : [], $sourceRunId);
+                } catch (\Throwable) {}
+            }
+            return $created;
         }
 
         // No record is made with an answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, whichever
@@ -2941,6 +2988,10 @@ class ResponseService
         // (updateEncryptedResponse) — the PATCH-merge plaintext path is refused.
         $this->assertNotPrivate($formId);
 
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            return $this->nativeTableBridge->updateResponse($binding, $responseId, $data);
+        }
+
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return null;
         }
@@ -3317,6 +3368,9 @@ class ResponseService
     public function deleteResponse(string $formId, string $responseId): bool
     {
         $this->assertDeletableUnderPlacement($formId);
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            return $this->nativeTableBridge->deleteResponse($binding, $responseId);
+        }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return false;
         }
@@ -3499,6 +3553,9 @@ class ResponseService
      */
     public function getResponseCount(string $formId, ?string $submittedByUserId = null): int
     {
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            return $this->nativeTableBridge->countResponses($binding);
+        }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }

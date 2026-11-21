@@ -1,0 +1,1830 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "stayready-short-stay-softn",
+        "name": "StayReady (SoftN + Forms)",
+        "description": "Turnkey short-stay & Airbnb turnover manager: same-day checkout/check-in command board, bookings board, cleaner turnover pipeline, lockbox access directory, inspections & damage log, and per-property supply stock. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "airbnb",
+            "short-stay",
+            "turnovers",
+            "cleaning",
+            "property",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "properties",
+            "title": "Properties",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"properties\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Properties",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "properties",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_name": "property_name",
+                        "address": "address",
+                        "property_type": "property_type",
+                        "bedrooms": "bedrooms",
+                        "bathrooms": "bathrooms",
+                        "access_instructions": "access_instructions",
+                        "owner": "owner",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Properties",
+                    "description": "Connected live to SQLite table \"properties\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_name",
+                    "type": "short_text",
+                    "label": "Property Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_type",
+                    "type": "dropdown",
+                    "label": "Property Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "apartment",
+                                "label": "Apartment",
+                                "value": "Apartment"
+                            },
+                            {
+                                "id": "house",
+                                "label": "House",
+                                "value": "House"
+                            },
+                            {
+                                "id": "townhouse",
+                                "label": "Townhouse",
+                                "value": "Townhouse"
+                            },
+                            {
+                                "id": "studio",
+                                "label": "Studio",
+                                "value": "Studio"
+                            },
+                            {
+                                "id": "cabin",
+                                "label": "Cabin",
+                                "value": "Cabin"
+                            }
+                        ],
+                        "defaultValue": "Apartment"
+                    }
+                },
+                {
+                    "id": "bedrooms",
+                    "type": "number",
+                    "label": "Bedrooms",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "bathrooms",
+                    "type": "number",
+                    "label": "Bathrooms",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "access_instructions",
+                    "type": "long_text",
+                    "label": "Access Instructions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "owner",
+                    "type": "short_text",
+                    "label": "Owner",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "live",
+                                "label": "Live",
+                                "value": "Live"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "offboarding",
+                                "label": "Offboarding",
+                                "value": "Offboarding"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked in",
+                                "value": "Checked in"
+                            },
+                            {
+                                "id": "checked_out",
+                                "label": "Checked out",
+                                "value": "Checked out"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "linen_changed",
+                                "label": "Linen Changed",
+                                "value": "Linen Changed"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "guest_ready",
+                                "label": "Guest-Ready",
+                                "value": "Guest-Ready"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Live"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Properties by Property Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "property_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:properties",
+                                "titleField": "address",
+                                "limit": 10,
+                                "subtitleField": "property_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "cleaners",
+            "title": "Cleaners",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"cleaners\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Cleaners",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "cleaners",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "service_areas_json": "service_areas_json",
+                        "availability_json": "availability_json",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Cleaners",
+                    "description": "Connected live to SQLite table \"cleaners\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "service_areas_json",
+                    "type": "short_text",
+                    "label": "Service Areas Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "availability_json",
+                    "type": "short_text",
+                    "label": "Availability Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Cleaners",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaners",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Cleaners by Active",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:cleaners",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Cleaners",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:cleaners",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "bookings",
+            "title": "Bookings",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"bookings\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Bookings",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "bookings",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "guest_name": "guest_name",
+                        "check_in": "check_in",
+                        "check_out": "check_out",
+                        "guest_count": "guest_count",
+                        "platform": "platform",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Bookings",
+                    "description": "Connected live to SQLite table \"bookings\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "guest_name",
+                    "type": "short_text",
+                    "label": "Guest Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "check_in",
+                    "type": "short_text",
+                    "label": "Check In",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "check_out",
+                    "type": "short_text",
+                    "label": "Check Out",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "guest_count",
+                    "type": "number",
+                    "label": "Guest Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "platform",
+                    "type": "dropdown",
+                    "label": "Platform",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "airbnb",
+                                "label": "Airbnb",
+                                "value": "Airbnb"
+                            },
+                            {
+                                "id": "booking_com",
+                                "label": "Booking.com",
+                                "value": "Booking.com"
+                            },
+                            {
+                                "id": "vrbo",
+                                "label": "VRBO",
+                                "value": "VRBO"
+                            },
+                            {
+                                "id": "direct",
+                                "label": "Direct",
+                                "value": "Direct"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Airbnb"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "live",
+                                "label": "Live",
+                                "value": "Live"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "offboarding",
+                                "label": "Offboarding",
+                                "value": "Offboarding"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked in",
+                                "value": "Checked in"
+                            },
+                            {
+                                "id": "checked_out",
+                                "label": "Checked out",
+                                "value": "Checked out"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "linen_changed",
+                                "label": "Linen Changed",
+                                "value": "Linen Changed"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "guest_ready",
+                                "label": "Guest-Ready",
+                                "value": "Guest-Ready"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Confirmed"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Bookings",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Bookings by Platform",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "platform",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Bookings",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:bookings",
+                                "titleField": "guest_name",
+                                "limit": 10,
+                                "subtitleField": "check_in"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "turnovers",
+            "title": "Turnovers",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"turnovers\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Turnovers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "turnovers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "booking_id": "booking_id",
+                        "cleaner_id": "cleaner_id",
+                        "turnover_date": "turnover_date",
+                        "start_time": "start_time",
+                        "status": "status",
+                        "linen_required": "linen_required",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Turnovers",
+                    "description": "Connected live to SQLite table \"turnovers\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "booking_id",
+                    "type": "linked_record",
+                    "label": "Booking",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:bookings",
+                        "displayFieldIds": [
+                            "guest_name",
+                            "check_in"
+                        ]
+                    }
+                },
+                {
+                    "id": "cleaner_id",
+                    "type": "linked_record",
+                    "label": "Cleaner",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:cleaners",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "turnover_date",
+                    "type": "date",
+                    "label": "Turnover Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "live",
+                                "label": "Live",
+                                "value": "Live"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "offboarding",
+                                "label": "Offboarding",
+                                "value": "Offboarding"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked in",
+                                "value": "Checked in"
+                            },
+                            {
+                                "id": "checked_out",
+                                "label": "Checked out",
+                                "value": "Checked out"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "linen_changed",
+                                "label": "Linen Changed",
+                                "value": "Linen Changed"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "guest_ready",
+                                "label": "Guest-Ready",
+                                "value": "Guest-Ready"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "linen_required",
+                    "type": "dropdown",
+                    "label": "Linen Required",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Turnovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:turnovers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Turnovers by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:turnovers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Turnovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:turnovers",
+                                "titleField": "turnover_date",
+                                "limit": 10,
+                                "subtitleField": "start_time"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "inspections",
+            "title": "Inspections",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"inspections\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Inspections",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "inspections",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "turnover_id": "turnover_id",
+                        "inspection_date": "inspection_date",
+                        "condition_rating": "condition_rating",
+                        "missing_items": "missing_items",
+                        "damage_notes": "damage_notes",
+                        "follow_up_required": "follow_up_required",
+                        "inspector_name": "inspector_name"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Inspections",
+                    "description": "Connected live to SQLite table \"inspections\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "turnover_id",
+                    "type": "linked_record",
+                    "label": "Turnover",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:turnovers",
+                        "displayFieldIds": [
+                            "turnover_date",
+                            "start_time"
+                        ]
+                    }
+                },
+                {
+                    "id": "inspection_date",
+                    "type": "date",
+                    "label": "Inspection Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "condition_rating",
+                    "type": "number",
+                    "label": "Condition Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "missing_items",
+                    "type": "short_text",
+                    "label": "Missing Items",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "damage_notes",
+                    "type": "long_text",
+                    "label": "Damage Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "follow_up_required",
+                    "type": "dropdown",
+                    "label": "Follow Up Required",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "inspector_name",
+                    "type": "short_text",
+                    "label": "Inspector Name",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Inspections",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:inspections",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Inspections by Follow Up Required",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:inspections",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "follow_up_required",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Inspections",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:inspections",
+                                "titleField": "inspection_date",
+                                "limit": 10,
+                                "subtitleField": "condition_rating"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "property-supplies",
+            "title": "Property Supplies",
+            "icon": "BedDouble",
+            "description": "Live FormLogic form synced directly to SQLite table \"property_supplies\" in StayReady.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Property Supplies",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:stayready-short-stay-softn-app",
+                    "table": "property_supplies",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "supply_item": "supply_item",
+                        "current_stock": "current_stock",
+                        "reorder_point": "reorder_point",
+                        "unit": "unit",
+                        "status": "status"
+                    },
+                    "createdAtColumn": null,
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Property Supplies",
+                    "description": "Connected live to SQLite table \"property_supplies\" in StayReady.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "supply_item",
+                    "type": "short_text",
+                    "label": "Supply Item",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "current_stock",
+                    "type": "number",
+                    "label": "Current Stock",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reorder_point",
+                    "type": "number",
+                    "label": "Reorder Point",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "units",
+                                "label": "Units",
+                                "value": "Units"
+                            },
+                            {
+                                "id": "packs",
+                                "label": "Packs",
+                                "value": "Packs"
+                            },
+                            {
+                                "id": "bottles",
+                                "label": "Bottles",
+                                "value": "Bottles"
+                            },
+                            {
+                                "id": "sets",
+                                "label": "Sets",
+                                "value": "Sets"
+                            }
+                        ],
+                        "defaultValue": "Sets"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "live",
+                                "label": "Live",
+                                "value": "Live"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "offboarding",
+                                "label": "Offboarding",
+                                "value": "Offboarding"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked in",
+                                "value": "Checked in"
+                            },
+                            {
+                                "id": "checked_out",
+                                "label": "Checked out",
+                                "value": "Checked out"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "cleaning",
+                                "label": "Cleaning",
+                                "value": "Cleaning"
+                            },
+                            {
+                                "id": "linen_changed",
+                                "label": "Linen Changed",
+                                "value": "Linen Changed"
+                            },
+                            {
+                                "id": "inspected",
+                                "label": "Inspected",
+                                "value": "Inspected"
+                            },
+                            {
+                                "id": "guest_ready",
+                                "label": "Guest-Ready",
+                                "value": "Guest-Ready"
+                            },
+                            {
+                                "id": "issue",
+                                "label": "Issue",
+                                "value": "Issue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Property Supplies",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:property-supplies",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Property Supplies by Unit",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:property-supplies",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "unit",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Property Supplies",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:property-supplies",
+                                "titleField": "supply_item",
+                                "limit": 10,
+                                "subtitleField": "current_stock"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "stayready-short-stay-softn-app",
+            "name": "StayReady",
+            "description": "Turnkey short-stay & Airbnb turnover manager: same-day checkout/check-in command board, bookings board, cleaner turnover pipeline, lockbox access directory, inspections & damage log, and per-property supply stock.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "stayready-short-stay-softn-forms",
+            "name": "StayReady Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to StayReady's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:stayready-short-stay-softn-app",
+                "linkedSoftnAppId": "@packApp:stayready-short-stay-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "properties",
+                    "displayName": "Properties",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "cleaners",
+                    "displayName": "Cleaners",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "bookings",
+                    "displayName": "Bookings",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "turnovers",
+                    "displayName": "Turnovers",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "inspections",
+                    "displayName": "Inspections",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "property-supplies",
+                    "displayName": "Property Supplies",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_properties",
+                    "name": "Total Properties",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:properties",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_properties",
+                    "name": "Properties by Property Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:properties",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "property_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_cleaners",
+                    "name": "Total Cleaners",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cleaners",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_cleaners",
+                    "name": "Cleaners by Active",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:cleaners",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "active",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_bookings",
+                    "name": "Total Bookings",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:bookings",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_turnovers",
+                    "name": "Total Turnovers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:turnovers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Properties by Property Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "property_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Cleaners",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:cleaners",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Cleaners by Active",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:cleaners",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Bookings",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Turnovers",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:turnovers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

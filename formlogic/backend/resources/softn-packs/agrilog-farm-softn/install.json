@@ -1,0 +1,1705 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "agrilog-farm-softn",
+        "name": "AgriLog (SoftN + Forms)",
+        "description": "Turnkey farm operations tracker: paddocks with live chemical withholding period locks, crop jobs, harvest yield log, chemical register, and machinery maintenance. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "farm",
+            "agriculture",
+            "harvest",
+            "paddocks",
+            "compliance",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "paddocks",
+            "title": "Paddocks",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"paddocks\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Paddocks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "paddocks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "block_name": "block_name",
+                        "crop": "crop",
+                        "area_ha": "area_ha",
+                        "soil_notes": "soil_notes",
+                        "irrigation": "irrigation",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Paddocks",
+                    "description": "Connected live to SQLite table \"paddocks\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "block_name",
+                    "type": "short_text",
+                    "label": "Block Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "crop",
+                    "type": "short_text",
+                    "label": "Crop",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "area_ha",
+                    "type": "number",
+                    "label": "Area Ha",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "soil_notes",
+                    "type": "long_text",
+                    "label": "Soil Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "irrigation",
+                    "type": "dropdown",
+                    "label": "Irrigation",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "drip",
+                                "label": "Drip",
+                                "value": "Drip"
+                            },
+                            {
+                                "id": "sprinkler",
+                                "label": "Sprinkler",
+                                "value": "Sprinkler"
+                            },
+                            {
+                                "id": "flood",
+                                "label": "Flood",
+                                "value": "Flood"
+                            },
+                            {
+                                "id": "dryland",
+                                "label": "Dryland",
+                                "value": "Dryland"
+                            }
+                        ],
+                        "defaultValue": "Dryland"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "in_crop",
+                                "label": "In crop",
+                                "value": "In crop"
+                            },
+                            {
+                                "id": "fallow",
+                                "label": "Fallow",
+                                "value": "Fallow"
+                            },
+                            {
+                                "id": "being_prepared",
+                                "label": "Being prepared",
+                                "value": "Being prepared"
+                            },
+                            {
+                                "id": "grazing",
+                                "label": "Grazing",
+                                "value": "Grazing"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "rained_off",
+                                "label": "Rained off",
+                                "value": "Rained off"
+                            },
+                            {
+                                "id": "running",
+                                "label": "Running",
+                                "value": "Running"
+                            },
+                            {
+                                "id": "due_for_service",
+                                "label": "Due for service",
+                                "value": "Due for service"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In workshop",
+                                "value": "In workshop"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "In crop"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Paddocks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:paddocks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Paddocks by Irrigation",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:paddocks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "irrigation",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Paddocks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:paddocks",
+                                "titleField": "block_name",
+                                "limit": 10,
+                                "subtitleField": "crop"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "farm-jobs",
+            "title": "Farm Jobs",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"farm_jobs\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Farm Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "farm_jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "paddock_id": "paddock_id",
+                        "job_type": "job_type",
+                        "scheduled_date": "scheduled_date",
+                        "completed_date": "completed_date",
+                        "assigned_to": "assigned_to",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Farm Jobs",
+                    "description": "Connected live to SQLite table \"farm_jobs\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "paddock_id",
+                    "type": "linked_record",
+                    "label": "Paddock",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:paddocks",
+                        "displayFieldIds": [
+                            "block_name",
+                            "crop"
+                        ]
+                    }
+                },
+                {
+                    "id": "job_type",
+                    "type": "dropdown",
+                    "label": "Job Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "planting",
+                                "label": "Planting",
+                                "value": "Planting"
+                            },
+                            {
+                                "id": "spraying",
+                                "label": "Spraying",
+                                "value": "Spraying"
+                            },
+                            {
+                                "id": "irrigation",
+                                "label": "Irrigation",
+                                "value": "Irrigation"
+                            },
+                            {
+                                "id": "fertiliser",
+                                "label": "Fertiliser",
+                                "value": "Fertiliser"
+                            },
+                            {
+                                "id": "harvest",
+                                "label": "Harvest",
+                                "value": "Harvest"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            }
+                        ],
+                        "defaultValue": "Planting"
+                    }
+                },
+                {
+                    "id": "scheduled_date",
+                    "type": "date",
+                    "label": "Scheduled Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "completed_date",
+                    "type": "date",
+                    "label": "Completed Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "in_crop",
+                                "label": "In crop",
+                                "value": "In crop"
+                            },
+                            {
+                                "id": "fallow",
+                                "label": "Fallow",
+                                "value": "Fallow"
+                            },
+                            {
+                                "id": "being_prepared",
+                                "label": "Being prepared",
+                                "value": "Being prepared"
+                            },
+                            {
+                                "id": "grazing",
+                                "label": "Grazing",
+                                "value": "Grazing"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "rained_off",
+                                "label": "Rained off",
+                                "value": "Rained off"
+                            },
+                            {
+                                "id": "running",
+                                "label": "Running",
+                                "value": "Running"
+                            },
+                            {
+                                "id": "due_for_service",
+                                "label": "Due for service",
+                                "value": "Due for service"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In workshop",
+                                "value": "In workshop"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Planned"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Farm Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:farm-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Farm Jobs by Job Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:farm-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "job_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Farm Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:farm-jobs",
+                                "titleField": "job_type",
+                                "limit": 10,
+                                "subtitleField": "scheduled_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "harvest-logs",
+            "title": "Harvest Logs",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"harvest_logs\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Harvest Logs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "harvest_logs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "paddock_id": "paddock_id",
+                        "harvest_date": "harvest_date",
+                        "crop": "crop",
+                        "quantity": "quantity",
+                        "unit": "unit",
+                        "grade": "grade",
+                        "buyer": "buyer",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Harvest Logs",
+                    "description": "Connected live to SQLite table \"harvest_logs\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "paddock_id",
+                    "type": "linked_record",
+                    "label": "Paddock",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:paddocks",
+                        "displayFieldIds": [
+                            "block_name",
+                            "crop"
+                        ]
+                    }
+                },
+                {
+                    "id": "harvest_date",
+                    "type": "date",
+                    "label": "Harvest Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "crop",
+                    "type": "short_text",
+                    "label": "Crop",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "quantity",
+                    "type": "number",
+                    "label": "Quantity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "tonnes",
+                                "label": "Tonnes",
+                                "value": "Tonnes"
+                            },
+                            {
+                                "id": "kg",
+                                "label": "kg",
+                                "value": "kg"
+                            },
+                            {
+                                "id": "bins",
+                                "label": "Bins",
+                                "value": "Bins"
+                            },
+                            {
+                                "id": "bales",
+                                "label": "Bales",
+                                "value": "Bales"
+                            }
+                        ],
+                        "defaultValue": "Tonnes"
+                    }
+                },
+                {
+                    "id": "grade",
+                    "type": "dropdown",
+                    "label": "Grade",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "premium",
+                                "label": "Premium",
+                                "value": "Premium"
+                            },
+                            {
+                                "id": "grade_1",
+                                "label": "Grade 1",
+                                "value": "Grade 1"
+                            },
+                            {
+                                "id": "grade_2",
+                                "label": "Grade 2",
+                                "value": "Grade 2"
+                            },
+                            {
+                                "id": "juice_or_feed",
+                                "label": "Juice or feed",
+                                "value": "Juice or feed"
+                            }
+                        ],
+                        "defaultValue": "Grade 1"
+                    }
+                },
+                {
+                    "id": "buyer",
+                    "type": "short_text",
+                    "label": "Buyer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Harvest Logs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:harvest-logs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Harvest Logs by Unit",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:harvest-logs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "unit",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Harvest Logs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:harvest-logs",
+                                "titleField": "harvest_date",
+                                "limit": 10,
+                                "subtitleField": "crop"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "chemical-applications",
+            "title": "Chemical Applications",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"chemical_applications\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Chemical Applications",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "chemical_applications",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "paddock_id": "paddock_id",
+                        "product_used": "product_used",
+                        "rate": "rate",
+                        "application_date": "application_date",
+                        "operator": "operator",
+                        "weather": "weather",
+                        "whp_end": "whp_end",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Chemical Applications",
+                    "description": "Connected live to SQLite table \"chemical_applications\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "paddock_id",
+                    "type": "linked_record",
+                    "label": "Paddock",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:paddocks",
+                        "displayFieldIds": [
+                            "block_name",
+                            "crop"
+                        ]
+                    }
+                },
+                {
+                    "id": "product_used",
+                    "type": "short_text",
+                    "label": "Product Used",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "rate",
+                    "type": "short_text",
+                    "label": "Rate",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "application_date",
+                    "type": "date",
+                    "label": "Application Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "operator",
+                    "type": "short_text",
+                    "label": "Operator",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "weather",
+                    "type": "short_text",
+                    "label": "Weather",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "whp_end",
+                    "type": "short_text",
+                    "label": "Whp End",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Chemical Applications",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:chemical-applications",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Chemical Applications",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:chemical-applications",
+                                "titleField": "product_used",
+                                "limit": 10,
+                                "subtitleField": "rate"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "machinery",
+            "title": "Machinery",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"machinery\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Machinery",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "machinery",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "machine_name": "machine_name",
+                        "machine_type": "machine_type",
+                        "service_due": "service_due",
+                        "hours": "hours",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Machinery",
+                    "description": "Connected live to SQLite table \"machinery\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "machine_name",
+                    "type": "short_text",
+                    "label": "Machine Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "machine_type",
+                    "type": "dropdown",
+                    "label": "Machine Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "tractor",
+                                "label": "Tractor",
+                                "value": "Tractor"
+                            },
+                            {
+                                "id": "harvester",
+                                "label": "Harvester",
+                                "value": "Harvester"
+                            },
+                            {
+                                "id": "sprayer",
+                                "label": "Sprayer",
+                                "value": "Sprayer"
+                            },
+                            {
+                                "id": "ute",
+                                "label": "Ute",
+                                "value": "Ute"
+                            },
+                            {
+                                "id": "implement",
+                                "label": "Implement",
+                                "value": "Implement"
+                            },
+                            {
+                                "id": "pump",
+                                "label": "Pump",
+                                "value": "Pump"
+                            }
+                        ],
+                        "defaultValue": "Tractor"
+                    }
+                },
+                {
+                    "id": "service_due",
+                    "type": "short_text",
+                    "label": "Service Due",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "hours",
+                    "type": "number",
+                    "label": "Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "in_crop",
+                                "label": "In crop",
+                                "value": "In crop"
+                            },
+                            {
+                                "id": "fallow",
+                                "label": "Fallow",
+                                "value": "Fallow"
+                            },
+                            {
+                                "id": "being_prepared",
+                                "label": "Being prepared",
+                                "value": "Being prepared"
+                            },
+                            {
+                                "id": "grazing",
+                                "label": "Grazing",
+                                "value": "Grazing"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "rained_off",
+                                "label": "Rained off",
+                                "value": "Rained off"
+                            },
+                            {
+                                "id": "running",
+                                "label": "Running",
+                                "value": "Running"
+                            },
+                            {
+                                "id": "due_for_service",
+                                "label": "Due for service",
+                                "value": "Due for service"
+                            },
+                            {
+                                "id": "in_workshop",
+                                "label": "In workshop",
+                                "value": "In workshop"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Running"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Machinery",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:machinery",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Machinery by Machine Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:machinery",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "machine_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Machinery",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:machinery",
+                                "titleField": "machine_name",
+                                "limit": 10,
+                                "subtitleField": "machine_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "maintenance-logs",
+            "title": "Maintenance Logs",
+            "icon": "Tractor",
+            "description": "Live FormLogic form synced directly to SQLite table \"maintenance_logs\" in AgriLog.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Maintenance Logs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:agrilog-farm-softn-app",
+                    "table": "maintenance_logs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "machine_id": "machine_id",
+                        "log_date": "log_date",
+                        "maintenance_type": "maintenance_type",
+                        "cost_cents": "cost_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Maintenance Logs",
+                    "description": "Connected live to SQLite table \"maintenance_logs\" in AgriLog.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "machine_id",
+                    "type": "number",
+                    "label": "Machine",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "log_date",
+                    "type": "date",
+                    "label": "Log Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "maintenance_type",
+                    "type": "dropdown",
+                    "label": "Maintenance Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled_service",
+                                "label": "Scheduled service",
+                                "value": "Scheduled service"
+                            },
+                            {
+                                "id": "repair",
+                                "label": "Repair",
+                                "value": "Repair"
+                            },
+                            {
+                                "id": "tyres_or_tracks",
+                                "label": "Tyres or tracks",
+                                "value": "Tyres or tracks"
+                            },
+                            {
+                                "id": "electrical",
+                                "label": "Electrical",
+                                "value": "Electrical"
+                            },
+                            {
+                                "id": "hydraulics",
+                                "label": "Hydraulics",
+                                "value": "Hydraulics"
+                            }
+                        ],
+                        "defaultValue": "Scheduled service"
+                    }
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Maintenance Logs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-logs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Maintenance Logs by Maintenance Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-logs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "maintenance_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Maintenance Logs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:maintenance-logs",
+                                "titleField": "log_date",
+                                "limit": 10,
+                                "subtitleField": "maintenance_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "agrilog-farm-softn-app",
+            "name": "AgriLog",
+            "description": "Turnkey farm operations tracker: paddocks with live chemical withholding period locks, crop jobs, harvest yield log, chemical register, and machinery maintenance.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "agrilog-farm-softn-forms",
+            "name": "AgriLog Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to AgriLog's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:agrilog-farm-softn-app",
+                "linkedSoftnAppId": "@packApp:agrilog-farm-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "paddocks",
+                    "displayName": "Paddocks",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "farm-jobs",
+                    "displayName": "Farm Jobs",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "harvest-logs",
+                    "displayName": "Harvest Logs",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "chemical-applications",
+                    "displayName": "Chemical Applications",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "machinery",
+                    "displayName": "Machinery",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "maintenance-logs",
+                    "displayName": "Maintenance Logs",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_paddocks",
+                    "name": "Total Paddocks",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:paddocks",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_paddocks",
+                    "name": "Paddocks by Irrigation",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:paddocks",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "irrigation",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_farm_jobs",
+                    "name": "Total Farm Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:farm-jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_farm_jobs",
+                    "name": "Farm Jobs by Job Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:farm-jobs",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "job_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_harvest_logs",
+                    "name": "Total Harvest Logs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:harvest-logs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_chemical_applications",
+                    "name": "Total Chemical Applications",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:chemical-applications",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Paddocks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:paddocks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Paddocks by Irrigation",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:paddocks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "irrigation",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Farm Jobs",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:farm-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Farm Jobs by Job Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:farm-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "job_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Harvest Logs",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:harvest-logs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Chemical Applications",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:chemical-applications",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

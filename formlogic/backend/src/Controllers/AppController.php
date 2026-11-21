@@ -24,6 +24,12 @@ class AppController
     private LoggerInterface $logger;
     private ?AuditService $auditService;
     private ?AppReportService $reportValidator;
+    private ?\FormLogic\Services\FormSqliteDatabaseService $formSqliteDb = null;
+
+    public function setFormSqliteDatabase(?\FormLogic\Services\FormSqliteDatabaseService $service): void
+    {
+        $this->formSqliteDb = $service;
+    }
 
     public function __construct(AppService $appService, ?LoggerInterface $logger = null, ?AuditService $auditService = null, ?AppReportService $reportValidator = null, private ?\FormLogic\Services\TrashService $trashService = null, private ?\FormLogic\Services\AppUserService $appUserService = null, private ?\FormLogic\Services\NativeAppService $native = null, private ?\FormLogic\Services\AppLookService $look = null)
     {
@@ -581,6 +587,7 @@ class AppController
 
         try {
             $forms = $this->appService->addFormToApp($args['id'], $data['formId'], $data['displayName'] ?? null);
+            $this->formSqliteDb?->maybeSyncFormOnAppAttach($args['id'], $data['formId'], is_string($data['displayName'] ?? null) ? $data['displayName'] : null);
             return $this->jsonResponse($response, ['forms' => $forms], 201);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable app attach fails closed (409).

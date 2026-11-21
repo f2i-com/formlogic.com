@@ -1,0 +1,1663 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "repairbench-device-repair-softn",
+        "name": "RepairBench (SoftN + Forms)",
+        "description": "Turnkey electronics and device repair workshop desk: 7-stage repair pipeline board with printable claim tickets, device IMEI/serial intake registry, parts order tracker, interactive QA test checklist and pickup SMS desk, plus customers and bench technicians. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "repairs",
+            "devices",
+            "electronics",
+            "workshop",
+            "service",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "customers",
+            "title": "Customers",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"customers\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Customers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "customers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "email": "email",
+                        "phone": "phone",
+                        "preferred_contact": "preferred_contact",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Customers",
+                    "description": "Connected live to SQLite table \"customers\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "preferred_contact",
+                    "type": "dropdown",
+                    "label": "Preferred Contact",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "phone_call",
+                                "label": "Phone call",
+                                "value": "Phone call"
+                            },
+                            {
+                                "id": "text_message",
+                                "label": "Text message",
+                                "value": "Text message"
+                            },
+                            {
+                                "id": "email",
+                                "label": "Email",
+                                "value": "Email"
+                            }
+                        ],
+                        "defaultValue": "Text message"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Customers by Preferred Contact",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "preferred_contact",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:customers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "technicians",
+            "title": "Technicians",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"technicians\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Technicians",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "technicians",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "skills_json": "skills_json",
+                        "email": "email",
+                        "phone": "phone",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Technicians",
+                    "description": "Connected live to SQLite table \"technicians\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "skills_json",
+                    "type": "short_text",
+                    "label": "Skills Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Technicians",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:technicians",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Technicians by Active",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:technicians",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Technicians",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:technicians",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "devices",
+            "title": "Devices",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"devices\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Devices",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "devices",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "device_type": "device_type",
+                        "brand": "brand",
+                        "model": "model",
+                        "serial": "serial",
+                        "condition_notes": "condition_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Devices",
+                    "description": "Connected live to SQLite table \"devices\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "device_type",
+                    "type": "dropdown",
+                    "label": "Device Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "phone",
+                                "label": "Phone",
+                                "value": "Phone"
+                            },
+                            {
+                                "id": "laptop",
+                                "label": "Laptop",
+                                "value": "Laptop"
+                            },
+                            {
+                                "id": "tablet",
+                                "label": "Tablet",
+                                "value": "Tablet"
+                            },
+                            {
+                                "id": "console",
+                                "label": "Console",
+                                "value": "Console"
+                            },
+                            {
+                                "id": "desktop",
+                                "label": "Desktop",
+                                "value": "Desktop"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Phone"
+                    }
+                },
+                {
+                    "id": "brand",
+                    "type": "short_text",
+                    "label": "Brand",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "model",
+                    "type": "short_text",
+                    "label": "Model",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "serial",
+                    "type": "short_text",
+                    "label": "Serial",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "condition_notes",
+                    "type": "long_text",
+                    "label": "Condition Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Devices",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:devices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Devices by Device Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:devices",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "device_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Devices",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:devices",
+                                "titleField": "device_type",
+                                "limit": 10,
+                                "subtitleField": "brand"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "repair-jobs",
+            "title": "Repair Jobs",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"repair_jobs\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Repair Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "repair_jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ticket_code": "ticket_code",
+                        "device_id": "device_id",
+                        "customer_id": "customer_id",
+                        "technician_id": "technician_id",
+                        "issue_type": "issue_type",
+                        "status": "status",
+                        "priority": "priority",
+                        "quote_amount_cents": "quote_amount_cents",
+                        "due_date": "due_date",
+                        "notes": "notes",
+                        "customer_notified": "customer_notified"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Repair Jobs",
+                    "description": "Connected live to SQLite table \"repair_jobs\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ticket_code",
+                    "type": "short_text",
+                    "label": "Ticket Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "device_id",
+                    "type": "linked_record",
+                    "label": "Device",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:devices",
+                        "displayFieldIds": [
+                            "device_type",
+                            "brand"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "technician_id",
+                    "type": "linked_record",
+                    "label": "Technician",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:technicians",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "issue_type",
+                    "type": "dropdown",
+                    "label": "Issue Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "screen",
+                                "label": "Screen",
+                                "value": "Screen"
+                            },
+                            {
+                                "id": "battery",
+                                "label": "Battery",
+                                "value": "Battery"
+                            },
+                            {
+                                "id": "charging",
+                                "label": "Charging",
+                                "value": "Charging"
+                            },
+                            {
+                                "id": "water_damage",
+                                "label": "Water damage",
+                                "value": "Water damage"
+                            },
+                            {
+                                "id": "software",
+                                "label": "Software",
+                                "value": "Software"
+                            },
+                            {
+                                "id": "data_recovery",
+                                "label": "Data recovery",
+                                "value": "Data recovery"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Screen"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "intake",
+                                "label": "Intake",
+                                "value": "Intake"
+                            },
+                            {
+                                "id": "diagnosing",
+                                "label": "Diagnosing",
+                                "value": "Diagnosing"
+                            },
+                            {
+                                "id": "awaiting_parts",
+                                "label": "Awaiting Parts",
+                                "value": "Awaiting Parts"
+                            },
+                            {
+                                "id": "repairing",
+                                "label": "Repairing",
+                                "value": "Repairing"
+                            },
+                            {
+                                "id": "qa_check",
+                                "label": "QA Check",
+                                "value": "QA Check"
+                            },
+                            {
+                                "id": "ready_for_pickup",
+                                "label": "Ready for Pickup",
+                                "value": "Ready for Pickup"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "ordered",
+                                "label": "Ordered",
+                                "value": "Ordered"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "arrived",
+                                "label": "Arrived",
+                                "value": "Arrived"
+                            },
+                            {
+                                "id": "installed",
+                                "label": "Installed",
+                                "value": "Installed"
+                            },
+                            {
+                                "id": "backordered",
+                                "label": "Backordered",
+                                "value": "Backordered"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Intake"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "standard",
+                                "label": "Standard",
+                                "value": "Standard"
+                            },
+                            {
+                                "id": "express",
+                                "label": "Express",
+                                "value": "Express"
+                            }
+                        ],
+                        "defaultValue": "Standard"
+                    }
+                },
+                {
+                    "id": "quote_amount_cents",
+                    "type": "number",
+                    "label": "Quote Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_notified",
+                    "type": "number",
+                    "label": "Customer Notified",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Repair Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:repair-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Repair Jobs by Issue Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:repair-jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "issue_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Repair Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:repair-jobs",
+                                "titleField": "ticket_code",
+                                "limit": 10,
+                                "subtitleField": "issue_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "parts-orders",
+            "title": "Parts Orders",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"parts_orders\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Parts Orders",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "parts_orders",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "repair_job_id": "repair_job_id",
+                        "part_name": "part_name",
+                        "supplier": "supplier",
+                        "cost_cents": "cost_cents",
+                        "tracking": "tracking",
+                        "eta": "eta",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Parts Orders",
+                    "description": "Connected live to SQLite table \"parts_orders\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "repair_job_id",
+                    "type": "linked_record",
+                    "label": "Repair Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:repair-jobs",
+                        "displayFieldIds": [
+                            "ticket_code",
+                            "issue_type"
+                        ]
+                    }
+                },
+                {
+                    "id": "part_name",
+                    "type": "short_text",
+                    "label": "Part Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tracking",
+                    "type": "short_text",
+                    "label": "Tracking",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "eta",
+                    "type": "short_text",
+                    "label": "Eta",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "intake",
+                                "label": "Intake",
+                                "value": "Intake"
+                            },
+                            {
+                                "id": "diagnosing",
+                                "label": "Diagnosing",
+                                "value": "Diagnosing"
+                            },
+                            {
+                                "id": "awaiting_parts",
+                                "label": "Awaiting Parts",
+                                "value": "Awaiting Parts"
+                            },
+                            {
+                                "id": "repairing",
+                                "label": "Repairing",
+                                "value": "Repairing"
+                            },
+                            {
+                                "id": "qa_check",
+                                "label": "QA Check",
+                                "value": "QA Check"
+                            },
+                            {
+                                "id": "ready_for_pickup",
+                                "label": "Ready for Pickup",
+                                "value": "Ready for Pickup"
+                            },
+                            {
+                                "id": "collected",
+                                "label": "Collected",
+                                "value": "Collected"
+                            },
+                            {
+                                "id": "ordered",
+                                "label": "Ordered",
+                                "value": "Ordered"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "arrived",
+                                "label": "Arrived",
+                                "value": "Arrived"
+                            },
+                            {
+                                "id": "installed",
+                                "label": "Installed",
+                                "value": "Installed"
+                            },
+                            {
+                                "id": "backordered",
+                                "label": "Backordered",
+                                "value": "Backordered"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Ordered"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Parts Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:parts-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Parts Orders by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:parts-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Parts Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:parts-orders",
+                                "titleField": "part_name",
+                                "limit": 10,
+                                "subtitleField": "supplier"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "quality-checks",
+            "title": "Quality Checks",
+            "icon": "CircuitBoard",
+            "description": "Live FormLogic form synced directly to SQLite table \"quality_checks\" in RepairBench.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Quality Checks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:repairbench-device-repair-softn-app",
+                    "table": "quality_checks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "repair_job_id": "repair_job_id",
+                        "checked_by_id": "checked_by_id",
+                        "checklist_json": "checklist_json",
+                        "result": "result",
+                        "notes": "notes",
+                        "notified": "notified"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Quality Checks",
+                    "description": "Connected live to SQLite table \"quality_checks\" in RepairBench.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "repair_job_id",
+                    "type": "linked_record",
+                    "label": "Repair Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:repair-jobs",
+                        "displayFieldIds": [
+                            "ticket_code",
+                            "issue_type"
+                        ]
+                    }
+                },
+                {
+                    "id": "checked_by_id",
+                    "type": "number",
+                    "label": "Checked By",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "checklist_json",
+                    "type": "short_text",
+                    "label": "Checklist Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "result",
+                    "type": "dropdown",
+                    "label": "Result",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "pass",
+                                "label": "Pass",
+                                "value": "Pass"
+                            },
+                            {
+                                "id": "fail",
+                                "label": "Fail",
+                                "value": "Fail"
+                            }
+                        ],
+                        "defaultValue": "Pass"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notified",
+                    "type": "dropdown",
+                    "label": "Notified",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "not_yet",
+                                "label": "Not yet",
+                                "value": "Not yet"
+                            }
+                        ],
+                        "defaultValue": "Not yet"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Quality Checks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quality-checks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Quality Checks by Result",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quality-checks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "result",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Quality Checks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:quality-checks",
+                                "titleField": "checklist_json",
+                                "limit": 10,
+                                "subtitleField": "result"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "repairbench-device-repair-softn-app",
+            "name": "RepairBench",
+            "description": "Turnkey electronics and device repair workshop desk: 7-stage repair pipeline board with printable claim tickets, device IMEI/serial intake registry, parts order tracker, interactive QA test checklist and pickup SMS desk, plus customers and bench technicians.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "repairbench-device-repair-softn-forms",
+            "name": "RepairBench Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to RepairBench's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:repairbench-device-repair-softn-app",
+                "linkedSoftnAppId": "@packApp:repairbench-device-repair-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "customers",
+                    "displayName": "Customers",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "technicians",
+                    "displayName": "Technicians",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "devices",
+                    "displayName": "Devices",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "repair-jobs",
+                    "displayName": "Repair Jobs",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "parts-orders",
+                    "displayName": "Parts Orders",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "quality-checks",
+                    "displayName": "Quality Checks",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_customers",
+                    "name": "Total Customers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_customers",
+                    "name": "Customers by Preferred Contact",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "preferred_contact",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_technicians",
+                    "name": "Total Technicians",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:technicians",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_technicians",
+                    "name": "Technicians by Active",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:technicians",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "active",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_devices",
+                    "name": "Total Devices",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:devices",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_repair_jobs",
+                    "name": "Total Repair Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:repair-jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Customers by Preferred Contact",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "preferred_contact",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Technicians",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:technicians",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Technicians by Active",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:technicians",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Devices",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:devices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Repair Jobs",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:repair-jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

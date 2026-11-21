@@ -1,0 +1,1180 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "salon-beauty-studio-softn",
+        "name": "Salon Studio (SoftN + Forms)",
+        "description": "Turnkey hair salon & beauty studio manager: daily appointment book by stylist with auto-filled service pricing & conflict checks, client colour formula cards, service menu, stylist roster, and retail sales with printable receipts. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "salon",
+            "beauty",
+            "appointments",
+            "bookings",
+            "clients",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "Scissors",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in Salon Studio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:salon-beauty-studio-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "client_since": "client_since",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in Salon Studio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_since",
+                    "type": "short_text",
+                    "label": "Client Since",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "services",
+            "title": "Services",
+            "icon": "Scissors",
+            "description": "Live FormLogic form synced directly to SQLite table \"services\" in Salon Studio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Services",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:salon-beauty-studio-softn-app",
+                    "table": "services",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "category": "category",
+                        "duration_minutes": "duration_minutes",
+                        "price_cents": "price_cents",
+                        "description": "description"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Services",
+                    "description": "Connected live to SQLite table \"services\" in Salon Studio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "cut",
+                                "label": "Cut",
+                                "value": "Cut"
+                            },
+                            {
+                                "id": "colour",
+                                "label": "Colour",
+                                "value": "Colour"
+                            },
+                            {
+                                "id": "treatment",
+                                "label": "Treatment",
+                                "value": "Treatment"
+                            },
+                            {
+                                "id": "nails",
+                                "label": "Nails",
+                                "value": "Nails"
+                            },
+                            {
+                                "id": "beauty",
+                                "label": "Beauty",
+                                "value": "Beauty"
+                            },
+                            {
+                                "id": "hair",
+                                "label": "Hair",
+                                "value": "Hair"
+                            },
+                            {
+                                "id": "skin",
+                                "label": "Skin",
+                                "value": "Skin"
+                            },
+                            {
+                                "id": "massage",
+                                "label": "Massage",
+                                "value": "Massage"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Cut"
+                    }
+                },
+                {
+                    "id": "duration_minutes",
+                    "type": "number",
+                    "label": "Duration Minutes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "price_cents",
+                    "type": "number",
+                    "label": "Price (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Services",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:services",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Services by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:services",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Services",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:services",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "stylists",
+            "title": "Stylists",
+            "icon": "Scissors",
+            "description": "Live FormLogic form synced directly to SQLite table \"stylists\" in Salon Studio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Stylists",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:salon-beauty-studio-softn-app",
+                    "table": "stylists",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "role": "role",
+                        "phone": "phone",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Stylists",
+                    "description": "Connected live to SQLite table \"stylists\" in Salon Studio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "senior_stylist",
+                                "label": "Senior Stylist",
+                                "value": "Senior Stylist"
+                            },
+                            {
+                                "id": "stylist",
+                                "label": "Stylist",
+                                "value": "Stylist"
+                            },
+                            {
+                                "id": "colour_specialist",
+                                "label": "Colour Specialist",
+                                "value": "Colour Specialist"
+                            },
+                            {
+                                "id": "nail_technician",
+                                "label": "Nail Technician",
+                                "value": "Nail Technician"
+                            },
+                            {
+                                "id": "beauty_therapist",
+                                "label": "Beauty Therapist",
+                                "value": "Beauty Therapist"
+                            },
+                            {
+                                "id": "apprentice",
+                                "label": "Apprentice",
+                                "value": "Apprentice"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "stylist",
+                                "label": "stylist",
+                                "value": "stylist"
+                            }
+                        ],
+                        "defaultValue": "Stylist"
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "number",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Stylists",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stylists",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Stylists by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stylists",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Stylists",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:stylists",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "appointments",
+            "title": "Appointments",
+            "icon": "Scissors",
+            "description": "Live FormLogic form synced directly to SQLite table \"appointments\" in Salon Studio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Appointments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:salon-beauty-studio-softn-app",
+                    "table": "appointments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "service_id": "service_id",
+                        "stylist_id": "stylist_id",
+                        "appt_date": "appt_date",
+                        "appt_time": "appt_time",
+                        "duration_minutes": "duration_minutes",
+                        "status": "status",
+                        "price_cents": "price_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Appointments",
+                    "description": "Connected live to SQLite table \"appointments\" in Salon Studio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "service_id",
+                    "type": "linked_record",
+                    "label": "Service",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:services",
+                        "displayFieldIds": [
+                            "name",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "stylist_id",
+                    "type": "linked_record",
+                    "label": "Stylist",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:stylists",
+                        "displayFieldIds": [
+                            "name",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "appt_date",
+                    "type": "date",
+                    "label": "Appt Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "appt_time",
+                    "type": "time",
+                    "label": "Appt Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "duration_minutes",
+                    "type": "number",
+                    "label": "Duration Minutes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "in_chair",
+                                "label": "In Chair",
+                                "value": "In Chair"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Booked"
+                    }
+                },
+                {
+                    "id": "price_cents",
+                    "type": "number",
+                    "label": "Price (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Appointments by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:appointments",
+                                "titleField": "appt_date",
+                                "limit": 10,
+                                "subtitleField": "appt_time"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "product-sales",
+            "title": "Product Sales",
+            "icon": "Scissors",
+            "description": "Live FormLogic form synced directly to SQLite table \"product_sales\" in Salon Studio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Product Sales",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:salon-beauty-studio-softn-app",
+                    "table": "product_sales",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "product_name": "product_name",
+                        "quantity": "quantity",
+                        "amount_cents": "amount_cents",
+                        "sale_date": "sale_date"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Product Sales",
+                    "description": "Connected live to SQLite table \"product_sales\" in Salon Studio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "product_name",
+                    "type": "short_text",
+                    "label": "Product Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "quantity",
+                    "type": "number",
+                    "label": "Quantity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "sale_date",
+                    "type": "date",
+                    "label": "Sale Date",
+                    "required": true,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Product Sales",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:product-sales",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Product Sales",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:product-sales",
+                                "titleField": "product_name",
+                                "limit": 10,
+                                "subtitleField": "quantity"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "salon-beauty-studio-softn-app",
+            "name": "Salon Studio",
+            "description": "Turnkey hair salon & beauty studio manager: daily appointment book by stylist with auto-filled service pricing & conflict checks, client colour formula cards, service menu, stylist roster, and retail sales with printable receipts.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "salon-beauty-studio-softn-forms",
+            "name": "Salon Studio Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Salon Studio's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:salon-beauty-studio-softn-app",
+                "linkedSoftnAppId": "@packApp:salon-beauty-studio-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "services",
+                    "displayName": "Services",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "stylists",
+                    "displayName": "Stylists",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "appointments",
+                    "displayName": "Appointments",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "product-sales",
+                    "displayName": "Product Sales",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "kpi_services",
+                    "name": "Total Services",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:services",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_services",
+                    "name": "Services by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:services",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_stylists",
+                    "name": "Total Stylists",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:stylists",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_appointments",
+                    "name": "Total Appointments",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:appointments",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Services",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:services",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Services by Category",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:services",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Stylists",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:stylists",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Appointments",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

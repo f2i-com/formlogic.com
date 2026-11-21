@@ -916,6 +916,131 @@ if (!$columnExists($pdo, $db, 'data_nodes', 'backup_client_id')) {
     $applied[] = 'data_nodes.backup_client_id already present';
 }
 
+// 27. Marketplace SoftN apps, source-hidden sandbox demos, commerce licenses, and modular member/app plugins.
+$itemTypeStmt = $pdo->prepare(
+    'SELECT COLUMN_TYPE FROM information_schema.columns
+     WHERE table_schema = ? AND table_name = ? AND column_name = ?'
+);
+$itemTypeStmt->execute([$db, 'pack_catalog', 'item_type']);
+$itemTypeCol = (string) $itemTypeStmt->fetchColumn();
+if ($itemTypeCol !== '' && (!str_contains($itemTypeCol, 'softn_app') || !str_contains($itemTypeCol, "'plugin'"))) {
+    $pdo->exec("ALTER TABLE `pack_catalog` MODIFY `item_type`
+        enum('application_package','softn_app','plugin','connector','theme','widget','quickjs_library','sdk_component','template')
+        COLLATE utf8mb4_unicode_ci DEFAULT 'application_package'");
+    $applied[] = 'pack_catalog.item_type widened with softn_app and plugin';
+} else {
+    $applied[] = 'pack_catalog.item_type already includes softn_app and plugin';
+}
+
+$mktCatalogCols = [
+    'source_visibility' => "ALTER TABLE `pack_catalog` ADD COLUMN `source_visibility` enum('open','private') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'open' AFTER `visibility`",
+    'price_cents' => "ALTER TABLE `pack_catalog` ADD COLUMN `price_cents` int unsigned NOT NULL DEFAULT '0' AFTER `source_visibility`",
+    'currency' => "ALTER TABLE `pack_catalog` ADD COLUMN `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'USD' AFTER `price_cents`",
+    'billing_model' => "ALTER TABLE `pack_catalog` ADD COLUMN `billing_model` enum('free','one_time','subscription') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'free' AFTER `currency`",
+    'demo_enabled' => "ALTER TABLE `pack_catalog` ADD COLUMN `demo_enabled` tinyint(1) NOT NULL DEFAULT '0' AFTER `billing_model`",
+    'demo_app_id' => "ALTER TABLE `pack_catalog` ADD COLUMN `demo_app_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `demo_enabled`",
+    'compatible_with' => "ALTER TABLE `pack_catalog` ADD COLUMN `compatible_with` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL AFTER `demo_app_id`",
+    'plugin_meta' => "ALTER TABLE `pack_catalog` ADD COLUMN `plugin_meta` json DEFAULT NULL AFTER `compatible_with`",
+];
+foreach ($mktCatalogCols as $col => $ddl) {
+    if (!$columnExists($pdo, $db, 'pack_catalog', $col)) {
+        $pdo->exec($ddl);
+        $applied[] = "pack_catalog.{$col} added";
+    } else {
+        $applied[] = "pack_catalog.{$col} already present";
+    }
+}
+
+$mktIdxCheck = $pdo->prepare(
+    'SELECT 1 FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name = ? LIMIT 1'
+);
+foreach ([
+    'idx_pricing' => 'ALTER TABLE `pack_catalog` ADD INDEX `idx_pricing` (`billing_model`, `price_cents`)',
+    'idx_compatible_with' => 'ALTER TABLE `pack_catalog` ADD INDEX `idx_compatible_with` (`compatible_with`)',
+] as $idxName => $idxDdl) {
+    $mktIdxCheck->execute([$db, 'pack_catalog', $idxName]);
+    if ($mktIdxCheck->fetchColumn() === false) {
+        $pdo->exec($idxDdl);
+        $applied[] = "pack_catalog.{$idxName} added";
+    } else {
+        $applied[] = "pack_catalog.{$idxName} already present";
+    }
+}
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `marketplace_licenses` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `catalog_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `buyer_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `seller_user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `version_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('active','revoked','refunded') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
+  `price_cents` int unsigned NOT NULL DEFAULT '0',
+  `currency` char(3) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'USD',
+  `payment_provider` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'free',
+  `payment_ref` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_mkt_license_buyer` (`catalog_id`,`buyer_user_id`),
+  UNIQUE KEY `uq_mkt_license_key` (`license_key`),
+  KEY `idx_mkt_license_buyer` (`buyer_user_id`),
+  KEY `idx_mkt_license_seller` (`seller_user_id`),
+  CONSTRAINT `fk_mkt_license_catalog` FOREIGN KEY (`catalog_id`) REFERENCES `pack_catalog` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_mkt_license_buyer` FOREIGN KEY (`buyer_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_mkt_license_seller` FOREIGN KEY (`seller_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'marketplace_licenses table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `member_plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `catalog_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `license_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `plugin_slug` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci,
+  `version` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '1.0.0',
+  `runtime_app_id` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `source_protected` tinyint(1) NOT NULL DEFAULT '0',
+  `compatible_with` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `manifest_json` json DEFAULT NULL,
+  `capabilities_json` json DEFAULT NULL,
+  `settings_json` json DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `installed_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_member_plugins_slug` (`user_id`,`plugin_slug`),
+  KEY `idx_member_plugins_user` (`user_id`),
+  KEY `idx_member_plugins_catalog` (`catalog_id`),
+  CONSTRAINT `fk_member_plugins_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_member_plugins_catalog` FOREIGN KEY (`catalog_id`) REFERENCES `pack_catalog` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_member_plugins_license` FOREIGN KEY (`license_id`) REFERENCES `marketplace_licenses` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'member_plugins table ensured';
+
+$pdo->exec("CREATE TABLE IF NOT EXISTS `app_plugins` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `member_plugin_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `share_database` tinyint(1) NOT NULL DEFAULT '0',
+  `mount_point` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'panel',
+  `config_json` json DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_app_plugins_pair` (`app_id`,`member_plugin_id`),
+  KEY `idx_app_plugins_app` (`app_id`),
+  KEY `idx_app_plugins_plugin` (`member_plugin_id`),
+  CONSTRAINT `fk_app_plugins_app` FOREIGN KEY (`app_id`) REFERENCES `apps` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_app_plugins_member_plugin` FOREIGN KEY (`member_plugin_id`) REFERENCES `member_plugins` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_app_plugins_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+$applied[] = 'app_plugins table ensured';
+
 echo "Migrations complete for database '{$db}':\n";
 foreach ($applied as $step) {
     echo "  - {$step}\n";

@@ -1,0 +1,1631 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "pawroute-pet-care-softn",
+        "name": "PawRoute (SoftN + Forms)",
+        "description": "Turnkey dog walking & pet care operations hub: daily walk run-sheet with 1-click owner updates, temperament & medical pet profiles, home access client cards, walkers roster, and incidents log. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "pets",
+            "dog-walking",
+            "pet-care",
+            "scheduling",
+            "clients",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "PawPrint",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in PawRoute.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:pawroute-pet-care-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "email": "email",
+                        "phone": "phone",
+                        "address": "address",
+                        "access_instructions": "access_instructions",
+                        "emergency_contact": "emergency_contact",
+                        "preferred_contact": "preferred_contact",
+                        "billing_status": "billing_status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in PawRoute.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "access_instructions",
+                    "type": "long_text",
+                    "label": "Access Instructions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact",
+                    "type": "short_text",
+                    "label": "Emergency Contact",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "preferred_contact",
+                    "type": "dropdown",
+                    "label": "Preferred Contact",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "text_message",
+                                "label": "Text message",
+                                "value": "Text message"
+                            },
+                            {
+                                "id": "phone_call",
+                                "label": "Phone call",
+                                "value": "Phone call"
+                            },
+                            {
+                                "id": "email",
+                                "label": "Email",
+                                "value": "Email"
+                            },
+                            {
+                                "id": "app",
+                                "label": "App",
+                                "value": "App"
+                            }
+                        ],
+                        "defaultValue": "Text message"
+                    }
+                },
+                {
+                    "id": "billing_status",
+                    "type": "dropdown",
+                    "label": "Billing Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "up_to_date",
+                                "label": "Up to date",
+                                "value": "Up to date"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            }
+                        ],
+                        "defaultValue": "Up to date"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Preferred Contact",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "preferred_contact",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "address"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "pets",
+            "title": "Pets",
+            "icon": "PawPrint",
+            "description": "Live FormLogic form synced directly to SQLite table \"pets\" in PawRoute.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Pets",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:pawroute-pet-care-softn-app",
+                    "table": "pets",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "owner_id": "owner_id",
+                        "name": "name",
+                        "species": "species",
+                        "breed": "breed",
+                        "size": "size",
+                        "temperament_json": "temperament_json",
+                        "medical_notes": "medical_notes",
+                        "feeding_instructions": "feeding_instructions",
+                        "vet_contact": "vet_contact",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Pets",
+                    "description": "Connected live to SQLite table \"pets\" in PawRoute.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "owner_id",
+                    "type": "number",
+                    "label": "Owner",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "species",
+                    "type": "dropdown",
+                    "label": "Species",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "dog",
+                                "label": "Dog",
+                                "value": "Dog"
+                            },
+                            {
+                                "id": "cat",
+                                "label": "Cat",
+                                "value": "Cat"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Dog"
+                    }
+                },
+                {
+                    "id": "breed",
+                    "type": "short_text",
+                    "label": "Breed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "size",
+                    "type": "dropdown",
+                    "label": "Size",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "small",
+                                "label": "Small",
+                                "value": "Small"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "large",
+                                "label": "Large",
+                                "value": "Large"
+                            },
+                            {
+                                "id": "giant",
+                                "label": "Giant",
+                                "value": "Giant"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "temperament_json",
+                    "type": "short_text",
+                    "label": "Temperament Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "medical_notes",
+                    "type": "long_text",
+                    "label": "Medical Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "feeding_instructions",
+                    "type": "long_text",
+                    "label": "Feeding Instructions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "vet_contact",
+                    "type": "short_text",
+                    "label": "Vet Contact",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Pets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:pets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Pets by Species",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:pets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "species",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Pets",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:pets",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "species"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "walkers",
+            "title": "Walkers",
+            "icon": "PawPrint",
+            "description": "Live FormLogic form synced directly to SQLite table \"walkers\" in PawRoute.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Walkers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:pawroute-pet-care-softn-app",
+                    "table": "walkers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "role": "role",
+                        "service_areas_json": "service_areas_json",
+                        "availability_json": "availability_json",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Walkers",
+                    "description": "Connected live to SQLite table \"walkers\" in PawRoute.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "walker",
+                                "label": "Walker",
+                                "value": "Walker"
+                            },
+                            {
+                                "id": "sitter",
+                                "label": "Sitter",
+                                "value": "Sitter"
+                            },
+                            {
+                                "id": "admin",
+                                "label": "Admin",
+                                "value": "Admin"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "dispatcher",
+                                "label": "dispatcher",
+                                "value": "dispatcher"
+                            },
+                            {
+                                "id": "walker",
+                                "label": "walker",
+                                "value": "walker"
+                            }
+                        ],
+                        "defaultValue": "Walker"
+                    }
+                },
+                {
+                    "id": "service_areas_json",
+                    "type": "short_text",
+                    "label": "Service Areas Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "availability_json",
+                    "type": "short_text",
+                    "label": "Availability Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Walkers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:walkers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Walkers by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:walkers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Walkers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:walkers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "walks",
+            "title": "Walks",
+            "icon": "PawPrint",
+            "description": "Live FormLogic form synced directly to SQLite table \"walks\" in PawRoute.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Walks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:pawroute-pet-care-softn-app",
+                    "table": "walks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "pet_id": "pet_id",
+                        "client_id": "client_id",
+                        "walker_id": "walker_id",
+                        "service_type": "service_type",
+                        "walk_date": "walk_date",
+                        "walk_time": "walk_time",
+                        "duration": "duration",
+                        "status": "status",
+                        "weather": "weather",
+                        "walk_notes": "walk_notes",
+                        "charge_cents": "charge_cents"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Walks",
+                    "description": "Connected live to SQLite table \"walks\" in PawRoute.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "pet_id",
+                    "type": "linked_record",
+                    "label": "Pet",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:pets",
+                        "displayFieldIds": [
+                            "name"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "walker_id",
+                    "type": "linked_record",
+                    "label": "Walker",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:walkers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "service_type",
+                    "type": "dropdown",
+                    "label": "Service Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "solo_walk",
+                                "label": "Solo Walk",
+                                "value": "Solo Walk"
+                            },
+                            {
+                                "id": "group_walk",
+                                "label": "Group Walk",
+                                "value": "Group Walk"
+                            },
+                            {
+                                "id": "drop_in_visit",
+                                "label": "Drop-in Visit",
+                                "value": "Drop-in Visit"
+                            },
+                            {
+                                "id": "pet_sitting",
+                                "label": "Pet Sitting",
+                                "value": "Pet Sitting"
+                            },
+                            {
+                                "id": "pet_taxi",
+                                "label": "Pet Taxi",
+                                "value": "Pet Taxi"
+                            }
+                        ],
+                        "defaultValue": "Solo Walk"
+                    }
+                },
+                {
+                    "id": "walk_date",
+                    "type": "date",
+                    "label": "Walk Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "walk_time",
+                    "type": "time",
+                    "label": "Walk Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "duration",
+                    "type": "dropdown",
+                    "label": "Duration",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "15_minutes",
+                                "label": "15 minutes",
+                                "value": "15 minutes"
+                            },
+                            {
+                                "id": "30_minutes",
+                                "label": "30 minutes",
+                                "value": "30 minutes"
+                            },
+                            {
+                                "id": "45_minutes",
+                                "label": "45 minutes",
+                                "value": "45 minutes"
+                            },
+                            {
+                                "id": "60_minutes",
+                                "label": "60 minutes",
+                                "value": "60 minutes"
+                            }
+                        ],
+                        "defaultValue": "45 minutes"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_access",
+                                "label": "No Access",
+                                "value": "No Access"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "weather",
+                    "type": "dropdown",
+                    "label": "Weather",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sunny",
+                                "label": "Sunny",
+                                "value": "Sunny"
+                            },
+                            {
+                                "id": "overcast",
+                                "label": "Overcast",
+                                "value": "Overcast"
+                            },
+                            {
+                                "id": "rain",
+                                "label": "Rain",
+                                "value": "Rain"
+                            },
+                            {
+                                "id": "windy",
+                                "label": "Windy",
+                                "value": "Windy"
+                            },
+                            {
+                                "id": "hot",
+                                "label": "Hot",
+                                "value": "Hot"
+                            }
+                        ],
+                        "defaultValue": "Sunny"
+                    }
+                },
+                {
+                    "id": "walk_notes",
+                    "type": "long_text",
+                    "label": "Walk Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "charge_cents",
+                    "type": "number",
+                    "label": "Charge (Cents)",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Walks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:walks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Walks by Service Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:walks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "service_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Walks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:walks",
+                                "titleField": "service_type",
+                                "limit": 10,
+                                "subtitleField": "walk_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "incidents",
+            "title": "Incidents",
+            "icon": "PawPrint",
+            "description": "Live FormLogic form synced directly to SQLite table \"incidents\" in PawRoute.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Incidents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:pawroute-pet-care-softn-app",
+                    "table": "incidents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "pet_id": "pet_id",
+                        "walk_id": "walk_id",
+                        "reported_by_id": "reported_by_id",
+                        "incident_type": "incident_type",
+                        "severity": "severity",
+                        "description": "description",
+                        "action_taken": "action_taken",
+                        "follow_up": "follow_up"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Incidents",
+                    "description": "Connected live to SQLite table \"incidents\" in PawRoute.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "pet_id",
+                    "type": "linked_record",
+                    "label": "Pet",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:pets",
+                        "displayFieldIds": [
+                            "name"
+                        ]
+                    }
+                },
+                {
+                    "id": "walk_id",
+                    "type": "linked_record",
+                    "label": "Walk",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:walks",
+                        "displayFieldIds": [
+                            "service_type",
+                            "walk_date"
+                        ]
+                    }
+                },
+                {
+                    "id": "reported_by_id",
+                    "type": "number",
+                    "label": "Reported By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_type",
+                    "type": "dropdown",
+                    "label": "Incident Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "injury",
+                                "label": "Injury",
+                                "value": "Injury"
+                            },
+                            {
+                                "id": "escape_risk",
+                                "label": "Escape risk",
+                                "value": "Escape risk"
+                            },
+                            {
+                                "id": "aggression",
+                                "label": "Aggression",
+                                "value": "Aggression"
+                            },
+                            {
+                                "id": "illness",
+                                "label": "Illness",
+                                "value": "Illness"
+                            },
+                            {
+                                "id": "no_access",
+                                "label": "No access",
+                                "value": "No access"
+                            },
+                            {
+                                "id": "owner_note",
+                                "label": "Owner note",
+                                "value": "Owner note"
+                            }
+                        ],
+                        "defaultValue": "Owner note"
+                    }
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            }
+                        ],
+                        "defaultValue": "Low"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "action_taken",
+                    "type": "short_text",
+                    "label": "Action Taken",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "follow_up",
+                    "type": "dropdown",
+                    "label": "Follow Up",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:incidents",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "incident_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "pawroute-pet-care-softn-app",
+            "name": "PawRoute",
+            "description": "Turnkey dog walking & pet care operations hub: daily walk run-sheet with 1-click owner updates, temperament & medical pet profiles, home access client cards, walkers roster, and incidents log.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "pawroute-pet-care-softn-forms",
+            "name": "PawRoute Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to PawRoute's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:pawroute-pet-care-softn-app",
+                "linkedSoftnAppId": "@packApp:pawroute-pet-care-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "pets",
+                    "displayName": "Pets",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "walkers",
+                    "displayName": "Walkers",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "walks",
+                    "displayName": "Walks",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "incidents",
+                    "displayName": "Incidents",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_clients",
+                    "name": "Clients by Preferred Contact",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "preferred_contact",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_pets",
+                    "name": "Total Pets",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:pets",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_pets",
+                    "name": "Pets by Species",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:pets",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "species",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_walkers",
+                    "name": "Total Walkers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:walkers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_walks",
+                    "name": "Total Walks",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:walks",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Preferred Contact",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "preferred_contact",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Pets",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:pets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Pets by Species",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:pets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "species",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Walkers",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:walkers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Walks",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:walks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

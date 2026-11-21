@@ -59,7 +59,7 @@ export function TimezoneSelect({
     >
       <option value="">
         {emptyLabel}
-        {browser ? ` — you appear to be in ${browser}` : ''}
+        {browser ? ` (${browser})` : ''}
       </option>
       {options.map((tz) => {
         const off = offset(tz);

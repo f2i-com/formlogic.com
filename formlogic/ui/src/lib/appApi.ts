@@ -29,8 +29,10 @@ export const SITE_ROUTE_PREFIX = '/api/site/';
 export interface ApiDescription {
   routes: ApiRoute[];
   migrations: string[];
-  /** The backend keeps a database of its own (`server.database`). */
+  /** The backend keeps a database of its own (`server.database` or container SQLite). */
   database: boolean;
+  /** Sandboxed container backend runtime (e.g. 'php', 'rust', 'javascript'), when declared via `manifest.backend`. */
+  containerRuntime?: string;
 }
 
 /**
@@ -60,14 +62,40 @@ export interface NativeCallList {
 const METHODS = ['GET', 'POST', 'PUT', 'DELETE'];
 const record = (value: unknown): Record<string, unknown> | null => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
+const CONTAINER_RUNTIMES = new Set(['php', 'javascript', 'typescript', 'rust', 'python']);
+
 /**
- * The backend a manifest.json declares, or null where it declares none (no `server` block, or the
- * text is not a manifest). A route's transaction and authorization are read as softn-runner reads
- * them, and a route it would not serve says why.
+ * The backend a manifest.json declares, or null where it declares none (no `server` or container
+ * `backend` block, or the text is not a manifest). A route's transaction and authorization are read
+ * as softn-runner reads them, and a route it would not serve says why.
  */
 export function apiOf(manifestText: string | undefined | null): ApiDescription | null {
   let manifest: Record<string, unknown> | null;
   try { manifest = record(JSON.parse(manifestText ?? '')); } catch { return null; }
+  const containerBackend = record(manifest?.backend);
+  if (containerBackend) {
+    const rt = String(containerBackend.runtime ?? containerBackend.engine ?? '').toLowerCase().trim();
+    if (CONTAINER_RUNTIMES.has(rt)) {
+      const entry = typeof containerBackend.entry === 'string' ? containerBackend.entry : (typeof containerBackend.entrypoint === 'string' ? containerBackend.entrypoint : null);
+      const rawRoutes = Array.isArray(containerBackend.routes) && containerBackend.routes.length > 0
+        ? containerBackend.routes.filter((r): r is string => typeof r === 'string' && r.startsWith('/'))
+        : ['/api'];
+      const routes: ApiRoute[] = rawRoutes.map(path => ({
+        method: 'GET',
+        path,
+        handler: entry,
+        transaction: 'read',
+        authorization: 'application',
+        unserved: null,
+        siteOnly: path.toLowerCase().startsWith(SITE_ROUTE_PREFIX),
+      }));
+      const dbs = Array.isArray(manifest?.databases) ? manifest.databases : [];
+      const migrations = dbs
+        .map(d => record(d)?.seedSql)
+        .filter((s): s is string => typeof s === 'string' && s.trim() !== '');
+      return { routes, migrations, database: true, containerRuntime: rt };
+    }
+  }
   const server = record(manifest?.server);
   if (!server) return null;
   const routes: ApiRoute[] = [];

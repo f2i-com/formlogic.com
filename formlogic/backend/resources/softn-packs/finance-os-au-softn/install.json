@@ -1,0 +1,2906 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "finance-os-au-softn",
+        "name": "Finance OS (AU) (SoftN + Forms)",
+        "description": "Turnkey Australian AFSL advisory & compliance workbench: client onboarding, Best Interest Duty risk profile scorer, Fee Disclosure Statements (FDS), superannuation rollovers, 100%-validated BDBNs, off-market transfers, annual reviews and document vault. Includes the full-stack SoftN application plus 8 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "finance",
+            "compliance",
+            "onboarding",
+            "australia",
+            "afsl",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "au-clients",
+            "title": "Clients",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_clients\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "first_name": "first_name",
+                        "last_name": "last_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "dob": "dob",
+                        "age": "age",
+                        "tfn": "tfn",
+                        "address": "address",
+                        "residency_status": "residency_status",
+                        "employer": "employer",
+                        "occupation": "occupation",
+                        "annual_income_cents": "annual_income_cents",
+                        "net_assets_cents": "net_assets_cents",
+                        "liquid_assets_cents": "liquid_assets_cents",
+                        "investment_objectives": "investment_objectives",
+                        "time_horizon": "time_horizon",
+                        "risk_tolerance": "risk_tolerance",
+                        "risk_score": "risk_score",
+                        "wholesale_status": "wholesale_status",
+                        "onboarding_stage": "onboarding_stage",
+                        "fsg_acknowledged": "fsg_acknowledged",
+                        "fsg_ack_date": "fsg_ack_date",
+                        "fsg_signer": "fsg_signer",
+                        "tfn_exemption": "tfn_exemption",
+                        "residency_for_tax": "residency_for_tax",
+                        "tax_free_threshold": "tax_free_threshold",
+                        "has_hecs_help": "has_hecs_help",
+                        "tfn_declared_date": "tfn_declared_date",
+                        "adviser_name": "adviser_name",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"au_clients\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "first_name",
+                    "type": "short_text",
+                    "label": "First Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "last_name",
+                    "type": "short_text",
+                    "label": "Last Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "dob",
+                    "type": "date",
+                    "label": "Dob",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "age",
+                    "type": "number",
+                    "label": "Age",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tfn",
+                    "type": "short_text",
+                    "label": "TFN",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "residency_status",
+                    "type": "dropdown",
+                    "label": "Residency Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "au_citizen",
+                                "label": "au_citizen",
+                                "value": "au_citizen"
+                            },
+                            {
+                                "id": "permanent_resident",
+                                "label": "permanent_resident",
+                                "value": "permanent_resident"
+                            },
+                            {
+                                "id": "temporary_visa",
+                                "label": "temporary_visa",
+                                "value": "temporary_visa"
+                            },
+                            {
+                                "id": "non_resident",
+                                "label": "non_resident",
+                                "value": "non_resident"
+                            }
+                        ],
+                        "defaultValue": "au_citizen"
+                    }
+                },
+                {
+                    "id": "employer",
+                    "type": "short_text",
+                    "label": "Employer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "occupation",
+                    "type": "short_text",
+                    "label": "Occupation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "annual_income_cents",
+                    "type": "number",
+                    "label": "Annual Income (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "net_assets_cents",
+                    "type": "number",
+                    "label": "Net Assets (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "liquid_assets_cents",
+                    "type": "number",
+                    "label": "Liquid Assets (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investment_objectives",
+                    "type": "dropdown",
+                    "label": "Investment Objectives",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "growth",
+                                "label": "growth",
+                                "value": "growth"
+                            },
+                            {
+                                "id": "income",
+                                "label": "income",
+                                "value": "income"
+                            },
+                            {
+                                "id": "capital_preservation",
+                                "label": "capital_preservation",
+                                "value": "capital_preservation"
+                            },
+                            {
+                                "id": "balanced",
+                                "label": "balanced",
+                                "value": "balanced"
+                            }
+                        ],
+                        "defaultValue": "balanced"
+                    }
+                },
+                {
+                    "id": "time_horizon",
+                    "type": "number",
+                    "label": "Time Horizon",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_tolerance",
+                    "type": "number",
+                    "label": "Risk Tolerance",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "risk_score",
+                    "type": "number",
+                    "label": "Risk Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "wholesale_status",
+                    "type": "short_text",
+                    "label": "Wholesale Status",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "onboarding_stage",
+                    "type": "dropdown",
+                    "label": "Onboarding Stage",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "prospect",
+                                "label": "Prospect",
+                                "value": "Prospect"
+                            },
+                            {
+                                "id": "fact_find",
+                                "label": "Fact Find",
+                                "value": "Fact Find"
+                            },
+                            {
+                                "id": "soa_prep",
+                                "label": "SOA Prep",
+                                "value": "SOA Prep"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "review_due",
+                                "label": "Review Due",
+                                "value": "Review Due"
+                            }
+                        ],
+                        "defaultValue": "Prospect"
+                    }
+                },
+                {
+                    "id": "fsg_acknowledged",
+                    "type": "number",
+                    "label": "Fsg Acknowledged",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fsg_ack_date",
+                    "type": "date",
+                    "label": "Fsg Ack Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fsg_signer",
+                    "type": "short_text",
+                    "label": "Fsg Signer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tfn_exemption",
+                    "type": "dropdown",
+                    "label": "TFN Exemption",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "none",
+                                "label": "none",
+                                "value": "none"
+                            },
+                            {
+                                "id": "under_18",
+                                "label": "under_18",
+                                "value": "under_18"
+                            },
+                            {
+                                "id": "pensioner",
+                                "label": "pensioner",
+                                "value": "pensioner"
+                            },
+                            {
+                                "id": "not_quoted",
+                                "label": "not_quoted",
+                                "value": "not_quoted"
+                            }
+                        ],
+                        "defaultValue": "none"
+                    }
+                },
+                {
+                    "id": "residency_for_tax",
+                    "type": "dropdown",
+                    "label": "Residency For Tax",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "au_resident",
+                                "label": "au_resident",
+                                "value": "au_resident"
+                            },
+                            {
+                                "id": "foreign_resident",
+                                "label": "foreign_resident",
+                                "value": "foreign_resident"
+                            },
+                            {
+                                "id": "working_holiday",
+                                "label": "working_holiday",
+                                "value": "working_holiday"
+                            }
+                        ],
+                        "defaultValue": "au_resident"
+                    }
+                },
+                {
+                    "id": "tax_free_threshold",
+                    "type": "dropdown",
+                    "label": "Tax Free Threshold",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "yes",
+                                "value": "yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "no",
+                                "value": "no"
+                            }
+                        ],
+                        "defaultValue": "yes"
+                    }
+                },
+                {
+                    "id": "has_hecs_help",
+                    "type": "dropdown",
+                    "label": "Has Hecs Help",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "yes",
+                                "value": "yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "no",
+                                "value": "no"
+                            }
+                        ],
+                        "defaultValue": "no"
+                    }
+                },
+                {
+                    "id": "tfn_declared_date",
+                    "type": "date",
+                    "label": "TFN Declared Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "adviser_name",
+                    "type": "short_text",
+                    "label": "Adviser Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Residency Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "residency_status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-clients",
+                                "titleField": "address",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-risk-profiles",
+            "title": "Risk Profiles",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_risk_profiles\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Risk Profiles",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_risk_profiles",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "client_age": "client_age",
+                        "client_income_cents": "client_income_cents",
+                        "client_net_assets_cents": "client_net_assets_cents",
+                        "time_horizon": "time_horizon",
+                        "market_reaction": "market_reaction",
+                        "loss_capacity": "loss_capacity",
+                        "investment_experience": "investment_experience",
+                        "risk_score": "risk_score",
+                        "profile_band": "profile_band",
+                        "recommended_profile": "recommended_profile",
+                        "best_interest_notes": "best_interest_notes",
+                        "assessed_date": "assessed_date",
+                        "assessed_by": "assessed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Risk Profiles",
+                    "description": "Connected live to SQLite table \"au_risk_profiles\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_age",
+                    "type": "number",
+                    "label": "Client Age",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_income_cents",
+                    "type": "number",
+                    "label": "Client Income (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_net_assets_cents",
+                    "type": "number",
+                    "label": "Client Net Assets (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "time_horizon",
+                    "type": "number",
+                    "label": "Time Horizon",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "market_reaction",
+                    "type": "dropdown",
+                    "label": "Market Reaction",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sell",
+                                "label": "sell",
+                                "value": "sell"
+                            },
+                            {
+                                "id": "hold",
+                                "label": "hold",
+                                "value": "hold"
+                            },
+                            {
+                                "id": "buy",
+                                "label": "buy",
+                                "value": "buy"
+                            }
+                        ],
+                        "defaultValue": "hold"
+                    }
+                },
+                {
+                    "id": "loss_capacity",
+                    "type": "number",
+                    "label": "Loss Capacity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "investment_experience",
+                    "type": "dropdown",
+                    "label": "Investment Experience",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "none",
+                                "label": "none",
+                                "value": "none"
+                            },
+                            {
+                                "id": "limited",
+                                "label": "limited",
+                                "value": "limited"
+                            },
+                            {
+                                "id": "moderate",
+                                "label": "moderate",
+                                "value": "moderate"
+                            },
+                            {
+                                "id": "extensive",
+                                "label": "extensive",
+                                "value": "extensive"
+                            }
+                        ],
+                        "defaultValue": "moderate"
+                    }
+                },
+                {
+                    "id": "risk_score",
+                    "type": "number",
+                    "label": "Risk Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "profile_band",
+                    "type": "short_text",
+                    "label": "Profile Band",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "recommended_profile",
+                    "type": "dropdown",
+                    "label": "Recommended Profile",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "conservative",
+                                "label": "Conservative",
+                                "value": "Conservative"
+                            },
+                            {
+                                "id": "moderately_conservative",
+                                "label": "Moderately Conservative",
+                                "value": "Moderately Conservative"
+                            },
+                            {
+                                "id": "balanced",
+                                "label": "Balanced",
+                                "value": "Balanced"
+                            },
+                            {
+                                "id": "growth",
+                                "label": "Growth",
+                                "value": "Growth"
+                            },
+                            {
+                                "id": "high_growth",
+                                "label": "High Growth",
+                                "value": "High Growth"
+                            }
+                        ],
+                        "defaultValue": "Balanced"
+                    }
+                },
+                {
+                    "id": "best_interest_notes",
+                    "type": "long_text",
+                    "label": "Best Interest Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assessed_date",
+                    "type": "date",
+                    "label": "Assessed Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assessed_by",
+                    "type": "short_text",
+                    "label": "Assessed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Risk Profiles",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-risk-profiles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Risk Profiles by Market Reaction",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-risk-profiles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "market_reaction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Risk Profiles",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-risk-profiles",
+                                "titleField": "client_age",
+                                "limit": 10,
+                                "subtitleField": "client_income_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-fee-disclosures",
+            "title": "Fee Disclosures",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_fee_disclosures\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Fee Disclosures",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_fee_disclosures",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "portfolio_value_cents": "portfolio_value_cents",
+                        "fee_type": "fee_type",
+                        "percentage_rate": "percentage_rate",
+                        "fixed_fee_cents": "fixed_fee_cents",
+                        "calculated_annual_fee_cents": "calculated_annual_fee_cents",
+                        "billing_frequency": "billing_frequency",
+                        "ongoing_fee_consent": "ongoing_fee_consent",
+                        "consent_signed_date": "consent_signed_date",
+                        "effective_date": "effective_date",
+                        "renewal_due_date": "renewal_due_date",
+                        "client_signer": "client_signer",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Fee Disclosures",
+                    "description": "Connected live to SQLite table \"au_fee_disclosures\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "portfolio_value_cents",
+                    "type": "number",
+                    "label": "Portfolio Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fee_type",
+                    "type": "dropdown",
+                    "label": "Fee Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "percentage",
+                                "label": "percentage",
+                                "value": "percentage"
+                            },
+                            {
+                                "id": "fixed",
+                                "label": "fixed",
+                                "value": "fixed"
+                            },
+                            {
+                                "id": "combination",
+                                "label": "combination",
+                                "value": "combination"
+                            }
+                        ],
+                        "defaultValue": "percentage"
+                    }
+                },
+                {
+                    "id": "percentage_rate",
+                    "type": "number",
+                    "label": "Percentage Rate",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "fixed_fee_cents",
+                    "type": "number",
+                    "label": "Fixed Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "calculated_annual_fee_cents",
+                    "type": "number",
+                    "label": "Calculated Annual Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "billing_frequency",
+                    "type": "dropdown",
+                    "label": "Billing Frequency",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "monthly",
+                                "label": "monthly",
+                                "value": "monthly"
+                            },
+                            {
+                                "id": "quarterly",
+                                "label": "quarterly",
+                                "value": "quarterly"
+                            },
+                            {
+                                "id": "annually",
+                                "label": "annually",
+                                "value": "annually"
+                            }
+                        ],
+                        "defaultValue": "quarterly"
+                    }
+                },
+                {
+                    "id": "ongoing_fee_consent",
+                    "type": "dropdown",
+                    "label": "Ongoing Fee Consent",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "yes",
+                                "value": "yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "no",
+                                "value": "no"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "pending"
+                    }
+                },
+                {
+                    "id": "consent_signed_date",
+                    "type": "date",
+                    "label": "Consent Signed Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "effective_date",
+                    "type": "date",
+                    "label": "Effective Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "renewal_due_date",
+                    "type": "date",
+                    "label": "Renewal Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_signer",
+                    "type": "short_text",
+                    "label": "Client Signer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Fee Disclosures",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-fee-disclosures",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Fee Disclosures by Fee Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-fee-disclosures",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "fee_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Fee Disclosures",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-fee-disclosures",
+                                "titleField": "portfolio_value_cents",
+                                "limit": 10,
+                                "subtitleField": "fee_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-off-market-transfers",
+            "title": "Off Market Transfers",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_off_market_transfers\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Off Market Transfers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_off_market_transfers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "delivering_platform": "delivering_platform",
+                        "hin_or_srn": "hin_or_srn",
+                        "account_reference": "account_reference",
+                        "transfer_type": "transfer_type",
+                        "assets_to_transfer": "assets_to_transfer",
+                        "estimated_value_cents": "estimated_value_cents",
+                        "transfer_fee_cents": "transfer_fee_cents",
+                        "chess_sponsorship": "chess_sponsorship",
+                        "status": "status",
+                        "submitted_date": "submitted_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Off Market Transfers",
+                    "description": "Connected live to SQLite table \"au_off_market_transfers\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "delivering_platform",
+                    "type": "dropdown",
+                    "label": "Delivering Platform",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "bt_panorama",
+                                "label": "BT Panorama",
+                                "value": "BT Panorama"
+                            },
+                            {
+                                "id": "macquarie_wrap",
+                                "label": "Macquarie Wrap",
+                                "value": "Macquarie Wrap"
+                            },
+                            {
+                                "id": "netwealth",
+                                "label": "Netwealth",
+                                "value": "Netwealth"
+                            },
+                            {
+                                "id": "cfs_firstchoice",
+                                "label": "CFS FirstChoice",
+                                "value": "CFS FirstChoice"
+                            },
+                            {
+                                "id": "hub24",
+                                "label": "HUB24",
+                                "value": "HUB24"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "BT Panorama"
+                    }
+                },
+                {
+                    "id": "hin_or_srn",
+                    "type": "short_text",
+                    "label": "Hin Or Srn",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "account_reference",
+                    "type": "short_text",
+                    "label": "Account Reference",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "transfer_type",
+                    "type": "dropdown",
+                    "label": "Transfer Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "full",
+                                "label": "Full",
+                                "value": "Full"
+                            },
+                            {
+                                "id": "partial",
+                                "label": "Partial",
+                                "value": "Partial"
+                            }
+                        ],
+                        "defaultValue": "Full"
+                    }
+                },
+                {
+                    "id": "assets_to_transfer",
+                    "type": "short_text",
+                    "label": "Assets To Transfer",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_value_cents",
+                    "type": "number",
+                    "label": "Estimated Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "transfer_fee_cents",
+                    "type": "number",
+                    "label": "Transfer Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "chess_sponsorship",
+                    "type": "dropdown",
+                    "label": "Chess Sponsorship",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "broker_sponsored",
+                                "label": "Broker-Sponsored",
+                                "value": "Broker-Sponsored"
+                            },
+                            {
+                                "id": "issuer_sponsored",
+                                "label": "Issuer-Sponsored",
+                                "value": "Issuer-Sponsored"
+                            }
+                        ],
+                        "defaultValue": "Broker-Sponsored"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "awaiting_fund",
+                                "label": "Awaiting Fund",
+                                "value": "Awaiting Fund"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "lapsing_soon",
+                                "label": "Lapsing Soon",
+                                "value": "Lapsing Soon"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Submitted"
+                    }
+                },
+                {
+                    "id": "submitted_date",
+                    "type": "date",
+                    "label": "Submitted Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Off Market Transfers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-off-market-transfers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Off Market Transfers by Delivering Platform",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-off-market-transfers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "delivering_platform",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Off Market Transfers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-off-market-transfers",
+                                "titleField": "delivering_platform",
+                                "limit": 10,
+                                "subtitleField": "hin_or_srn"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-super-rollovers",
+            "title": "Super Rollovers",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_super_rollovers\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Super Rollovers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_super_rollovers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "from_fund_name": "from_fund_name",
+                        "from_fund_abn": "from_fund_abn",
+                        "from_member_number": "from_member_number",
+                        "to_fund_name": "to_fund_name",
+                        "to_fund_abn": "to_fund_abn",
+                        "to_member_number": "to_member_number",
+                        "rollover_type": "rollover_type",
+                        "partial_amount_cents": "partial_amount_cents",
+                        "estimated_balance_cents": "estimated_balance_cents",
+                        "preservation_status": "preservation_status",
+                        "insurance_checked": "insurance_checked",
+                        "status": "status",
+                        "requested_date": "requested_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Super Rollovers",
+                    "description": "Connected live to SQLite table \"au_super_rollovers\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "from_fund_name",
+                    "type": "short_text",
+                    "label": "From Fund Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "from_fund_abn",
+                    "type": "short_text",
+                    "label": "From Fund ABN",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "from_member_number",
+                    "type": "short_text",
+                    "label": "From Member Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "to_fund_name",
+                    "type": "short_text",
+                    "label": "To Fund Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "to_fund_abn",
+                    "type": "short_text",
+                    "label": "To Fund ABN",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "to_member_number",
+                    "type": "short_text",
+                    "label": "To Member Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "rollover_type",
+                    "type": "dropdown",
+                    "label": "Rollover Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "full_rollover",
+                                "label": "Full Rollover",
+                                "value": "Full Rollover"
+                            },
+                            {
+                                "id": "partial_rollover",
+                                "label": "Partial Rollover",
+                                "value": "Partial Rollover"
+                            }
+                        ],
+                        "defaultValue": "Full Rollover"
+                    }
+                },
+                {
+                    "id": "partial_amount_cents",
+                    "type": "number",
+                    "label": "Partial Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_balance_cents",
+                    "type": "number",
+                    "label": "Estimated Balance (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "preservation_status",
+                    "type": "dropdown",
+                    "label": "Preservation Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "preserved",
+                                "label": "Preserved",
+                                "value": "Preserved"
+                            },
+                            {
+                                "id": "restricted_non_preserved",
+                                "label": "Restricted Non-preserved",
+                                "value": "Restricted Non-preserved"
+                            },
+                            {
+                                "id": "unrestricted_non_preserved",
+                                "label": "Unrestricted Non-preserved",
+                                "value": "Unrestricted Non-preserved"
+                            }
+                        ],
+                        "defaultValue": "Preserved"
+                    }
+                },
+                {
+                    "id": "insurance_checked",
+                    "type": "number",
+                    "label": "Insurance Checked",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "awaiting_fund",
+                                "label": "Awaiting Fund",
+                                "value": "Awaiting Fund"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "lapsing_soon",
+                                "label": "Lapsing Soon",
+                                "value": "Lapsing Soon"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Initiated"
+                    }
+                },
+                {
+                    "id": "requested_date",
+                    "type": "date",
+                    "label": "Requested Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Super Rollovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-super-rollovers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Super Rollovers by Rollover Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-super-rollovers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "rollover_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Super Rollovers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-super-rollovers",
+                                "titleField": "from_fund_name",
+                                "limit": 10,
+                                "subtitleField": "from_fund_abn"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-bdbns",
+            "title": "BDBNs",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_bdbns\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save BDBNs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_bdbns",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "super_fund_name": "super_fund_name",
+                        "member_number": "member_number",
+                        "primary_json": "primary_json",
+                        "contingent_json": "contingent_json",
+                        "witness_1_name": "witness_1_name",
+                        "witness_1_over_18": "witness_1_over_18",
+                        "witness_2_name": "witness_2_name",
+                        "witness_2_over_18": "witness_2_over_18",
+                        "nomination_date": "nomination_date",
+                        "expiry_date": "expiry_date",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "BDBNs",
+                    "description": "Connected live to SQLite table \"au_bdbns\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "super_fund_name",
+                    "type": "short_text",
+                    "label": "Super Fund Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "member_number",
+                    "type": "short_text",
+                    "label": "Member Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "primary_json",
+                    "type": "short_text",
+                    "label": "Primary Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "contingent_json",
+                    "type": "short_text",
+                    "label": "Contingent Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_1_name",
+                    "type": "short_text",
+                    "label": "Witness 1 Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_1_over_18",
+                    "type": "number",
+                    "label": "Witness 1 Over 18",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_2_name",
+                    "type": "short_text",
+                    "label": "Witness 2 Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "witness_2_over_18",
+                    "type": "number",
+                    "label": "Witness 2 Over 18",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "nomination_date",
+                    "type": "date",
+                    "label": "Nomination Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "expiry_date",
+                    "type": "date",
+                    "label": "Expiry Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "awaiting_fund",
+                                "label": "Awaiting Fund",
+                                "value": "Awaiting Fund"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "lapsing_soon",
+                                "label": "Lapsing Soon",
+                                "value": "Lapsing Soon"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total BDBNs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-bdbns",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "BDBNs by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-bdbns",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent BDBNs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-bdbns",
+                                "titleField": "super_fund_name",
+                                "limit": 10,
+                                "subtitleField": "member_number"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-annual-reviews",
+            "title": "Annual Reviews",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_annual_reviews\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Annual Reviews",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_annual_reviews",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "review_date": "review_date",
+                        "current_portfolio_value_cents": "current_portfolio_value_cents",
+                        "current_annual_fee_cents": "current_annual_fee_cents",
+                        "goal_progress": "goal_progress",
+                        "life_changes_json": "life_changes_json",
+                        "updated_risk_tolerance": "updated_risk_tolerance",
+                        "soa_required": "soa_required",
+                        "advisor_notes": "advisor_notes",
+                        "next_review_date": "next_review_date",
+                        "status": "status",
+                        "adviser_name": "adviser_name"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Annual Reviews",
+                    "description": "Connected live to SQLite table \"au_annual_reviews\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "review_date",
+                    "type": "date",
+                    "label": "Review Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "current_portfolio_value_cents",
+                    "type": "number",
+                    "label": "Current Portfolio Value (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_annual_fee_cents",
+                    "type": "number",
+                    "label": "Current Annual Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "goal_progress",
+                    "type": "number",
+                    "label": "Goal Progress",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "life_changes_json",
+                    "type": "short_text",
+                    "label": "Life Changes Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "updated_risk_tolerance",
+                    "type": "number",
+                    "label": "Updated Risk Tolerance",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "soa_required",
+                    "type": "number",
+                    "label": "Soa Required",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "advisor_notes",
+                    "type": "long_text",
+                    "label": "Advisor Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "next_review_date",
+                    "type": "date",
+                    "label": "Next Review Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "submitted",
+                                "label": "Submitted",
+                                "value": "Submitted"
+                            },
+                            {
+                                "id": "in_transit",
+                                "label": "In Transit",
+                                "value": "In Transit"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "initiated",
+                                "label": "Initiated",
+                                "value": "Initiated"
+                            },
+                            {
+                                "id": "awaiting_fund",
+                                "label": "Awaiting Fund",
+                                "value": "Awaiting Fund"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "lapsing_soon",
+                                "label": "Lapsing Soon",
+                                "value": "Lapsing Soon"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "revoked",
+                                "label": "Revoked",
+                                "value": "Revoked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Completed"
+                    }
+                },
+                {
+                    "id": "adviser_name",
+                    "type": "short_text",
+                    "label": "Adviser Name",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Annual Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-annual-reviews",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Annual Reviews by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-annual-reviews",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Annual Reviews",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-annual-reviews",
+                                "titleField": "review_date",
+                                "limit": 10,
+                                "subtitleField": "current_portfolio_value_cents"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "au-documents",
+            "title": "Documents",
+            "icon": "Wallet",
+            "description": "Live FormLogic form synced directly to SQLite table \"au_documents\" in Finance OS (AU).",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Documents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:finance-os-au-softn-app",
+                    "table": "au_documents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "document_type": "document_type",
+                        "document_name": "document_name",
+                        "reference_code": "reference_code",
+                        "expiry_date": "expiry_date",
+                        "notes": "notes",
+                        "uploaded_by": "uploaded_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Documents",
+                    "description": "Connected live to SQLite table \"au_documents\" in Finance OS (AU).",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:au-clients",
+                        "displayFieldIds": [
+                            "address",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "document_type",
+                    "type": "dropdown",
+                    "label": "Document Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "statement_of_advice",
+                                "label": "Statement of Advice",
+                                "value": "Statement of Advice"
+                            },
+                            {
+                                "id": "financial_services_guide",
+                                "label": "Financial Services Guide",
+                                "value": "Financial Services Guide"
+                            },
+                            {
+                                "id": "product_disclosure_statement",
+                                "label": "Product Disclosure Statement",
+                                "value": "Product Disclosure Statement"
+                            },
+                            {
+                                "id": "id_verification_austrac_",
+                                "label": "ID Verification (AUSTRAC)",
+                                "value": "ID Verification (AUSTRAC)"
+                            },
+                            {
+                                "id": "tfn_declaration",
+                                "label": "TFN Declaration",
+                                "value": "TFN Declaration"
+                            },
+                            {
+                                "id": "tax_return",
+                                "label": "Tax Return",
+                                "value": "Tax Return"
+                            },
+                            {
+                                "id": "insurance_policy",
+                                "label": "Insurance Policy",
+                                "value": "Insurance Policy"
+                            },
+                            {
+                                "id": "superannuation_statement",
+                                "label": "Superannuation Statement",
+                                "value": "Superannuation Statement"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Statement of Advice"
+                    }
+                },
+                {
+                    "id": "document_name",
+                    "type": "short_text",
+                    "label": "Document Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "reference_code",
+                    "type": "short_text",
+                    "label": "Reference Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "expiry_date",
+                    "type": "date",
+                    "label": "Expiry Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "uploaded_by",
+                    "type": "short_text",
+                    "label": "Uploaded By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Documents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-documents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Documents by Document Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:au-documents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "document_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Documents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:au-documents",
+                                "titleField": "document_type",
+                                "limit": 10,
+                                "subtitleField": "document_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "finance-os-au-softn-app",
+            "name": "Finance OS (AU)",
+            "description": "Turnkey Australian AFSL advisory & compliance workbench: client onboarding, Best Interest Duty risk profile scorer, Fee Disclosure Statements (FDS), superannuation rollovers, 100%-validated BDBNs, off-market transfers, annual reviews and document vault.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "finance-os-au-softn-forms",
+            "name": "Finance OS (AU) Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Finance OS (AU)'s SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:finance-os-au-softn-app",
+                "linkedSoftnAppId": "@packApp:finance-os-au-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "au-clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-risk-profiles",
+                    "displayName": "Risk Profiles",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-fee-disclosures",
+                    "displayName": "Fee Disclosures",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-off-market-transfers",
+                    "displayName": "Off Market Transfers",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-super-rollovers",
+                    "displayName": "Super Rollovers",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-bdbns",
+                    "displayName": "BDBNs",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-annual-reviews",
+                    "displayName": "Annual Reviews",
+                    "sortOrder": 6,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "au-documents",
+                    "displayName": "Documents",
+                    "sortOrder": 7,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_au_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_au_clients",
+                    "name": "Clients by Residency Status",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "residency_status",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_au_risk_profiles",
+                    "name": "Total Risk Profiles",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-risk-profiles",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_au_risk_profiles",
+                    "name": "Risk Profiles by Market Reaction",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-risk-profiles",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "market_reaction",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_au_fee_disclosures",
+                    "name": "Total Fee Disclosures",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-fee-disclosures",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_au_off_market_transfers",
+                    "name": "Total Off Market Transfers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:au-off-market-transfers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:au-clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Residency Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:au-clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "residency_status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Risk Profiles",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:au-risk-profiles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Risk Profiles by Market Reaction",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:au-risk-profiles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "market_reaction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Fee Disclosures",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:au-fee-disclosures",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Off Market Transfers",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:au-off-market-transfers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

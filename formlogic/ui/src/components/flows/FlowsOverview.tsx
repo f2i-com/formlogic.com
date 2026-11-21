@@ -300,7 +300,7 @@ function FlowList({
             value={scope}
             onChange={(e) => { setScope(e.target.value); setPage(1); }}
             aria-label="Show flows from"
-            className="h-9 max-w-48 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
+            className="min-h-9 max-w-48 flex-none cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm leading-5 text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
           >
             <option value="all">All locations</option>
             {groups.map((g) => (

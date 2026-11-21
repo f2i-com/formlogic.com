@@ -1,0 +1,48 @@
+{
+    "id": "repairbench-device-repair-softn",
+    "slug": "repairbench-device-repair-softn",
+    "name": "RepairBench — SoftN App & Linked Forms",
+    "shortName": "RepairBench",
+    "description": "Turnkey electronics and device repair workshop desk: 7-stage repair pipeline board with printable claim tickets, device IMEI/serial intake registry, parts order tracker, interactive QA test checklist and pickup SMS desk, plus customers and bench technicians. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "CircuitBoard",
+    "category": "Business apps",
+    "tags": [
+        "repairs",
+        "devices",
+        "electronics",
+        "workshop",
+        "service",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "repairbench-device-repair-softn.softn",
+    "softnPackAppId": "repairbench-device-repair-softn-app",
+    "formsPackAppId": "repairbench-device-repair-softn-forms",
+    "companionPackSlug": "repairbench-device-repair",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "customers",
+        "technicians",
+        "devices",
+        "repair_jobs",
+        "parts_orders",
+        "quality_checks"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/repairbench-device-repair.png"
+        }
+    ]
+}

@@ -1,0 +1,47 @@
+{
+    "id": "pawroute-pet-care-softn",
+    "slug": "pawroute-pet-care-softn",
+    "name": "PawRoute — SoftN App & Linked Forms",
+    "shortName": "PawRoute",
+    "description": "Turnkey dog walking & pet care operations hub: daily walk run-sheet with 1-click owner updates, temperament & medical pet profiles, home access client cards, walkers roster, and incidents log. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "PawPrint",
+    "category": "Business apps",
+    "tags": [
+        "pets",
+        "dog-walking",
+        "pet-care",
+        "scheduling",
+        "clients",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "pawroute-pet-care-softn.softn",
+    "softnPackAppId": "pawroute-pet-care-softn-app",
+    "formsPackAppId": "pawroute-pet-care-softn-forms",
+    "companionPackSlug": "pawroute-pet-care",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "clients",
+        "pets",
+        "walkers",
+        "walks",
+        "incidents"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/pawroute-pet-care.png"
+        }
+    ]
+}

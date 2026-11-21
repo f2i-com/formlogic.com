@@ -40,6 +40,13 @@ class ApiKeyService
         // plane. New Desktop links receive it explicitly; connector:relay alone
         // is never silently treated as media admission authority.
         'aokie:realtime',
+        // Programmatic external API invocation of hosted SoftN / container app backends
+        // owned by the API key's account (GET /api/v1/apps, POST /api/v1/apps/{app}/invoke,
+        // ANY /api/v1/apps/{app}/routes/{path}).
+        'apps:invoke',
+        // Programmatic flow execution via API key (POST /api/v1/flows/{flow}/run,
+        // POST /api/v1/apps/{app}/flows/{slug}/run).
+        'flows:run',
     ];
 
     /** Scopes a key only gets from the link that makes it, never from Settings or the API. */

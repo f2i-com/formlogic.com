@@ -1,0 +1,48 @@
+{
+    "id": "venueops-venue-hire-softn",
+    "slug": "venueops-venue-hire-softn",
+    "name": "VenueOps — SoftN App & Linked Forms",
+    "shortName": "VenueOps",
+    "description": "Turnkey venue hire & booking manager: space schedule with automatic time-overlap conflict detection and hourly fee calculation, spaces catalogue, setup & facilities checklists, hirer clients directory, payments & deposits ledger with HTML booking confirmations, and incidents/damage log. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "DoorOpen",
+    "category": "Business apps",
+    "tags": [
+        "venues",
+        "bookings",
+        "events",
+        "hire",
+        "facilities",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "venueops-venue-hire-softn.softn",
+    "softnPackAppId": "venueops-venue-hire-softn-app",
+    "formsPackAppId": "venueops-venue-hire-softn-forms",
+    "companionPackSlug": "venueops-venue-hire",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "spaces",
+        "clients",
+        "bookings",
+        "setup_requirements",
+        "payments",
+        "incidents"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/venueops-venue-hire.png"
+        }
+    ]
+}

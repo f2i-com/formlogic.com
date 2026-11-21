@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
-use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppListening, AppService, AppUserService, AppVisitors, AppWalletService, ListenRefusal, NativeAppCalls, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
+use FormLogic\Services\{AccessGateService, AppAiService, AppFormlogicManifest, AppListening, AppService, AppUserService, AppVisitors, AppWalletService, FormService, ListenRefusal, NativeAppCalls, NativeAppCharges, NativeAppService, NativePhoneVerification, NativeRecordEventRouter, NativeTableFormBridge, PlanService, PluginService, FlowService, RuntimeEngineService, AppLookService, WalletRefusal};
 use FormLogic\Support\AfterResponse;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -26,6 +26,8 @@ class NativeAppController
     private const UPDATES_EVERY_OWNER = 20;
     private const UPDATES_EVERY = 60;
 
+    private ?FormService $forms = null;
+
     // $engines is required, not optional-with-a-default: this controller is autowired, and PHP-DI's
     // reflection autowiring SKIPS optional parameters (ReflectionBasedAutowiring), so an `= null`
     // here would silently hand production a controller that decides no app's engine.
@@ -35,6 +37,27 @@ class NativeAppController
     {
         // Every dispatch goes through the one router, so App AI's jobs are never acknowledged unread.
         $this->records ??= new NativeRecordEventRouter($this->flows, $this->ai);
+    }
+
+    public function setFormService(?FormService $forms): void
+    {
+        $this->forms = $forms;
+    }
+
+    /**
+     * Collect native record event subscriptions across this app and any sibling apps sharing the
+     * same SQLite database. Calls the single-app method directly when unlinked so single-app
+     * callers and mocks stay exact.
+     *
+     * @return list<array{event: string, bindings: list<string>}>
+     */
+    private function recordSubscriptionsFor(string $appId): array
+    {
+        $groupAppIds = $this->apps->sharedDatabaseGroupAppIds($appId);
+        if (count($groupAppIds) > 1) {
+            return $this->flows->nativeRecordSubscriptionsForApps($groupAppIds);
+        }
+        return $this->flows->nativeRecordSubscriptions($appId);
     }
 
 
@@ -107,6 +130,9 @@ class NativeAppController
             // A new SoftN app's first version: the starter project, named after the app. Only
             // for an app with nothing installed (install() refuses expectedVersion 0 otherwise).
             if (($args['operation'] ?? '') === 'starter') {
+                if (!empty($app['settings']['sourceProtected'])) {
+                    throw new \RuntimeException('This Marketplace app is source-protected and its source cannot be replaced.', 403);
+                }
                 // A forms app hosts a project from App Studio; the starter would take over its address.
                 if (empty($app['settings']['softnApp'])) throw new \InvalidArgumentException('This starter is for a web app. Add a project to a forms app from its App Studio.');
                 $body = $request->getParsedBody();
@@ -116,6 +142,195 @@ class NativeAppController
                     ['by' => (string) $app['ownerId'], 'how' => 'page', 'summary' => 'Started from the working starter']);
                 return ['project' => $installed] + $this->engineAfterInstall($app['id'], RuntimeEngineService::languagesOf(NativeAppService::clientFiles($installed)));
             }
+            // Shared database linking: view/set which app's SQLite database this app shares,
+            // plus see all connected apps and linked FormLogic forms using this database.
+            if (($args['operation'] ?? '') === 'database-link') {
+                $ownerId = (string) $app['ownerId'];
+                if ($request->getMethod() === 'PUT') {
+                    $input = $request->getParsedBody();
+                    if (!is_array($input)) throw new \InvalidArgumentException('Provide { targetAppId: string | null }.');
+                    $targetId = $input['targetAppId'] ?? null;
+                    if ($targetId !== null && !is_string($targetId)) {
+                        throw new \InvalidArgumentException('targetAppId must be an app id string or null.');
+                    }
+                    $targetId = is_string($targetId) && trim($targetId) !== '' ? trim($targetId) : null;
+                    if ($targetId !== null) {
+                        if (!$this->native->hasManagedDatabase($targetId)) {
+                            throw new \InvalidArgumentException('The target app does not have a SQLite database yet. Enable Unified SQLite on that Form App or install its SoftN backend first.');
+                        }
+                    }
+                    $this->apps->setSharedDatabase($ownerId, (string) $app['id'], $targetId);
+                    $this->native->setSharedDatabaseLink((string) $app['id'], $targetId);
+                    $app = $this->apps->getApp((string) $app['id']) ?? $app;
+                }
+                return $this->describeDatabaseLink($app);
+            }
+            // One-click: create a secondary SoftN API Backend app pre-linked to this app's shared SQLite database.
+            if (($args['operation'] ?? '') === 'create-api-backend') {
+                $ownerId = (string) $app['ownerId'];
+                $canonicalDbAppId = $this->native->databaseAppId((string) $app['id']);
+                $schemas = $this->native->tableSchemas($canonicalDbAppId);
+                $tableCols = [];
+                foreach ($schemas as $tbl => $schema) {
+                    $tableCols[$tbl] = array_values(array_map(static fn(array $f): string => (string) $f['name'], $schema['fields'] ?? []));
+                }
+                $body = $request->getParsedBody();
+                $customName = is_array($body) && is_string($body['name'] ?? null) ? trim($body['name']) : '';
+                $apiName = $customName !== '' ? mb_substr($customName, 0, 120) : ($app['name'] . ' API');
+                $newApp = $this->apps->createApp([
+                    'name' => $apiName,
+                    'description' => 'Secondary SoftN API backend sharing the SQLite database of ' . $app['name'] . '.',
+                    'settings' => [
+                        'softnApp' => true,
+                        'sharedDatabaseAppId' => $canonicalDbAppId,
+                    ],
+                ], $ownerId);
+                $newAppId = (string) $newApp['id'];
+                try {
+                    $this->native->setSharedDatabaseLink($newAppId, $canonicalDbAppId);
+                    $starter = NativeAppService::sharedApiBackendStarter($apiName, $newAppId, $tableCols);
+                    $installed = $this->native->install($newAppId, $starter, 0, null, [
+                        'by' => $ownerId,
+                        'how' => 'page',
+                        'summary' => 'Created secondary SoftN API backend on shared database',
+                    ]);
+                } catch (\Throwable $e) {
+                    try { $this->native->remove($newAppId); } catch (\Throwable) {}
+                    try { $this->apps->deleteApp($newAppId); } catch (\Throwable) {}
+                    throw $e;
+                }
+                return ['app' => $newApp, 'project' => $installed, 'databaseAppId' => $canonicalDbAppId];
+            }
+            // One-click: create FormLogic Management Form(s) + starter Charts/KPIs bound directly
+            // to one or more tables of this SoftN app's SQLite database.
+            if (($args['operation'] ?? '') === 'create-management-form') {
+                if ($this->forms === null) throw new \RuntimeException('Form service is unavailable', 503);
+                $ownerId = (string) $app['ownerId'];
+                $canonicalDbAppId = $this->native->databaseAppId((string) $app['id']);
+                $schemas = $this->native->tableSchemas($canonicalDbAppId);
+                if ($schemas === []) {
+                    throw new \InvalidArgumentException('This app does not have any SQLite tables yet.');
+                }
+                $body = $request->getParsedBody();
+                if (!is_array($body)) $body = [];
+                $requestedTables = [];
+                if (is_array($body['tables'] ?? null) && $body['tables'] !== []) {
+                    foreach ($body['tables'] as $t) {
+                        if (is_string($t) && isset($schemas[$t])) $requestedTables[] = $t;
+                    }
+                } elseif (is_string($body['table'] ?? null) && isset($schemas[$body['table']])) {
+                    $requestedTables[] = $body['table'];
+                } elseif (($body['table'] ?? null) === '*') {
+                    $requestedTables = array_slice(array_keys($schemas), 0, 12);
+                }
+                $requestedTables = array_values(array_unique($requestedTables));
+                if ($requestedTables === []) {
+                    throw new \InvalidArgumentException('Choose at least one table from this app\'s database.');
+                }
+
+                $includeCharts = ($body['includeCharts'] ?? true) !== false;
+                $targetAppId = is_string($body['targetAppId'] ?? null) ? trim($body['targetAppId']) : 'new';
+                $managementApp = null;
+                if ($targetAppId === 'new' || $targetAppId === '') {
+                    $customName = is_string($body['appName'] ?? null) ? trim($body['appName']) : '';
+                    $mgmtName = $customName !== '' ? mb_substr($customName, 0, 120) : ($app['name'] . ' Admin');
+                    $managementApp = $this->apps->createApp([
+                        'name' => $mgmtName,
+                        'description' => 'Management forms, CRUD and charts linked to ' . $app['name'] . '\'s SQLite database.',
+                        'rolePreset' => 'admin-console',
+                        'settings' => [
+                            'appKind' => 'admin',
+                            'sharedDatabaseAppId' => $canonicalDbAppId,
+                        ],
+                    ], $ownerId);
+                } elseif ($targetAppId !== 'none') {
+                    $candidate = $this->apps->getApp($targetAppId);
+                    if (!$candidate || ($candidate['ownerId'] ?? null) !== $ownerId) {
+                        throw new \InvalidArgumentException('Target management app not found.');
+                    }
+                    $managementApp = $candidate;
+                }
+
+                $createdForms = [];
+                $newReports = [];
+                $dashboardWidgets = [];
+                $widgetY = 0;
+
+                foreach ($requestedTables as $tbl) {
+                    $def = NativeTableFormBridge::buildFormDefinitionFromTable($canonicalDbAppId, $tbl, $schemas[$tbl]);
+                    $prettyTable = ucwords(str_replace(['_', '-'], ' ', $tbl));
+                    $form = $this->forms->createForm([
+                        'userId' => $ownerId,
+                        'title' => $prettyTable,
+                        'description' => 'Live CRUD form connected to table "' . $tbl . '" in ' . $app['name'] . '.',
+                        'status' => 'published',
+                        'fields' => $def['fields'],
+                        'settings' => [
+                            'nativeTableBinding' => $def['binding'],
+                        ],
+                    ]);
+                    $createdForms[] = $form;
+
+                    if ($managementApp !== null) {
+                        $this->apps->addFormToApp((string) $managementApp['id'], (string) $form['id'], $prettyTable);
+                        if ($includeCharts) {
+                            $fid = (string) $form['id'];
+                            $kpiId = 'rep_' . bin2hex(random_bytes(5));
+                            $kpiSpec = ['formId' => $fid, 'viz' => 'kpi', 'measure' => ['fn' => 'count'], 'color' => 'blue'];
+                            $newReports[] = ['id' => $kpiId, 'name' => 'Total ' . $prettyTable, 'type' => 'builder', 'spec' => $kpiSpec];
+                            $dashboardWidgets[] = ['id' => 'w_' . bin2hex(random_bytes(4)), 'kind' => 'report', 'title' => 'Total ' . $prettyTable, 'layout' => ['x' => 0, 'y' => $widgetY, 'w' => 4, 'h' => 2], 'spec' => $kpiSpec];
+
+                            if (!empty($def['numericFields'][0])) {
+                                $nf = $def['numericFields'][0];
+                                $sumId = 'rep_' . bin2hex(random_bytes(5));
+                                $sumSpec = ['formId' => $fid, 'viz' => 'kpi', 'measure' => ['fn' => 'sum', 'field' => $nf['id']], 'color' => 'green'];
+                                $newReports[] = ['id' => $sumId, 'name' => 'Total ' . $nf['label'], 'type' => 'builder', 'spec' => $sumSpec];
+                                $dashboardWidgets[] = ['id' => 'w_' . bin2hex(random_bytes(4)), 'kind' => 'report', 'title' => 'Total ' . $nf['label'], 'layout' => ['x' => 4, 'y' => $widgetY, 'w' => 4, 'h' => 2], 'spec' => $sumSpec];
+                            }
+
+                            if (!empty($def['categoryFields'][0])) {
+                                $cf = $def['categoryFields'][0];
+                                $barId = 'rep_' . bin2hex(random_bytes(5));
+                                $barSpec = ['formId' => $fid, 'viz' => 'bar', 'groupBy' => ['field' => $cf['id'], 'bucket' => 'none'], 'measure' => ['fn' => 'count'], 'color' => 'violet', 'showDataLabels' => true];
+                                $newReports[] = ['id' => $barId, 'name' => $prettyTable . ' by ' . $cf['label'], 'type' => 'builder', 'spec' => $barSpec];
+                                $dashboardWidgets[] = ['id' => 'w_' . bin2hex(random_bytes(4)), 'kind' => 'report', 'title' => $prettyTable . ' by ' . $cf['label'], 'layout' => ['x' => 0, 'y' => $widgetY + 2, 'w' => 6, 'h' => 4], 'spec' => $barSpec];
+                            }
+
+                            $colIds = array_slice(array_map(static fn(array $f): string => (string) $f['id'], $def['fields']), 0, 6);
+                            $dashboardWidgets[] = ['id' => 'w_' . bin2hex(random_bytes(4)), 'kind' => 'grid', 'title' => $prettyTable . ' Records', 'layout' => ['x' => 0, 'y' => $widgetY + 6, 'w' => 12, 'h' => 5], 'grid' => ['formId' => $fid, 'pageSize' => 10, 'columnFieldIds' => $colIds]];
+                            $widgetY += 11;
+                        }
+                    }
+                }
+
+                if ($managementApp !== null && $includeCharts && ($newReports !== [] || $dashboardWidgets !== [])) {
+                    $existingReports = is_array($managementApp['reports'] ?? null) ? $managementApp['reports'] : [];
+                    $updatePayload = ['reports' => array_merge($existingReports, $newReports)];
+                    if (empty($managementApp['customScreen']['dashboard']['widgets'])) {
+                        $updatePayload['customScreen'] = [
+                            'enabled' => true,
+                            'mode' => 'dashboard',
+                            'dashboard' => ['version' => 1, 'cols' => 12, 'widgets' => $dashboardWidgets],
+                        ];
+                    }
+                    $managementApp = $this->apps->updateApp((string) $managementApp['id'], $updatePayload) ?? $managementApp;
+                }
+
+                if ($managementApp !== null && ($targetAppId === 'new' || $targetAppId === '')) {
+                    $published = $this->apps->publishApp((string) $managementApp['id'], 'Initial management portal', $ownerId);
+                    if (is_array($published['app'] ?? null)) {
+                        $managementApp = $published['app'];
+                    }
+                }
+
+                return [
+                    'forms' => $createdForms,
+                    'form' => $createdForms[0] ?? null,
+                    'managementApp' => $managementApp,
+                    'reportsCreated' => count($newReports),
+                    'databaseAppId' => $canonicalDbAppId,
+                ];
+            }
             if (($args['operation'] ?? '') === 'records') {
                 if ($request->getMethod() === 'POST') {
                     $input = $request->getParsedBody();
@@ -123,7 +338,7 @@ class NativeAppController
                     // Every action but `read` writes (create, update, delete, deleteMany): refused once
                     // the plan has lapsed, and followed by the automations its writes queued.
                     if (($input['action'] ?? '') !== 'read' && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('Cloud access has expired. Records remain available to read.', 402);
-                    $result = $this->native->manageRecord($app['id'], $input, $this->flows->nativeRecordSubscriptions($app['id']));
+                    $result = $this->native->manageRecord($app['id'], $input, $this->recordSubscriptionsFor((string) $app['id']));
                     if (($input['action'] ?? '') !== 'read') {
                         try { $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id'])); }
                         catch (\Throwable $error) { error_log('Native record automation delivery pending for app ' . $app['id']); }
@@ -168,6 +383,9 @@ class NativeAppController
             // download of the app or an editor (NativeAppService::ownerMediaPack), or one file named,
             // for a picture the page shows (ownerMediaFile).
             if (($args['operation'] ?? '') === 'media') {
+                if (!empty($app['settings']['sourceProtected'])) {
+                    throw new \RuntimeException('This Marketplace app is source-protected; downloading its files is disabled.', 403);
+                }
                 $query = $request->getQueryParams();
                 if (!array_key_exists('path', $query) && !array_key_exists('kept', $query)) return $this->ownerMediaPack($request, $response, (string) $app['id']);
                 $path = is_string($query['path'] ?? null) ? $query['path'] : '';
@@ -189,8 +407,28 @@ class NativeAppController
                 // Derived from the same client files a member's frame receives, so the owner is
                 // shown the engine (and the reason) their members actually get.
                 $languages = RuntimeEngineService::languagesOf(NativeAppService::clientFiles($project ?? []));
-                return ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $project, 'readOnly' => $readOnly,
+                $sourceProtected = !empty($app['settings']['sourceProtected']);
+                if ($sourceProtected && is_array($project)) {
+                    // Never expose private Marketplace source files or media bytes to buyers.
+                    $project = [
+                        'home' => (bool) ($project['home'] ?? true),
+                        'version' => (int) ($project['version'] ?? 1),
+                        'updatedAt' => $project['updatedAt'] ?? null,
+                        'access' => (string) ($project['access'] ?? 'members'),
+                        'files' => (object) [],
+                        'assets' => (object) [],
+                        'sourceProtected' => true,
+                    ];
+                }
+                $res = ['available' => $this->native->available(), 'ready' => $preflight !== null && $preflight['ok'], 'preflight' => $preflight, 'project' => $project, 'readOnly' => $readOnly,
                     'engine' => $this->engines->effective($app['id'], $languages), 'enginePolicy' => $this->engines->ownerPolicy()];
+                if ($sourceProtected) {
+                    $res['sourceProtected'] = true;
+                }
+                return $res;
+            }
+            if (!empty($app['settings']['sourceProtected'])) {
+                throw new \RuntimeException('This Marketplace app is source-protected and its source cannot be modified.', 403);
             }
             $body = $request->getParsedBody();
             if (!is_array($body) || !is_array($body['project'] ?? null) || !is_int($body['expectedVersion'] ?? null) || $body['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide a project and expectedVersion');
@@ -587,7 +825,28 @@ class NativeAppController
                     'bodyBase64' => $bodyBase64,
                     'client_ip' => $addresses->getClientIp($request),
                 ];
-                $result = $this->native->containerRequest($app['id'], $containerReq, $identity, (int) ($project['version'] ?? 0));
+                $subscriptions = $this->recordSubscriptionsFor((string) $app['id']);
+                $result = $this->native->containerRequest($app['id'], $containerReq, $identity, (int) ($project['version'] ?? 0), $subscriptions);
+                $extractedHeaders = NativeRecordEventRouter::extractContainerTriggers($result['headers']);
+                $result['headers'] = $extractedHeaders['headers'];
+                $triggers = $extractedHeaders['triggers'];
+                $rawContainerText = base64_decode($result['bodyBase64'], true);
+                if (is_string($rawContainerText) && str_contains($rawContainerText, '__formlogicTriggerFlows')) {
+                    $decodedContainer = json_decode($rawContainerText, true);
+                    if (is_array($decodedContainer)) {
+                        $extractedBody = NativeRecordEventRouter::extractBodyTriggers($decodedContainer);
+                        $triggers = array_merge($triggers, $extractedBody['triggers']);
+                        $result['bodyBase64'] = base64_encode(json_encode($extractedBody['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
+                    }
+                }
+                try {
+                    $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id']));
+                } catch (\Throwable $error) {
+                    error_log('Native record automation delivery pending for container app ' . $app['id']);
+                }
+                if ($triggers !== []) {
+                    try { $this->records->triggerBackendFlows($app, $triggers); } catch (\Throwable) {}
+                }
                 $outcome = ['status' => $result['status'], 'body' => null];
                 return ['result' => $result];
             }
@@ -624,7 +883,7 @@ class NativeAppController
                 'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
                 'client_ip' => $addresses->getClientIp($request), 'photos' => false,
             ];
-            $subscriptions = $this->flows->nativeRecordSubscriptions($app['id']);
+            $subscriptions = $this->recordSubscriptionsFor((string) $app['id']);
             $requester = null;
             if ($asks !== null) [$identity, $subscriptions, $setCookie, $requester] = $this->formlogicRequest($request, $app, $project, $asks, $identity, $subscriptions, (string) $nativeRequest['client_ip'], $user, $owner, $addresses->knownClientIp($request));
             // The app's own page (not a plugin's): photos are redrawn here, and the body held to its route.
@@ -647,6 +906,12 @@ class NativeAppController
                 if ($this->gate === null) throw new \RuntimeException('Plugins are not available', 503);
                 $result = $this->gate->recordFromPluginAnswer($plugin, (string) $user, $input['method'], $input['path'], $result);
             }
+            $triggers = [];
+            if ($plugin === null && is_array($result) && array_key_exists('body', $result)) {
+                $extracted = NativeRecordEventRouter::extractBodyTriggers($result['body']);
+                $result['body'] = $extracted['body'];
+                $triggers = $extracted['triggers'];
+            }
             $outcome = is_array($result) ? $result : null;
             try {
                 $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id']));
@@ -654,6 +919,9 @@ class NativeAppController
                 // The app write already committed. Returning an error here could make the
                 // caller repeat it; retain the durable event for the recovery dispatcher.
                 error_log('Native record automation delivery pending for app ' . $app['id']);
+            }
+            if ($triggers !== []) {
+                try { $this->records->triggerBackendFlows($app, $triggers); } catch (\Throwable) {}
             }
             return ['result' => $result];
         };
@@ -1013,6 +1281,80 @@ class NativeAppController
             409,
             'engine_changed'
         );
+    }
+
+    /**
+     * Summary of this app's shared-database relationship: which database it uses, eligible other
+     * owned apps whose SQLite DB it can share, all sibling/consumer apps sharing this database,
+     * and any FormLogic forms bound to tables in this database.
+     *
+     * @param array<string, mixed> $app
+     * @return array<string, mixed>
+     */
+    private function describeDatabaseLink(array $app): array
+    {
+        $ownerId = (string) ($app['ownerId'] ?? '');
+        $appId = (string) ($app['id'] ?? '');
+        $sharedDbAppId = is_string($app['settings']['sharedDatabaseAppId'] ?? null) && $app['settings']['sharedDatabaseAppId'] !== ''
+            ? (string) $app['settings']['sharedDatabaseAppId']
+            : $this->native->sharedDatabaseAppId($appId);
+        $canonicalDbAppId = $sharedDbAppId ?? $appId;
+
+        $owned = $ownerId !== '' ? $this->apps->getAllApps($ownerId) : [];
+        $ownedById = [];
+        foreach ($owned as $a) {
+            if (($a['ownerId'] ?? null) === $ownerId) $ownedById[(string) $a['id']] = $a;
+        }
+        $eligibleTargets = [];
+        $connectedApps = [];
+        foreach ($ownedById as $oid => $other) {
+            $otherShared = is_string($other['settings']['sharedDatabaseAppId'] ?? null) && $other['settings']['sharedDatabaseAppId'] !== ''
+                ? (string) $other['settings']['sharedDatabaseAppId']
+                : null;
+            if ($otherShared === $canonicalDbAppId && $oid !== $canonicalDbAppId) {
+                $connectedApps[] = [
+                    'id' => $oid,
+                    'name' => $other['name'],
+                    'slug' => $other['slug'],
+                    'softnApp' => !empty($other['settings']['softnApp']),
+                ];
+            }
+            if ($oid === $appId || $otherShared !== null) continue;
+            $dbGlance = $this->native->databaseGlance($oid);
+            if ($dbGlance === null) continue;
+            $eligibleTargets[] = [
+                'id' => $oid,
+                'name' => $other['name'],
+                'slug' => $other['slug'],
+                'tables' => $dbGlance['tables'],
+                'formDatabase' => $dbGlance['formDatabase'],
+                'softnApp' => !empty($other['settings']['softnApp']),
+            ];
+        }
+        $linkedForms = [];
+        if ($this->forms !== null && $ownerId !== '') {
+            foreach ($this->forms->getAllForms($ownerId, ['limit' => 500]) as $f) {
+                $binding = is_array($f['settings']['nativeTableBinding'] ?? null) ? $f['settings']['nativeTableBinding'] : null;
+                if ($binding !== null && ($binding['appId'] ?? null) === $canonicalDbAppId) {
+                    $linkedForms[] = [
+                        'id' => $f['id'],
+                        'title' => $f['title'],
+                        'table' => $binding['table'] ?? '',
+                        'status' => $f['status'] ?? 'draft',
+                    ];
+                }
+            }
+        }
+        $dbOwner = $ownedById[$canonicalDbAppId] ?? null;
+        return [
+            'appId' => $appId,
+            'sharedDatabaseAppId' => $sharedDbAppId,
+            'databaseAppId' => $canonicalDbAppId,
+            'databaseOwner' => $dbOwner ? ['id' => $dbOwner['id'], 'name' => $dbOwner['name'], 'slug' => $dbOwner['slug']] : null,
+            'eligibleTargets' => $eligibleTargets,
+            'connectedApps' => $connectedApps,
+            'linkedForms' => $linkedForms,
+        ];
     }
 
     /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */

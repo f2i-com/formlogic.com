@@ -1,0 +1,47 @@
+{
+    "id": "plumbing-field-service-softn",
+    "slug": "plumbing-field-service-softn",
+    "name": "Plumbing & Trades — SoftN App & Linked Forms",
+    "shortName": "Plumbing & Trades",
+    "description": "Turnkey field service operations for plumbing and trades businesses: priority dispatch board, on-site work orders, parts & materials tracking, customer directory, and 1-click job invoicing. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Wrench",
+    "category": "Business apps",
+    "tags": [
+        "plumbing",
+        "trades",
+        "field-service",
+        "jobs",
+        "scheduling",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "plumbing-field-service-softn.softn",
+    "softnPackAppId": "plumbing-field-service-softn-app",
+    "formsPackAppId": "plumbing-field-service-softn-forms",
+    "companionPackSlug": "plumbing-field-service",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "customers",
+        "jobs",
+        "site_visits",
+        "parts_requests",
+        "invoices"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/plumbing-field-service.png"
+        }
+    ]
+}

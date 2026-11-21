@@ -448,14 +448,20 @@ export function mergeFlowOverlay(
   return [...localForScope, ...merged];
 }
 
-/** Merge the server-seeded flows for one scope (appId, or null for workspace) with the overlay. */
-export async function demoApplyFlowOverlay(appId: string | null, serverFlows: FlowDefinition[]): Promise<FlowDefinition[]> {
+/** Read the browser's demo flow overlay once (so callers merging many scopes don't repeat IndexedDB reads). */
+export async function demoReadFlowOverlay(): Promise<{ created: DemoFlow[]; edits: FlowEdits; deleted: string[] }> {
   const [edits, deleted, created] = await Promise.all([
     readFlowsKey<FlowEdits>('edits', {}),
     readFlowsKey<string[]>('deleted', []),
     readFlowsKey<DemoFlow[]>('created', []),
   ]);
-  return mergeFlowOverlay(appId, serverFlows, { created, edits, deleted });
+  return { created, edits, deleted };
+}
+
+/** Merge the server-seeded flows for one scope (appId, or null for workspace) with the overlay. */
+export async function demoApplyFlowOverlay(appId: string | null, serverFlows: FlowDefinition[]): Promise<FlowDefinition[]> {
+  const overlay = await demoReadFlowOverlay();
+  return mergeFlowOverlay(appId, serverFlows, overlay);
 }
 
 /** Persist a new flow locally and return the synthetic definition. */

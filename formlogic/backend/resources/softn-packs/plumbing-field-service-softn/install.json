@@ -1,0 +1,1589 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "plumbing-field-service-softn",
+        "name": "Plumbing & Trades (SoftN + Forms)",
+        "description": "Turnkey field service operations for plumbing and trades businesses: priority dispatch board, on-site work orders, parts & materials tracking, customer directory, and 1-click job invoicing. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "plumbing",
+            "trades",
+            "field-service",
+            "jobs",
+            "scheduling",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "customers",
+            "title": "Customers",
+            "icon": "Wrench",
+            "description": "Live FormLogic form synced directly to SQLite table \"customers\" in Plumbing & Trades.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Customers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:plumbing-field-service-softn-app",
+                    "table": "customers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "address": "address",
+                        "customer_type": "customer_type",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Customers",
+                    "description": "Connected live to SQLite table \"customers\" in Plumbing & Trades.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_type",
+                    "type": "dropdown",
+                    "label": "Customer Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "residential",
+                                "label": "Residential",
+                                "value": "Residential"
+                            },
+                            {
+                                "id": "commercial",
+                                "label": "Commercial",
+                                "value": "Commercial"
+                            },
+                            {
+                                "id": "property_manager",
+                                "label": "Property Manager",
+                                "value": "Property Manager"
+                            },
+                            {
+                                "id": "strata_body_corporate",
+                                "label": "Strata / Body Corporate",
+                                "value": "Strata / Body Corporate"
+                            },
+                            {
+                                "id": "real_estate_agency",
+                                "label": "Real Estate Agency",
+                                "value": "Real Estate Agency"
+                            }
+                        ],
+                        "defaultValue": "Residential"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Customers by Customer Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "customer_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:customers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "address"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "jobs",
+            "title": "Jobs",
+            "icon": "Wrench",
+            "description": "Live FormLogic form synced directly to SQLite table \"jobs\" in Plumbing & Trades.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:plumbing-field-service-softn-app",
+                    "table": "jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_number": "job_number",
+                        "customer_id": "customer_id",
+                        "job_type": "job_type",
+                        "status": "status",
+                        "priority": "priority",
+                        "scheduled_date": "scheduled_date",
+                        "scheduled_time": "scheduled_time",
+                        "assigned_tech": "assigned_tech",
+                        "site_address": "site_address",
+                        "description": "description",
+                        "estimated_cents": "estimated_cents"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Jobs",
+                    "description": "Connected live to SQLite table \"jobs\" in Plumbing & Trades.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_number",
+                    "type": "short_text",
+                    "label": "Job Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "job_type",
+                    "type": "dropdown",
+                    "label": "Job Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "repair",
+                                "label": "Repair",
+                                "value": "Repair"
+                            },
+                            {
+                                "id": "installation",
+                                "label": "Installation",
+                                "value": "Installation"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "emergency_call_out",
+                                "label": "Emergency Call-out",
+                                "value": "Emergency Call-out"
+                            },
+                            {
+                                "id": "quote",
+                                "label": "Quote",
+                                "value": "Quote"
+                            }
+                        ],
+                        "defaultValue": "Repair"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "on_site",
+                                "label": "On Site",
+                                "value": "On Site"
+                            },
+                            {
+                                "id": "awaiting_parts",
+                                "label": "Awaiting Parts",
+                                "value": "Awaiting Parts"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "ordered",
+                                "label": "Ordered",
+                                "value": "Ordered"
+                            },
+                            {
+                                "id": "received",
+                                "label": "Received",
+                                "value": "Received"
+                            },
+                            {
+                                "id": "fitted",
+                                "label": "Fitted",
+                                "value": "Fitted"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "emergency",
+                                "label": "Emergency",
+                                "value": "Emergency"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "scheduled_date",
+                    "type": "date",
+                    "label": "Scheduled Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "scheduled_time",
+                    "type": "time",
+                    "label": "Scheduled Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_tech",
+                    "type": "short_text",
+                    "label": "Assigned Tech",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "site_address",
+                    "type": "long_text",
+                    "label": "Site Address",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_cents",
+                    "type": "number",
+                    "label": "Estimated (Cents)",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Jobs by Job Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "job_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:jobs",
+                                "titleField": "job_number",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "site-visits",
+            "title": "Site Visits",
+            "icon": "Wrench",
+            "description": "Live FormLogic form synced directly to SQLite table \"site_visits\" in Plumbing & Trades.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Site Visits",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:plumbing-field-service-softn-app",
+                    "table": "site_visits",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "technician_name": "technician_name",
+                        "visit_date": "visit_date",
+                        "hours_on_site": "hours_on_site",
+                        "work_performed": "work_performed",
+                        "materials_used": "materials_used",
+                        "follow_up_required": "follow_up_required"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Site Visits",
+                    "description": "Connected live to SQLite table \"site_visits\" in Plumbing & Trades.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:jobs",
+                        "displayFieldIds": [
+                            "job_number",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "technician_name",
+                    "type": "short_text",
+                    "label": "Technician Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "visit_date",
+                    "type": "date",
+                    "label": "Visit Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "hours_on_site",
+                    "type": "number",
+                    "label": "Hours On Site",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "work_performed",
+                    "type": "short_text",
+                    "label": "Work Performed",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "materials_used",
+                    "type": "short_text",
+                    "label": "Materials Used",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "follow_up_required",
+                    "type": "number",
+                    "label": "Follow Up Required",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Site Visits",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:site-visits",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Site Visits",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:site-visits",
+                                "titleField": "technician_name",
+                                "limit": 10,
+                                "subtitleField": "visit_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "parts-requests",
+            "title": "Parts Requests",
+            "icon": "Wrench",
+            "description": "Live FormLogic form synced directly to SQLite table \"parts_requests\" in Plumbing & Trades.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Parts Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:plumbing-field-service-softn-app",
+                    "table": "parts_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "item": "item",
+                        "quantity": "quantity",
+                        "supplier": "supplier",
+                        "unit_cost_cents": "unit_cost_cents",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Parts Requests",
+                    "description": "Connected live to SQLite table \"parts_requests\" in Plumbing & Trades.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:jobs",
+                        "displayFieldIds": [
+                            "job_number",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "item",
+                    "type": "short_text",
+                    "label": "Item",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "quantity",
+                    "type": "number",
+                    "label": "Quantity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit_cost_cents",
+                    "type": "number",
+                    "label": "Unit Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "on_site",
+                                "label": "On Site",
+                                "value": "On Site"
+                            },
+                            {
+                                "id": "awaiting_parts",
+                                "label": "Awaiting Parts",
+                                "value": "Awaiting Parts"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "ordered",
+                                "label": "Ordered",
+                                "value": "Ordered"
+                            },
+                            {
+                                "id": "received",
+                                "label": "Received",
+                                "value": "Received"
+                            },
+                            {
+                                "id": "fitted",
+                                "label": "Fitted",
+                                "value": "Fitted"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Requested"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Parts Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:parts-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Parts Requests by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:parts-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Parts Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:parts-requests",
+                                "titleField": "item",
+                                "limit": 10,
+                                "subtitleField": "quantity"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "invoices",
+            "title": "Invoices",
+            "icon": "Wrench",
+            "description": "Live FormLogic form synced directly to SQLite table \"invoices\" in Plumbing & Trades.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Invoices",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:plumbing-field-service-softn-app",
+                    "table": "invoices",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "invoice_number": "invoice_number",
+                        "job_id": "job_id",
+                        "customer_id": "customer_id",
+                        "issue_date": "issue_date",
+                        "due_date": "due_date",
+                        "labour_hours": "labour_hours",
+                        "hourly_rate_cents": "hourly_rate_cents",
+                        "labour_cents": "labour_cents",
+                        "parts_cents": "parts_cents",
+                        "subtotal_cents": "subtotal_cents",
+                        "tax_rate": "tax_rate",
+                        "tax_cents": "tax_cents",
+                        "total_cents": "total_cents",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Invoices",
+                    "description": "Connected live to SQLite table \"invoices\" in Plumbing & Trades.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "invoice_number",
+                    "type": "short_text",
+                    "label": "Invoice Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:jobs",
+                        "displayFieldIds": [
+                            "job_number",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:customers",
+                        "displayFieldIds": [
+                            "name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "issue_date",
+                    "type": "date",
+                    "label": "Issue Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_hours",
+                    "type": "number",
+                    "label": "Labour Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "hourly_rate_cents",
+                    "type": "url",
+                    "label": "Hourly Rate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "labour_cents",
+                    "type": "number",
+                    "label": "Labour (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "parts_cents",
+                    "type": "number",
+                    "label": "Parts (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subtotal_cents",
+                    "type": "number",
+                    "label": "Subtotal (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_rate",
+                    "type": "number",
+                    "label": "Tax Rate",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_cents",
+                    "type": "number",
+                    "label": "Tax (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "en_route",
+                                "label": "En Route",
+                                "value": "En Route"
+                            },
+                            {
+                                "id": "on_site",
+                                "label": "On Site",
+                                "value": "On Site"
+                            },
+                            {
+                                "id": "awaiting_parts",
+                                "label": "Awaiting Parts",
+                                "value": "Awaiting Parts"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "ordered",
+                                "label": "Ordered",
+                                "value": "Ordered"
+                            },
+                            {
+                                "id": "received",
+                                "label": "Received",
+                                "value": "Received"
+                            },
+                            {
+                                "id": "fitted",
+                                "label": "Fitted",
+                                "value": "Fitted"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "overdue",
+                                "label": "Overdue",
+                                "value": "Overdue"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Draft"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Invoices by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:invoices",
+                                "titleField": "invoice_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "plumbing-field-service-softn-app",
+            "name": "Plumbing & Trades",
+            "description": "Turnkey field service operations for plumbing and trades businesses: priority dispatch board, on-site work orders, parts & materials tracking, customer directory, and 1-click job invoicing.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "plumbing-field-service-softn-forms",
+            "name": "Plumbing & Trades Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Plumbing & Trades's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:plumbing-field-service-softn-app",
+                "linkedSoftnAppId": "@packApp:plumbing-field-service-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "customers",
+                    "displayName": "Customers",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "jobs",
+                    "displayName": "Jobs",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "site-visits",
+                    "displayName": "Site Visits",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "parts-requests",
+                    "displayName": "Parts Requests",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "invoices",
+                    "displayName": "Invoices",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_customers",
+                    "name": "Total Customers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_customers",
+                    "name": "Customers by Customer Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:customers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "customer_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_jobs",
+                    "name": "Total Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_jobs",
+                    "name": "Jobs by Job Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:jobs",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "job_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_site_visits",
+                    "name": "Total Site Visits",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:site-visits",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_parts_requests",
+                    "name": "Total Parts Requests",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:parts-requests",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Customers by Customer Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "customer_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Jobs",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Jobs by Job Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "job_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Site Visits",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:site-visits",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Parts Requests",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:parts-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

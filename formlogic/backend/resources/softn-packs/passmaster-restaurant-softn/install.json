@@ -1,0 +1,2047 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "passmaster-restaurant-softn",
+        "name": "PassMaster (SoftN + Forms)",
+        "description": "Turnkey restaurant front-of-house & kitchen pass: interactive section floor map, reservations book with 1-click table seating, course kitchen pass with red allergy alerts, station prep checklist, brigade roster and nightly shift close. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "restaurant",
+            "reservations",
+            "kitchen",
+            "tables",
+            "hospitality",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "brigade-staff",
+            "title": "Brigade Staff",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"brigade_staff\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Brigade Staff",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "brigade_staff",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "role": "role",
+                        "station": "station",
+                        "phone": "phone",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Brigade Staff",
+                    "description": "Connected live to SQLite table \"brigade_staff\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "server",
+                                "label": "Server",
+                                "value": "Server"
+                            },
+                            {
+                                "id": "chef",
+                                "label": "Chef",
+                                "value": "Chef"
+                            },
+                            {
+                                "id": "kitchen_hand",
+                                "label": "Kitchen hand",
+                                "value": "Kitchen hand"
+                            },
+                            {
+                                "id": "bartender",
+                                "label": "Bartender",
+                                "value": "Bartender"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "Manager",
+                                "value": "Manager"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "server",
+                                "label": "server",
+                                "value": "server"
+                            },
+                            {
+                                "id": "kitchen",
+                                "label": "kitchen",
+                                "value": "kitchen"
+                            },
+                            {
+                                "id": "bartender",
+                                "label": "bartender",
+                                "value": "bartender"
+                            }
+                        ],
+                        "defaultValue": "Server"
+                    }
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "main",
+                                "label": "Main",
+                                "value": "Main"
+                            },
+                            {
+                                "id": "patio",
+                                "label": "Patio",
+                                "value": "Patio"
+                            },
+                            {
+                                "id": "bar",
+                                "label": "Bar",
+                                "value": "Bar"
+                            },
+                            {
+                                "id": "private",
+                                "label": "Private",
+                                "value": "Private"
+                            },
+                            {
+                                "id": "hot_line",
+                                "label": "Hot line",
+                                "value": "Hot line"
+                            },
+                            {
+                                "id": "cold_larder",
+                                "label": "Cold larder",
+                                "value": "Cold larder"
+                            },
+                            {
+                                "id": "pastry",
+                                "label": "Pastry",
+                                "value": "Pastry"
+                            },
+                            {
+                                "id": "cold",
+                                "label": "Cold",
+                                "value": "Cold"
+                            },
+                            {
+                                "id": "hot",
+                                "label": "Hot",
+                                "value": "Hot"
+                            }
+                        ],
+                        "defaultValue": "Main"
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Brigade Staff",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:brigade-staff",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Brigade Staff by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:brigade-staff",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Brigade Staff",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:brigade-staff",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "dining-tables",
+            "title": "Dining Tables",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"dining_tables\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Dining Tables",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "dining_tables",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "table_number": "table_number",
+                        "section": "section",
+                        "capacity": "capacity",
+                        "status": "status",
+                        "server_id": "server_id",
+                        "server_name": "server_name",
+                        "current_guest": "current_guest",
+                        "current_party_size": "current_party_size",
+                        "current_reservation_id": "current_reservation_id",
+                        "seated_at": "seated_at",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Dining Tables",
+                    "description": "Connected live to SQLite table \"dining_tables\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "table_number",
+                    "type": "short_text",
+                    "label": "Table Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "section",
+                    "type": "dropdown",
+                    "label": "Section",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "main",
+                                "label": "Main",
+                                "value": "Main"
+                            },
+                            {
+                                "id": "patio",
+                                "label": "Patio",
+                                "value": "Patio"
+                            },
+                            {
+                                "id": "bar",
+                                "label": "Bar",
+                                "value": "Bar"
+                            },
+                            {
+                                "id": "private",
+                                "label": "Private",
+                                "value": "Private"
+                            }
+                        ],
+                        "defaultValue": "Main"
+                    }
+                },
+                {
+                    "id": "capacity",
+                    "type": "number",
+                    "label": "Capacity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "seated",
+                                "label": "Seated",
+                                "value": "Seated"
+                            },
+                            {
+                                "id": "mains_firing",
+                                "label": "Mains Firing",
+                                "value": "Mains Firing"
+                            },
+                            {
+                                "id": "check_dropped",
+                                "label": "Check Dropped",
+                                "value": "Check Dropped"
+                            },
+                            {
+                                "id": "needs_cleaning",
+                                "label": "Needs Cleaning",
+                                "value": "Needs Cleaning"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "fire",
+                                "label": "Fire",
+                                "value": "Fire"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "pass",
+                                "label": "Pass",
+                                "value": "Pass"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "eighty_sixed",
+                                "label": "Eighty-sixed",
+                                "value": "Eighty-sixed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Available"
+                    }
+                },
+                {
+                    "id": "server_id",
+                    "type": "number",
+                    "label": "Server",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "server_name",
+                    "type": "short_text",
+                    "label": "Server Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_guest",
+                    "type": "short_text",
+                    "label": "Current Guest",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_party_size",
+                    "type": "number",
+                    "label": "Current Party Size",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_reservation_id",
+                    "type": "number",
+                    "label": "Current Reservation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "seated_at",
+                    "type": "number",
+                    "label": "Seated At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Dining Tables",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:dining-tables",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Dining Tables by Section",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:dining-tables",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "section",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Dining Tables",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:dining-tables",
+                                "titleField": "table_number",
+                                "limit": 10,
+                                "subtitleField": "section"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "reservations",
+            "title": "Reservations",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"reservations\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Reservations",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "reservations",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "guest_name": "guest_name",
+                        "phone": "phone",
+                        "email": "email",
+                        "res_date": "res_date",
+                        "res_time": "res_time",
+                        "party_size": "party_size",
+                        "table_pref": "table_pref",
+                        "status": "status",
+                        "assigned_table_id": "assigned_table_id",
+                        "assigned_table_number": "assigned_table_number",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Reservations",
+                    "description": "Connected live to SQLite table \"reservations\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "guest_name",
+                    "type": "short_text",
+                    "label": "Guest Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "res_date",
+                    "type": "date",
+                    "label": "Res Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "res_time",
+                    "type": "time",
+                    "label": "Res Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "party_size",
+                    "type": "number",
+                    "label": "Party Size",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "table_pref",
+                    "type": "dropdown",
+                    "label": "Table Pref",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "window",
+                                "label": "Window",
+                                "value": "Window"
+                            },
+                            {
+                                "id": "booth",
+                                "label": "Booth",
+                                "value": "Booth"
+                            },
+                            {
+                                "id": "bar",
+                                "label": "Bar",
+                                "value": "Bar"
+                            },
+                            {
+                                "id": "outside",
+                                "label": "Outside",
+                                "value": "Outside"
+                            },
+                            {
+                                "id": "private",
+                                "label": "Private",
+                                "value": "Private"
+                            },
+                            {
+                                "id": "no_preference",
+                                "label": "No preference",
+                                "value": "No preference"
+                            }
+                        ],
+                        "defaultValue": "No preference"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "seated",
+                                "label": "Seated",
+                                "value": "Seated"
+                            },
+                            {
+                                "id": "mains_firing",
+                                "label": "Mains Firing",
+                                "value": "Mains Firing"
+                            },
+                            {
+                                "id": "check_dropped",
+                                "label": "Check Dropped",
+                                "value": "Check Dropped"
+                            },
+                            {
+                                "id": "needs_cleaning",
+                                "label": "Needs Cleaning",
+                                "value": "Needs Cleaning"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "fire",
+                                "label": "Fire",
+                                "value": "Fire"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "pass",
+                                "label": "Pass",
+                                "value": "Pass"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "eighty_sixed",
+                                "label": "Eighty-sixed",
+                                "value": "Eighty-sixed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Booked"
+                    }
+                },
+                {
+                    "id": "assigned_table_id",
+                    "type": "number",
+                    "label": "Assigned Table",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_table_number",
+                    "type": "short_text",
+                    "label": "Assigned Table Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Reservations",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:reservations",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Reservations by Table Pref",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:reservations",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "table_pref",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Reservations",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:reservations",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "kitchen-tickets",
+            "title": "Kitchen Tickets",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"kitchen_tickets\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Kitchen Tickets",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "kitchen_tickets",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "table_id": "table_id",
+                        "table_number": "table_number",
+                        "course": "course",
+                        "items": "items",
+                        "status": "status",
+                        "priority": "priority",
+                        "allergy_notes": "allergy_notes",
+                        "server_id": "server_id",
+                        "server_name": "server_name"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Kitchen Tickets",
+                    "description": "Connected live to SQLite table \"kitchen_tickets\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "table_id",
+                    "type": "linked_record",
+                    "label": "Table",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:dining-tables",
+                        "displayFieldIds": [
+                            "table_number",
+                            "section"
+                        ]
+                    }
+                },
+                {
+                    "id": "table_number",
+                    "type": "short_text",
+                    "label": "Table Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "course",
+                    "type": "dropdown",
+                    "label": "Course",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "entree",
+                                "label": "Entree",
+                                "value": "Entree"
+                            },
+                            {
+                                "id": "mains",
+                                "label": "Mains",
+                                "value": "Mains"
+                            },
+                            {
+                                "id": "desserts",
+                                "label": "Desserts",
+                                "value": "Desserts"
+                            },
+                            {
+                                "id": "drinks",
+                                "label": "Drinks",
+                                "value": "Drinks"
+                            }
+                        ],
+                        "defaultValue": "Mains"
+                    }
+                },
+                {
+                    "id": "items",
+                    "type": "short_text",
+                    "label": "Items",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "seated",
+                                "label": "Seated",
+                                "value": "Seated"
+                            },
+                            {
+                                "id": "mains_firing",
+                                "label": "Mains Firing",
+                                "value": "Mains Firing"
+                            },
+                            {
+                                "id": "check_dropped",
+                                "label": "Check Dropped",
+                                "value": "Check Dropped"
+                            },
+                            {
+                                "id": "needs_cleaning",
+                                "label": "Needs Cleaning",
+                                "value": "Needs Cleaning"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "fire",
+                                "label": "Fire",
+                                "value": "Fire"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "pass",
+                                "label": "Pass",
+                                "value": "Pass"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "eighty_sixed",
+                                "label": "Eighty-sixed",
+                                "value": "Eighty-sixed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Fire"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "priority",
+                                "label": "Priority",
+                                "value": "Priority"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "allergy_notes",
+                    "type": "long_text",
+                    "label": "Allergy Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "server_id",
+                    "type": "number",
+                    "label": "Server",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "server_name",
+                    "type": "short_text",
+                    "label": "Server Name",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Kitchen Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Kitchen Tickets by Course",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "course",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Kitchen Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:kitchen-tickets",
+                                "titleField": "table_number",
+                                "limit": 10,
+                                "subtitleField": "course"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "prep-items",
+            "title": "Prep Items",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"prep_items\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Prep Items",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "prep_items",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "prep_item": "prep_item",
+                        "station": "station",
+                        "quantity_needed": "quantity_needed",
+                        "unit": "unit",
+                        "due_by": "due_by",
+                        "status": "status",
+                        "assigned_to_id": "assigned_to_id",
+                        "assigned_to_name": "assigned_to_name"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Prep Items",
+                    "description": "Connected live to SQLite table \"prep_items\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "prep_item",
+                    "type": "short_text",
+                    "label": "Prep Item",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "station",
+                    "type": "dropdown",
+                    "label": "Station",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "main",
+                                "label": "Main",
+                                "value": "Main"
+                            },
+                            {
+                                "id": "patio",
+                                "label": "Patio",
+                                "value": "Patio"
+                            },
+                            {
+                                "id": "bar",
+                                "label": "Bar",
+                                "value": "Bar"
+                            },
+                            {
+                                "id": "private",
+                                "label": "Private",
+                                "value": "Private"
+                            },
+                            {
+                                "id": "hot_line",
+                                "label": "Hot line",
+                                "value": "Hot line"
+                            },
+                            {
+                                "id": "cold_larder",
+                                "label": "Cold larder",
+                                "value": "Cold larder"
+                            },
+                            {
+                                "id": "pastry",
+                                "label": "Pastry",
+                                "value": "Pastry"
+                            },
+                            {
+                                "id": "cold",
+                                "label": "Cold",
+                                "value": "Cold"
+                            },
+                            {
+                                "id": "hot",
+                                "label": "Hot",
+                                "value": "Hot"
+                            }
+                        ],
+                        "defaultValue": "Hot"
+                    }
+                },
+                {
+                    "id": "quantity_needed",
+                    "type": "number",
+                    "label": "Quantity Needed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "dropdown",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "portions",
+                                "label": "portions",
+                                "value": "portions"
+                            },
+                            {
+                                "id": "kg",
+                                "label": "kg",
+                                "value": "kg"
+                            },
+                            {
+                                "id": "litres",
+                                "label": "litres",
+                                "value": "litres"
+                            },
+                            {
+                                "id": "trays",
+                                "label": "trays",
+                                "value": "trays"
+                            }
+                        ],
+                        "defaultValue": "portions"
+                    }
+                },
+                {
+                    "id": "due_by",
+                    "type": "short_text",
+                    "label": "Due By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "seated",
+                                "label": "Seated",
+                                "value": "Seated"
+                            },
+                            {
+                                "id": "mains_firing",
+                                "label": "Mains Firing",
+                                "value": "Mains Firing"
+                            },
+                            {
+                                "id": "check_dropped",
+                                "label": "Check Dropped",
+                                "value": "Check Dropped"
+                            },
+                            {
+                                "id": "needs_cleaning",
+                                "label": "Needs Cleaning",
+                                "value": "Needs Cleaning"
+                            },
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "fire",
+                                "label": "Fire",
+                                "value": "Fire"
+                            },
+                            {
+                                "id": "cooking",
+                                "label": "Cooking",
+                                "value": "Cooking"
+                            },
+                            {
+                                "id": "pass",
+                                "label": "Pass",
+                                "value": "Pass"
+                            },
+                            {
+                                "id": "served",
+                                "label": "Served",
+                                "value": "Served"
+                            },
+                            {
+                                "id": "not_started",
+                                "label": "Not started",
+                                "value": "Not started"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "eighty_sixed",
+                                "label": "Eighty-sixed",
+                                "value": "Eighty-sixed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Not started"
+                    }
+                },
+                {
+                    "id": "assigned_to_id",
+                    "type": "number",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to_name",
+                    "type": "short_text",
+                    "label": "Assigned To Name",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Prep Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:prep-items",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Prep Items by Station",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:prep-items",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "station",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Prep Items",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:prep-items",
+                                "titleField": "prep_item",
+                                "limit": 10,
+                                "subtitleField": "station"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "shift-closes",
+            "title": "Shift Closes",
+            "icon": "ChefHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"shift_closes\" in PassMaster.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Shift Closes",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:passmaster-restaurant-softn-app",
+                    "table": "shift_closes",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "close_date": "close_date",
+                        "covers_served": "covers_served",
+                        "sales_cents": "sales_cents",
+                        "voids_comps_cents": "voids_comps_cents",
+                        "incidents": "incidents",
+                        "cleaning_json": "cleaning_json",
+                        "manager_signoff": "manager_signoff"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Shift Closes",
+                    "description": "Connected live to SQLite table \"shift_closes\" in PassMaster.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "close_date",
+                    "type": "date",
+                    "label": "Close Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "covers_served",
+                    "type": "number",
+                    "label": "Covers Served",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "sales_cents",
+                    "type": "number",
+                    "label": "Sales (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "voids_comps_cents",
+                    "type": "number",
+                    "label": "Voids Comps (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incidents",
+                    "type": "short_text",
+                    "label": "Incidents",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cleaning_json",
+                    "type": "short_text",
+                    "label": "Cleaning Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "manager_signoff",
+                    "type": "short_text",
+                    "label": "Manager Signoff",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Shift Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:shift-closes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Shift Closes",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:shift-closes",
+                                "titleField": "close_date",
+                                "limit": 10,
+                                "subtitleField": "covers_served"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "passmaster-restaurant-softn-app",
+            "name": "PassMaster",
+            "description": "Turnkey restaurant front-of-house & kitchen pass: interactive section floor map, reservations book with 1-click table seating, course kitchen pass with red allergy alerts, station prep checklist, brigade roster and nightly shift close.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "passmaster-restaurant-softn-forms",
+            "name": "PassMaster Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to PassMaster's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:passmaster-restaurant-softn-app",
+                "linkedSoftnAppId": "@packApp:passmaster-restaurant-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "brigade-staff",
+                    "displayName": "Brigade Staff",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "dining-tables",
+                    "displayName": "Dining Tables",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "reservations",
+                    "displayName": "Reservations",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "kitchen-tickets",
+                    "displayName": "Kitchen Tickets",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "prep-items",
+                    "displayName": "Prep Items",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "shift-closes",
+                    "displayName": "Shift Closes",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_brigade_staff",
+                    "name": "Total Brigade Staff",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:brigade-staff",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_brigade_staff",
+                    "name": "Brigade Staff by Role",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:brigade-staff",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "role",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_dining_tables",
+                    "name": "Total Dining Tables",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:dining-tables",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_dining_tables",
+                    "name": "Dining Tables by Section",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:dining-tables",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "section",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_reservations",
+                    "name": "Total Reservations",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:reservations",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_kitchen_tickets",
+                    "name": "Total Kitchen Tickets",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:kitchen-tickets",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Brigade Staff",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:brigade-staff",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Brigade Staff by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:brigade-staff",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Dining Tables",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:dining-tables",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Dining Tables by Section",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:dining-tables",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "section",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Reservations",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:reservations",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Kitchen Tickets",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:kitchen-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

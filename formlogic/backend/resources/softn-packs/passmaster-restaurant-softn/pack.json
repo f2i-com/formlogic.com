@@ -1,0 +1,48 @@
+{
+    "id": "passmaster-restaurant-softn",
+    "slug": "passmaster-restaurant-softn",
+    "name": "PassMaster — SoftN App & Linked Forms",
+    "shortName": "PassMaster",
+    "description": "Turnkey restaurant front-of-house & kitchen pass: interactive section floor map, reservations book with 1-click table seating, course kitchen pass with red allergy alerts, station prep checklist, brigade roster and nightly shift close. Includes the full-stack SoftN application (PHP + SQLite) plus 6 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "ChefHat",
+    "category": "Business apps",
+    "tags": [
+        "restaurant",
+        "reservations",
+        "kitchen",
+        "tables",
+        "hospitality",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "passmaster-restaurant-softn.softn",
+    "softnPackAppId": "passmaster-restaurant-softn-app",
+    "formsPackAppId": "passmaster-restaurant-softn-forms",
+    "companionPackSlug": "passmaster-restaurant",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "brigade_staff",
+        "dining_tables",
+        "reservations",
+        "kitchen_tickets",
+        "prep_items",
+        "shift_closes"
+    ],
+    "formCount": 6,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/passmaster-restaurant.png"
+        }
+    ]
+}

@@ -1,0 +1,55 @@
+{
+    "id": "finance-os-us-softn",
+    "slug": "finance-os-us-softn",
+    "name": "Finance OS (US) — SoftN App & Linked Forms",
+    "shortName": "Finance OS (US)",
+    "description": "Turnkey US RIA & wealth compliance workbench: client onboarding, SEC Form CRS & W-9 tracking, Reg BI risk tolerance scorer, tiered AUM fee agreement calculator, ACAT/Rollover/1035 transfers hub, 100%-validated beneficiary designations, POA, annual reviews and document vault. Includes the full-stack SoftN application (PHP + SQLite) plus 10 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "DollarSign",
+    "category": "Business apps",
+    "tags": [
+        "finance",
+        "compliance",
+        "onboarding",
+        "united-states",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "finance-os-us-softn.softn",
+    "softnPackAppId": "finance-os-us-softn-app",
+    "formsPackAppId": "finance-os-us-softn-forms",
+    "companionPackSlug": "finance-os-us",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "us_clients",
+        "us_risk_assessments",
+        "us_fee_agreements",
+        "us_acat_transfers",
+        "us_rollovers",
+        "us_exchanges_1035",
+        "us_beneficiaries",
+        "us_poas",
+        "us_annual_reviews",
+        "us_documents"
+    ],
+    "formCount": 10,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/finance-os-us-2.png"
+        },
+        {
+            "label": "Additional app dashboard",
+            "url": "/api/packs/screenshots/finance-os-us.png"
+        }
+    ]
+}

@@ -13,7 +13,7 @@
 // address of it that names a SoftN app comes here (lib/softnApps: softnPathForStudio).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { Braces, Check, ClipboardList, Code2, Copy, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Mic, PackagePlus, Palette, Monitor, PencilRuler, RefreshCw, Rocket, Settings as SettingsIcon, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
+import { Braces, Check, ClipboardList, Code2, Copy, Download, ExternalLink, FolderOpen, Globe, Lock, MessageSquare, Mic, PackagePlus, Palette, Monitor, PencilRuler, Puzzle, RefreshCw, Rocket, Settings as SettingsIcon, ShieldCheck, Smartphone, Sparkles, Upload, Users, Wallet, Wand2 } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Textarea } from '../../components/ui/Textarea';
@@ -34,6 +34,8 @@ import { SoftnMembers } from '../../components/apps/SoftnMembers';
 import { SoftnAutomations } from '../../components/apps/SoftnAutomations';
 import { SoftnHistory } from '../../components/apps/SoftnHistory';
 import { SoftnApi } from '../../components/apps/SoftnApi';
+import { SoftnDatabaseHub } from '../../components/apps/SoftnDatabaseHub';
+import { AppPluginsPanel } from '../../components/apps/AppPluginsPanel';
 import { AppPaymentsPanel } from '../../components/apps/AppPaymentsPanel';
 import { BringDataPanel } from '../../components/apps/BringDataPanel';
 import { AddBackendPanel } from '../../components/apps/AddBackendPanel';
@@ -162,6 +164,9 @@ function Workspace({ app }: { app: App }) {
   const [change, setChange] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [confirmUnpublish, setConfirmUnpublish] = useState(false);
+  const [confirmLeaveTo, setConfirmLeaveTo] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [dataRefreshKey, setDataRefreshKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const upload = useRef<HTMLInputElement>(null);
   const buildUpload = useRef<HTMLInputElement>(null);
@@ -175,6 +180,7 @@ function Workspace({ app }: { app: App }) {
     return Array.isArray(from) ? from.filter((note): note is string => typeof note === 'string') : [];
   });
   const published = app.status === 'published';
+  const sourceProtected = app.settings?.sourceProtected === true;
   const userId = useAuthStore(s => s.user?.id);
   const isOwner = app.ownerId === userId;
   // Current app-list responses include the attachment count. Older ones need one lookup.
@@ -419,7 +425,10 @@ function Workspace({ app }: { app: App }) {
     }
   };
 
-  const leave = (to: string) => { if (!dirty || window.confirm(draft.leaveMessage('Leave without publishing?'))) navigate(to); };
+  const leave = (to: string) => {
+    if (!dirty) { navigate(to); return; }
+    setConfirmLeaveTo(to);
+  };
   const navigation = useHostedWorkspaceNavigation(app.id, { isOwner, managesMembers, backend, liveBackend, hasForms }, !!project && ready);
   const hasSidebar = useAppSectionSidebar(app, project && !editor && !advanced && known ? navigation : null, leave);
 
@@ -481,7 +490,7 @@ function Workspace({ app }: { app: App }) {
       {/* An app with nothing installed has no sections yet: its state stands alone. */}
       {!project && statusLine}
 
-      <Messages draft={draft} />
+      <Messages draft={draft} onRequestDiscard={() => setConfirmDiscard(true)} />
 
       {!ready && !draft.error && <p role="status" className="mt-8 text-sm text-slate-500">Loading your app…</p>}
       {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} aiReason={ai.reason} onAiRecheck={ai.recheck} pendingOpen={pendingOpen ?? starterFromHistory(app.id, location.state)}
@@ -518,9 +527,13 @@ function Workspace({ app }: { app: App }) {
             new version, as a publish does: the page reads its project again, and the preview under
             Edit shows the app as it now is. */}
         {section === 'history' && (isOwner
-          ? <SoftnHistory key={app.id} app={app} version={version} open={historyOpen} file={historyFile} backend={backend} readOnly={readOnly}
-            waiting={dirty ? 'Publish or discard your unpublished changes first: going back makes a new version.' : busy ? 'The app is being saved. Try again in a moment.' : null}
-            onRestored={() => { setReloadKey(key => key + 1); reloadPreview(); }} />
+          ? sourceProtected
+            ? <p className="mt-6 max-w-2xl rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                Source history is disabled for source-protected Marketplace apps.
+              </p>
+            : <SoftnHistory key={app.id} app={app} version={version} open={historyOpen} file={historyFile} backend={backend} readOnly={readOnly}
+                waiting={dirty ? 'Publish or discard your unpublished changes first: going back makes a new version.' : busy ? 'The app is being saved. Try again in a moment.' : null}
+                onRestored={() => { setReloadKey(key => key + 1); reloadPreview(); }} />
           : <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner sees its earlier versions and goes back to one.</p>)}
 
         {/* The app's API, for SoftN and JavaScript apps alike: the routes of the app as it is live
@@ -529,7 +542,7 @@ function Workspace({ app }: { app: App }) {
         {section === 'api' && (!isOwner
           ? <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner sees its API and the calls it has had.</p>
           : backend || liveBackend
-            ? <SoftnApi key={app.id} app={app} access={draft.installedAccess ?? project.access} manifest={draft.installedFiles?.['manifest.json']} version={version} dirty={dirty} readOnly={readOnly} />
+            ? <SoftnApi key={app.id} app={app} access={draft.installedAccess ?? project.access} manifest={draft.installedFiles?.['manifest.json']} version={version} dirty={dirty} readOnly={readOnly} onNavigate={leave} />
             : <p className="mt-6 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
               <span className="font-semibold text-slate-900 dark:text-white">This app has no backend, so it has no API.</span> What its pages save stays in each visitor&rsquo;s browser.{' '}
               <Link to={softnWorkspacePath(app.id, 'data')} className="font-medium text-primary-600 underline-offset-2 hover:underline dark:text-primary-300">Add a backend</Link>
@@ -576,7 +589,23 @@ function Workspace({ app }: { app: App }) {
             </div>}
           </section>
 
-          {!readOnly && isSite && <aside className="space-y-4">
+          {!readOnly && sourceProtected && <aside className="space-y-4">
+            <Panel title="Source Protected" icon={<ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />}>
+              <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+                This app was installed from a private FormLogic Marketplace listing. Its source files and downloads are protected on the server, while you retain full control over its live database, linked Forms &amp; Charts, Plugins, Automations, Members, and Domains.
+              </p>
+              <div className="mt-3 flex flex-col gap-2">
+                <Link to={softnWorkspacePath(app.id, 'data')} className="inline-flex h-9 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200">
+                  Manage Data, Forms &amp; Charts
+                </Link>
+                <Link to={`${softnWorkspacePath(app.id, 'settings')}#settings-plugins`} className="inline-flex h-9 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/30 dark:bg-indigo-500/15 dark:text-indigo-200">
+                  Manage Modular Plugins
+                </Link>
+              </div>
+            </Panel>
+          </aside>}
+
+          {!readOnly && !sourceProtected && isSite && <aside className="space-y-4">
             <Panel title="Update your app" icon={<Upload className="h-4 w-4" />}>
               <input ref={buildUpload} type="file" accept=".zip,application/zip" className="hidden" aria-label="Upload a new build" onChange={event => { void uploadBuild(event.target.files?.[0]); event.target.value = ''; }} />
               <Button className="w-full justify-start" disabled={busy || !!preparing} leftIcon={<Upload className="h-4 w-4" />} onClick={() => buildUpload.current?.click()}>Upload a new build (.zip)</Button>
@@ -602,7 +631,7 @@ function Workspace({ app }: { app: App }) {
             </Panel>
           </aside>}
 
-          {!readOnly && !isSite && <aside className="space-y-4">
+          {!readOnly && !sourceProtected && !isSite && <aside className="space-y-4">
             <Panel title="Change your app" icon={<Wand2 className="h-4 w-4" />}>
               <label htmlFor="softn-change" className="text-xs font-medium text-slate-600 dark:text-slate-300">Describe a change for AI Studio</label>
               <Textarea id="softn-change" rows={4} value={change} onChange={event => setChange(event.target.value)} disabled={ai.ready !== true}
@@ -644,10 +673,18 @@ function Workspace({ app }: { app: App }) {
         </div>}
 
         {section === 'data' && (liveBackend
-          ? <section aria-label="Data" className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:min-h-0 lg:flex-1">
+          ? <>
+            <SoftnDatabaseHub
+              app={app}
+              readOnly={readOnly}
+              isOwner={isOwner}
+              activeTable={dataTable}
+              onDatabaseChanged={() => setDataRefreshKey(k => k + 1)}
+            />
+            <section aria-label="Data" className="mt-3 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 lg:min-h-0 lg:flex-1">
             {/* The table, its view and what is being looked at in it (search, filters, sort, page, the
                 open row) are the address: Back, a reload and a copied link return to the same thing. */}
-            <DataManager key={app.id} appId={app.id} appSlug={app.slug} version={version} readOnly={readOnly} table={dataTable} view={dataView}
+            <DataManager key={`${app.id}:${dataRefreshKey}`} appId={app.id} appSlug={app.slug} version={version} readOnly={readOnly} table={dataTable} view={dataView}
               emptyAction={isOwner && installedApi.routes.length > 0 && <Link to={softnWorkspacePath(app.id, 'api')} className="mt-2 inline-flex min-h-10 items-center gap-2 font-medium text-primary-700 hover:underline dark:text-primary-300"><Braces className="size-4" aria-hidden="true" />Open API routes</Link>}
               query={location.search.replace(/^\?/, '')}
               onNavigate={(table, view, query, options) => navigate(
@@ -663,6 +700,7 @@ function Workspace({ app }: { app: App }) {
                   }} />
                 : undefined} />
           </section>
+          </>
           : backend ? <section aria-label="Data" className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
             <h2 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">Your backend is in the draft.</h2>
             <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{published
@@ -716,7 +754,7 @@ function Workspace({ app }: { app: App }) {
             {([['settings-access', 'Who can use it', true], ['settings-before', 'Before it opens', isOwner], ['settings-files', 'Files on this device', isOwner && !isSite],
               ['settings-listening', 'Listening', isOwner && !isSite], ['settings-apps', 'Apps it makes', isOwner && !isSite], ['settings-outside', 'Outside sites', isOwner && isSite],
               ['settings-signin', 'Phone sign-in codes', showsCodes], ['app-ai-settings', 'AI', isOwner && backend && declaresFormlogicAi(project)],
-              ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-look', 'Look and sharing', isOwner],
+              ['settings-payments', 'Payments', isOwner && backend && declaresFormlogicPayments(project)], ['settings-plugins', 'Modular plugins', isOwner], ['settings-look', 'Look and sharing', isOwner],
               ['settings-engine', 'Engine', !isSite && !!(draft.engine && draft.enginePolicy)], ['settings-more', 'More tools', true]] as const)
               .filter(([, , shown]) => shown).map(([id, label]) =>
                 <Link key={id} to={{ hash: `#${id}` }} replace className="inline-flex items-center font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300 max-sm:min-h-11">{label}</Link>)}
@@ -785,9 +823,12 @@ function Workspace({ app }: { app: App }) {
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} webContainer={!!project && usesWebContainer(project.files)} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
             <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>
           </Panel>}
+          {isOwner && <div id="settings-plugins" className="min-w-0 scroll-mt-24"><Panel title="Modular plugins" icon={<Puzzle className="h-4 w-4 text-indigo-500" />}>
+            <AppPluginsPanel appId={app.id} hasNativeDatabase={liveBackend} readOnly={readOnly} />
+          </Panel></div>}
           <Panel id="settings-more" title="More tools" icon={<Code2 className="h-4 w-4" />}>
             <div className="flex flex-col items-start gap-1">
-              <Button variant="ghost" size="sm" onClick={() => setAdvanced(isSite && backend ? 'backend' : 'project')} leftIcon={<Code2 className="h-4 w-4" />}>{isSite ? (backend ? 'Edit the backend code' : 'Edit the app’s manifest') : 'Edit the source code'}</Button>
+              {!sourceProtected && <Button variant="ghost" size="sm" onClick={() => setAdvanced(isSite && backend ? 'backend' : 'project')} leftIcon={<Code2 className="h-4 w-4" />}>{isSite ? (backend ? 'Edit the backend code' : 'Edit the app’s manifest') : 'Edit the source code'}</Button>}
               {isOwner && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/studio/data?new=form`)} leftIcon={<ClipboardList className="h-4 w-4" />}>Add a form</Button>}
               {app.ownerId === userId && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/settings`)} leftIcon={<SettingsIcon className="h-4 w-4" />}>Name, address and deleting the app</Button>}
             </div>
@@ -798,6 +839,12 @@ function Workspace({ app }: { app: App }) {
     </div>
     <ConfirmDialog isOpen={confirmUnpublish} onClose={() => setConfirmUnpublish(false)} onConfirm={() => void unpublish()}
       title="Unpublish this app?" message="Nobody but you can open it until you publish again. Its data is kept." confirmLabel="Unpublish" />
+    <ConfirmDialog isOpen={confirmLeaveTo !== null} onClose={() => setConfirmLeaveTo(null)}
+      onConfirm={() => { const dest = confirmLeaveTo; setConfirmLeaveTo(null); if (dest) navigate(dest); }}
+      title="Leave without publishing?" message={draft.leaveMessage('You have unpublished changes that will stay in your draft.')} confirmLabel="Leave page" />
+    <ConfirmDialog isOpen={confirmDiscard} onClose={() => setConfirmDiscard(false)}
+      onConfirm={() => { setConfirmDiscard(false); draft.revert(); }}
+      title="Discard unpublished changes?" message="Your unpublished draft changes will be discarded and reverted to the last installed version." confirmLabel="Discard changes" variant="danger" />
   </div>;
 }
 
@@ -863,7 +910,7 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, pendingOpen, onInstalled }
   </section>;
 }
 
-function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }) {
+function Messages({ draft, onRequestDiscard }: { draft: ReturnType<typeof useNativeProjectDraft>; onRequestDiscard: () => void }) {
   const { ready, readOnly, available, preflight, error, notice, conflict, base, version, recoverable, busy, project } = draft;
   // The runtime runs backends only: an app with none is not stopped by its absence.
   const needsRuntime = !project || projectHasBackend(project);
@@ -879,7 +926,7 @@ function Messages({ draft }: { draft: ReturnType<typeof useNativeProjectDraft> }
     {conflict && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">These changes started from version {base}; version {version} was published since. Publishing replaces version {version}.</p>}
     {draft.dirty && !busy && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary-200 bg-primary-50/70 p-3 text-sm text-primary-900 dark:border-primary-500/30 dark:bg-primary-950/30 dark:text-primary-100">
       <span className="min-w-0 flex-1">You have changes that are not live yet.</span>
-      <Button size="sm" variant="ghost" onClick={() => { if (window.confirm('Discard your unpublished changes?')) draft.revert(); }}>Discard</Button>
+      <Button size="sm" variant="ghost" onClick={onRequestDiscard}>Discard</Button>
     </div>}
     {recoverable && <div role="region" aria-label="Unpublished draft" className="rounded-xl border border-primary-200 bg-primary-50/60 p-4 text-sm dark:border-primary-500/40 dark:bg-primary-950/20">
       <p className="font-medium text-slate-900 dark:text-white">Unpublished changes from {new Date(recoverable.savedAt).toLocaleString()} are kept in this browser.</p>

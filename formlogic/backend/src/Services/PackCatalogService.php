@@ -13,8 +13,10 @@ class PackCatalogService
      * Marketplace item types (spec §30). Only 'application_package' has a runtime install target today.
      * 'quickjs_library' mirrors the pack_catalog.item_type DB enum; the name is historical (scripts now run on ZIPP).
      */
-    public const ITEM_TYPES = ['application_package', 'connector', 'theme', 'widget', 'quickjs_library', 'sdk_component', 'template'];
+    public const ITEM_TYPES = ['application_package', 'softn_app', 'plugin', 'connector', 'theme', 'widget', 'quickjs_library', 'sdk_component', 'template'];
     public const TRUST_LEVELS = ['official', 'verified', 'community', 'private'];
+    public const SOURCE_VISIBILITIES = ['open', 'private'];
+    public const BILLING_MODELS = ['free', 'one_time', 'subscription'];
 
     private PDO $mysql;
 
@@ -32,15 +34,35 @@ class PackCatalogService
         $limit = max(1, min(100, $limit));
         $catalog = (new FolderPackCatalog())->load();
         $entries = $catalog['entries'];
-        $filters['_folderSlugs'] = $catalog['reserved'];
-        $folder = array_values(array_filter(array_map([FolderPackCatalog::class, 'summary'], $entries), static function ($p) use ($filters) {
-            if (!empty($filters['search']) && !str_contains(strtolower($p['name'] . ' ' . $p['description'] . ' ' . implode(' ', $p['tags'])), strtolower((string)$filters['search']))) return false;
+        $softnCatalog = new SoftnPackCatalog();
+        $softnEntries = $softnCatalog->loadMeta();
+        $filters['_folderSlugs'] = array_values(array_unique([...$catalog['reserved'], ...array_keys($softnEntries)]));
+
+        $matchesFilter = static function (array $p) use ($filters): bool {
+            if (!empty($filters['search']) && !str_contains(strtolower($p['name'] . ' ' . $p['description'] . ' ' . implode(' ', $p['tags'])), strtolower((string) $filters['search']))) return false;
             foreach (['category', 'itemType', 'trustLevel'] as $key) if (!empty($filters[$key]) && $p[$key] !== $filters[$key]) return false;
+            if (!empty($filters['pricing']) && $filters['pricing'] === 'paid') return false;
+            if (!empty($filters['compatibleWith'])) return false;
             return empty($filters['tag']) || in_array($filters['tag'], $p['tags'], true);
-        }));
+        };
+
+        $folder = array_values(array_filter(array_map(static function (array $e) use ($softnCatalog): array {
+            $s = FolderPackCatalog::summary($e);
+            $comp = $softnCatalog->companionSoftnSlugFor((string) ($e['id'] ?? ''));
+            if ($comp !== null) {
+                $s['companionSoftnSlug'] = $comp;
+            }
+            return $s;
+        }, $entries), $matchesFilter));
+
+        $softnPacks = array_values(array_filter(array_map(
+            static fn(array $m): array => SoftnPackCatalog::summary($m, false),
+            $softnEntries
+        ), $matchesFilter));
+
         // Only the prefix needed for this page is fetched from SQL. Folder entries use the same ordering.
         $db = $this->listDatabasePacks($filters, $sort, 1, $page * $limit);
-        $all = [...$db['packs'], ...$folder];
+        $all = [...$db['packs'], ...$softnPacks, ...$folder];
         usort($all, static function ($a, $b) use ($sort) {
             $order = match ($sort) {
                 'name' => strcasecmp($a['name'], $b['name']),
@@ -50,7 +72,7 @@ class PackCatalogService
             };
             return $order ?: strcmp($a['id'], $b['id']);
         });
-        $total = $db['total'] + count($folder);
+        $total = $db['total'] + count($folder) + count($softnPacks);
         return ['packs' => array_slice($all, ($page - 1) * $limit, $limit), 'total' => $total, 'page' => $page, 'limit' => $limit, 'totalPages' => (int)ceil($total / $limit)];
     }
 
@@ -102,6 +124,19 @@ class PackCatalogService
         if (!empty($filters['tag'])) {
             $where[] = "JSON_CONTAINS(pc.tags, :tag)";
             $params['tag'] = json_encode($filters['tag']);
+        }
+
+        if (!empty($filters['pricing'])) {
+            if ($filters['pricing'] === 'free') {
+                $where[] = "(pc.billing_model = 'free' OR pc.price_cents = 0)";
+            } elseif ($filters['pricing'] === 'paid') {
+                $where[] = "(pc.billing_model != 'free' AND pc.price_cents > 0)";
+            }
+        }
+
+        if (!empty($filters['compatibleWith']) && is_string($filters['compatibleWith'])) {
+            $where[] = "(pc.compatible_with = :compatExact OR pc.compatible_with = 'any' OR pc.compatible_with IS NULL)";
+            $params['compatExact'] = $filters['compatibleWith'];
         }
 
         $whereClause = implode(' AND ', $where);
@@ -172,12 +207,15 @@ class PackCatalogService
     public function getFacets(): array
     {
         $folders = (new FolderPackCatalog())->load();
+        $softnEntries = (new SoftnPackCatalog())->loadMeta();
+        $reservedSlugs = array_values(array_unique([...$folders['reserved'], ...array_keys($softnEntries)]));
         $rows = $this->mysql->query("SELECT slug, category, tags FROM pack_catalog WHERE status='published' AND visibility='public'")->fetchAll();
         $visible = [];
         foreach ($rows as $row) {
-            if (!in_array($row['slug'], $folders['reserved'], true)) $visible[] = ['category' => $row['category'], 'tags' => json_decode($row['tags'] ?? '[]', true) ?: []];
+            if (!in_array($row['slug'], $reservedSlugs, true)) $visible[] = ['category' => $row['category'], 'tags' => json_decode($row['tags'] ?? '[]', true) ?: []];
         }
         foreach ($folders['entries'] as $entry) $visible[] = $entry;
+        foreach ($softnEntries as $entry) $visible[] = $entry;
         $categories = []; $tags = [];
         foreach ($visible as $entry) {
             if (!empty($entry['category'])) $categories[$entry['category']] = ($categories[$entry['category']] ?? 0) + 1;
@@ -215,8 +253,22 @@ class PackCatalogService
     {
         $folders = (new FolderPackCatalog())->load();
         $slug = FolderPackCatalog::resolveSlug($folders, $slug);
-        if (isset($folders['entries'][$slug])) return FolderPackCatalog::summary($folders['entries'][$slug]);
+        $softnCatalog = new SoftnPackCatalog();
+        if (isset($folders['entries'][$slug])) {
+            $summary = FolderPackCatalog::summary($folders['entries'][$slug]);
+            $comp = $softnCatalog->companionSoftnSlugFor($slug);
+            if ($comp !== null) {
+                $summary['companionSoftnSlug'] = $comp;
+            }
+            return $summary;
+        }
         if (in_array($slug, $folders['hidden'], true)) return null;
+        $softnMeta = $softnCatalog->getMeta($slug);
+        if ($softnMeta !== null) {
+            $detail = SoftnPackCatalog::summary($softnMeta, true);
+            $detail['compatiblePlugins'] = $this->listCompatiblePluginsForSlug($slug);
+            return $detail;
+        }
         $stmt = $this->mysql->prepare("
             SELECT pc.*,
                    u.name AS publisher_name,
@@ -268,6 +320,11 @@ class PackCatalogService
         $result['formTitles'] = $formTitles;
         $result['appNames'] = $appNames;
 
+        // If this is a SoftN App, also list compatible published marketplace plugins!
+        if (($pack['item_type'] ?? '') === 'softn_app') {
+            $result['compatiblePlugins'] = $this->listCompatiblePluginsForSlug((string) $pack['slug']);
+        }
+
         // Get all versions
         $vStmt = $this->mysql->prepare("
             SELECT id, version, changelog, form_count, app_count, created_at
@@ -279,6 +336,31 @@ class PackCatalogService
         $result['versions'] = $vStmt->fetchAll();
 
         return $result;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function listCompatiblePluginsForSlug(string $slug): array
+    {
+        try {
+            $pStmt = $this->mysql->prepare(
+                "SELECT pc.*, u.name AS publisher_name, u.email AS publisher_email,
+                        pv.version AS latest_version, pv.format_version, pv.form_count, pv.app_count, pv.node_count
+                 FROM pack_catalog pc
+                 JOIN users u ON u.id = pc.publisher_id
+                 LEFT JOIN pack_versions pv ON pv.id = (
+                     SELECT pv2.id FROM pack_versions pv2 WHERE pv2.catalog_id = pc.id
+                     ORDER BY pv2.created_at DESC, pv2.id DESC LIMIT 1
+                 )
+                 WHERE pc.status = 'published' AND pc.visibility = 'public' AND pc.item_type = 'plugin'
+                   AND (pc.compatible_with = :slug OR pc.compatible_with = 'softn' OR pc.compatible_with = 'any' OR pc.compatible_with IS NULL)
+                 ORDER BY pc.download_count DESC, pc.created_at DESC
+                 LIMIT 8"
+            );
+            $pStmt->execute(['slug' => $slug]);
+            return array_map(fn($r) => $this->formatPack($r), $pStmt->fetchAll());
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /**
@@ -298,6 +380,26 @@ class PackCatalogService
         $itemType = (isset($metadata['itemType']) && in_array($metadata['itemType'], self::ITEM_TYPES, true))
             ? $metadata['itemType'] : 'application_package';
         $visibility = $metadata['visibility'] ?? 'public';
+        $sourceVisibility = (isset($metadata['sourceVisibility']) && in_array($metadata['sourceVisibility'], self::SOURCE_VISIBILITIES, true))
+            ? $metadata['sourceVisibility'] : 'open';
+        $billingModel = (isset($metadata['billingModel']) && in_array($metadata['billingModel'], self::BILLING_MODELS, true))
+            ? $metadata['billingModel'] : 'free';
+        $priceCents = max(0, min(10_000_000, (int) ($metadata['priceCents'] ?? 0)));
+        if ($billingModel === 'free') {
+            $priceCents = 0;
+        } elseif ($priceCents === 0) {
+            $billingModel = 'free';
+        }
+        $currency = strtoupper(trim((string) ($metadata['currency'] ?? 'USD')));
+        if (strlen($currency) !== 3 || !ctype_alpha($currency)) {
+            $currency = 'USD';
+        }
+        $demoEnabled = !empty($metadata['demoEnabled']) ? 1 : 0;
+        $demoAppId = is_string($metadata['demoAppId'] ?? null) && $metadata['demoAppId'] !== '' ? $metadata['demoAppId'] : null;
+        $compatibleWith = is_string($metadata['compatibleWith'] ?? null) && trim($metadata['compatibleWith']) !== ''
+            ? mb_substr(trim($metadata['compatibleWith']), 0, 100) : null;
+        $pluginMeta = isset($metadata['pluginMeta']) && is_array($metadata['pluginMeta'])
+            ? json_encode($metadata['pluginMeta']) : null;
         // trust_level is derived SERVER-SIDE (never from client input): a private listing is 'private';
         // a listing published by the platform's official account is 'official'; everything else is
         // 'community'. NOTE: signature-backed 'verified' is deferred — the publish flow does not yet
@@ -309,8 +411,12 @@ class PackCatalogService
         try {
             // Create catalog entry
             $stmt = $this->mysql->prepare("
-                INSERT INTO pack_catalog (id, slug, publisher_id, name, description, icon, tags, category, item_type, trust_level, visibility, status)
-                VALUES (:id, :slug, :publisher_id, :name, :description, :icon, :tags, :category, :item_type, :trust_level, :visibility, 'published')
+                INSERT INTO pack_catalog
+                    (id, slug, publisher_id, name, description, icon, tags, category, item_type, trust_level, visibility,
+                     source_visibility, price_cents, currency, billing_model, demo_enabled, demo_app_id, compatible_with, plugin_meta, status)
+                VALUES
+                    (:id, :slug, :publisher_id, :name, :description, :icon, :tags, :category, :item_type, :trust_level, :visibility,
+                     :source_visibility, :price_cents, :currency, :billing_model, :demo_enabled, :demo_app_id, :compatible_with, :plugin_meta, 'published')
             ");
             $stmt->execute([
                 'id' => $catalogId,
@@ -324,6 +430,14 @@ class PackCatalogService
                 'item_type' => $itemType,
                 'trust_level' => $trustLevel,
                 'visibility' => $visibility,
+                'source_visibility' => $sourceVisibility,
+                'price_cents' => $priceCents,
+                'currency' => $currency,
+                'billing_model' => $billingModel,
+                'demo_enabled' => $demoEnabled,
+                'demo_app_id' => $demoAppId,
+                'compatible_with' => $compatibleWith,
+                'plugin_meta' => $pluginMeta,
             ]);
 
             // Create initial version
@@ -519,6 +633,28 @@ class PackCatalogService
                 $fields[] = "{$field} = :{$field}";
                 $params[$field] = $metadata[$field];
             }
+        }
+
+        if (array_key_exists('sourceVisibility', $metadata) && in_array($metadata['sourceVisibility'], self::SOURCE_VISIBILITIES, true)) {
+            $fields[] = 'source_visibility = :source_visibility';
+            $params['source_visibility'] = $metadata['sourceVisibility'];
+        }
+        if (array_key_exists('billingModel', $metadata) && in_array($metadata['billingModel'], self::BILLING_MODELS, true)) {
+            $fields[] = 'billing_model = :billing_model';
+            $params['billing_model'] = $metadata['billingModel'];
+        }
+        if (array_key_exists('priceCents', $metadata)) {
+            $fields[] = 'price_cents = :price_cents';
+            $params['price_cents'] = max(0, min(10_000_000, (int) $metadata['priceCents']));
+        }
+        if (array_key_exists('demoEnabled', $metadata)) {
+            $fields[] = 'demo_enabled = :demo_enabled';
+            $params['demo_enabled'] = !empty($metadata['demoEnabled']) ? 1 : 0;
+        }
+        if (array_key_exists('compatibleWith', $metadata)) {
+            $fields[] = 'compatible_with = :compatible_with';
+            $params['compatible_with'] = is_string($metadata['compatibleWith']) && trim($metadata['compatibleWith']) !== ''
+                ? mb_substr(trim($metadata['compatibleWith']), 0, 100) : null;
         }
 
         if (array_key_exists('tags', $metadata)) {
@@ -789,8 +925,27 @@ class PackCatalogService
         ];
     }
 
+    /**
+     * Attach or update the server-hosted private SoftN bundle metadata on a catalog listing.
+     *
+     * @param array<string, mixed> $pluginMeta
+     */
+    public function attachDemoBundle(string $catalogId, string $demoAppId, array $pluginMeta, bool $demoEnabled): void
+    {
+        $stmt = $this->mysql->prepare(
+            'UPDATE pack_catalog SET demo_app_id = :demo_app_id, plugin_meta = :plugin_meta, demo_enabled = :demo_enabled WHERE id = :id'
+        );
+        $stmt->execute([
+            'demo_app_id' => $demoAppId,
+            'plugin_meta' => json_encode($pluginMeta),
+            'demo_enabled' => $demoEnabled ? 1 : 0,
+            'id' => $catalogId,
+        ]);
+    }
+
     private function formatPack(array $row): array
     {
+        $pluginMeta = !empty($row['plugin_meta']) ? json_decode((string) $row['plugin_meta'], true) : null;
         return [
             'id' => $row['id'],
             'slug' => $row['slug'],
@@ -806,6 +961,13 @@ class PackCatalogService
             'itemType' => $row['item_type'] ?? 'application_package',
             'trustLevel' => $row['trust_level'] ?? 'community',
             'visibility' => $row['visibility'],
+            'sourceVisibility' => $row['source_visibility'] ?? 'open',
+            'priceCents' => (int) ($row['price_cents'] ?? 0),
+            'currency' => (string) ($row['currency'] ?? 'USD'),
+            'billingModel' => (string) ($row['billing_model'] ?? 'free'),
+            'demoEnabled' => !empty($row['demo_enabled']) && !empty($row['demo_app_id']),
+            'compatibleWith' => $row['compatible_with'] ?? null,
+            'pluginMeta' => is_array($pluginMeta) ? $pluginMeta : null,
             'status' => $row['status'],
             'downloadCount' => (int)($row['download_count'] ?? 0),
             'avgRating' => (float)($row['avg_rating'] ?? 0),

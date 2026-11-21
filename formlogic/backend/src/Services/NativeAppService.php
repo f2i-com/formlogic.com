@@ -229,10 +229,107 @@ class NativeAppService
      */
     public function __construct(private ?string $storagePath = null, private ?string $runtimePath = null, private ?string $nodeBinary = null, private ?string $runner = null) {}
 
+    /** Private metadata file storing an app's shared-database target app id (JSON: {"appId":"..."}). */
+    private const SHARED_DATABASE_FILE = 'shared-database.json';
+    /** Private metadata file marking a Form App's managed unified SQLite database. */
+    private const FORM_DB_MARKER = 'form-database.json';
+
     private function root(string $appId): string
     {
         if (!preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $appId)) throw new InvalidArgumentException('Invalid app identity');
         return ($this->storagePath ?? dirname(__DIR__, 2) . '/storage/native-apps') . '/' . hash('sha256', $appId);
+    }
+
+    /**
+     * Another app whose SQLite database this app is linked to share, or null when this app uses
+     * its own private database. Single-hop only (a shared target cannot itself be linked).
+     */
+    public function sharedDatabaseAppId(string $appId): ?string
+    {
+        $path = $this->root($appId) . '/private/' . self::SHARED_DATABASE_FILE;
+        if (!is_file($path) || is_link($path)) return null;
+        $decoded = json_decode((string) @file_get_contents($path), true);
+        $target = is_array($decoded) && is_string($decoded['appId'] ?? null) ? $decoded['appId'] : '';
+        if ($target === '' || $target === $appId || !preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $target)) return null;
+        return $target;
+    }
+
+    /** The canonical app id whose `private/data/application.sqlite` stores records for `$appId`. */
+    public function databaseAppId(string $appId): string
+    {
+        return $this->sharedDatabaseAppId($appId) ?? $appId;
+    }
+
+    /**
+     * Link or unlink `$appId` to share `$targetAppId`'s SQLite database. Caller must already have
+     * verified same-account ownership and that `$targetAppId` is not itself linked to another DB.
+     */
+    public function setSharedDatabaseLink(string $appId, ?string $targetAppId): void
+    {
+        $root = $this->root($appId);
+        $file = $root . '/private/' . self::SHARED_DATABASE_FILE;
+        if ($targetAppId === null || $targetAppId === '') {
+            if (is_file($file) && !is_link($file)) @unlink($file);
+            return;
+        }
+        if ($targetAppId === $appId || !preg_match('/^[a-zA-Z0-9_-]{1,100}$/D', $targetAppId)) {
+            throw new InvalidArgumentException('Choose another app to share a database with.');
+        }
+        if ($this->sharedDatabaseAppId($targetAppId) !== null) {
+            throw new InvalidArgumentException('That app already shares another app\'s database. Link directly to the primary database app instead.');
+        }
+        $this->directory($root);
+        $this->directory($root . '/private');
+        $this->writeExact($file, json_encode(['appId' => $targetAppId, 'linkedAt' => gmdate('c')], JSON_THROW_ON_ERROR), 0600);
+    }
+
+    /**
+     * Acquire shared management locks for `$appId` and (when linked) its shared database app in
+     * deterministic sorted order to prevent deadlocks across concurrent requests.
+     *
+     * @return array{0:string, 1:string, 2:string, 3:list<resource>, 4:array|null}
+     *         [appRoot, dbAppId, dbRoot, locks, appProject]
+     */
+    private function openWithDatabase(string $appId, ?int $generation = null, bool $requireProject = false): array
+    {
+        $dbAppId = $this->databaseAppId($appId);
+        if ($dbAppId === $appId) {
+            [$root, $lock, $project] = $this->openShared($appId, $generation, $requireProject);
+            if ($lock === null) throw new RuntimeException('Native app not found', 404);
+            return [$root, $appId, $root, [$lock], $project];
+        }
+        $first = strcmp($appId, $dbAppId) <= 0 ? $appId : $dbAppId;
+        $second = $first === $appId ? $dbAppId : $appId;
+        $locks = [];
+        try {
+            [$r1, $l1, $p1] = $this->openShared($first, $first === $appId ? $generation : null, $first === $appId ? $requireProject : false);
+            if ($l1 === null) throw new RuntimeException($first === $dbAppId ? 'Shared database app not found' : 'Native app not found', 404);
+            $locks[] = $l1;
+            [$r2, $l2, $p2] = $this->openShared($second, $second === $appId ? $generation : null, $second === $appId ? $requireProject : false);
+            if ($l2 === null) throw new RuntimeException($second === $dbAppId ? 'Shared database app not found' : 'Native app not found', 404);
+            $locks[] = $l2;
+            $appRoot = $first === $appId ? $r1 : $r2;
+            $dbRoot = $first === $dbAppId ? $r1 : $r2;
+            $project = $first === $appId ? $p1 : $p2;
+            return [$appRoot, $dbAppId, $dbRoot, $locks, $project];
+        } catch (\Throwable $e) {
+            foreach ($locks as $l) { flock($l, LOCK_UN); fclose($l); }
+            throw $e;
+        }
+    }
+
+    /** @param list<resource> $locks */
+    private static function releaseLocks(array $locks): void
+    {
+        foreach ($locks as $lock) {
+            if (is_resource($lock)) { flock($lock, LOCK_UN); fclose($lock); }
+        }
+    }
+
+    /** Node command for FormLogic's shared-DB / container-event supervisor in `bin/shared-native-runner.mjs`. */
+    public static function sharedRunnerCommand(string $node): array
+    {
+        return [$node, '--max-old-space-size=128', '--disable-proto=throw', '--no-wasm-tier-up', '--no-wasm-dynamic-tiering', dirname(__DIR__, 2) . '/bin/shared-native-runner.mjs'];
     }
 
     public function available(): bool
@@ -257,6 +354,8 @@ class NativeAppService
         $project = $this->get($appId);
         if (!$project) return null;
         $root = $this->root($appId);
+        $sharedDbAppId = $this->sharedDatabaseAppId($appId);
+        $dbRoot = $sharedDbAppId !== null ? $this->root($sharedDbAppId) : $root;
         $manifest = json_decode((string) ($project['files']['manifest.json'] ?? ''), true);
         $capabilities = is_array($manifest['server']['requires']['capabilities'] ?? null) ? array_values(array_map('strval', $manifest['server']['requires']['capabilities'])) : [];
         return [
@@ -265,7 +364,8 @@ class NativeAppService
             'home' => (bool) ($project['home'] ?? false),
             'access' => (string) ($project['access'] ?? 'application'),
             'capabilities' => $capabilities,
-            'hasDatabase' => is_file($root . '/private/data/application.sqlite'),
+            'hasDatabase' => is_file($dbRoot . '/private/data/application.sqlite'),
+            'sharedDatabaseAppId' => $sharedDbAppId,
             'recoveryRequired' => is_file($root . '/private/recovery-required') || ($this->readJournal($root)['phase'] ?? null) === 'recovery',
             'updateUnfinished' => is_file($root . self::JOURNAL),
         ];
@@ -345,10 +445,128 @@ class NativeAppService
      *
      * @return array{0:string, 1:resource|null, 2:array|null} root, the held shared lock, the project (null when not read)
      */
+    /**
+     * Initialize (or verify) a managed SQLite database for a FormLogic Form App so its forms act
+     * directly as live SQLite tables that SoftN apps, API backends, and other Form apps can share.
+     * Returns the absolute path to `private/data/application.sqlite`.
+     */
+    public function initFormAppDatabase(string $appId): string
+    {
+        $root = $this->root($appId);
+        $this->directory($root);
+        $this->directory($root . '/private');
+        $this->directory($root . '/private/data');
+
+        $configPath = $root . '/private/config.json';
+        if (!is_file($configPath)) {
+            $identity = 'formlogic.formdb.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+            $config = [
+                'appId' => $identity,
+                'development' => false,
+                'keyHex' => bin2hex(random_bytes(32)),
+                'capabilities' => ['sql', 'time'],
+                'cryptoDomains' => ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1'],
+            ];
+            $this->writeExact($configPath, json_encode($config, JSON_THROW_ON_ERROR), 0600);
+        }
+        $markerPath = $root . '/private/' . self::FORM_DB_MARKER;
+        if (!is_file($markerPath)) {
+            $this->writeExact($markerPath, json_encode(['appId' => $appId, 'kind' => 'form_app_sqlite', 'createdAt' => gmdate('c')], JSON_THROW_ON_ERROR), 0600);
+        }
+
+        $dbPath = $root . '/private/data/application.sqlite';
+        if (!is_file($dbPath)) {
+            $pdo = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            try {
+                $pdo->exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
+                $pdo->exec('CREATE TABLE IF NOT EXISTS _formlogic_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+                $stmt = $pdo->prepare('INSERT OR REPLACE INTO _formlogic_meta(key, value) VALUES(?, ?)');
+                $stmt->execute(['kind', 'form_app_sqlite']);
+                $stmt->execute(['app_id', $appId]);
+                $stmt->execute(['initialized_at', gmdate('c')]);
+            } finally {
+                $pdo = null;
+            }
+            @chmod($dbPath, 0600);
+        }
+
+        return $dbPath;
+    }
+
+    /** Whether `$appId` owns a managed SQLite database (either a SoftN app or a SQLite-backed Form App). */
+    public function hasManagedDatabase(string $appId): bool
+    {
+        $root = $this->root($appId);
+        if (is_file($root . '/private/' . self::FORM_DB_MARKER)) {
+            return true;
+        }
+        if (is_file($root . '/private/data/application.sqlite') && !is_link($root . '/private/data/application.sqlite')) {
+            return true;
+        }
+        $summary = $this->summary($appId);
+        return $summary !== null && (self::hasBackend($summary) || self::hasContainerBackend($summary));
+    }
+
+    /** Whether `$appId` has a Form App managed SQLite database marker. */
+    public function isFormAppDatabase(string $appId): bool
+    {
+        $root = $this->root($appId);
+        return is_file($root . '/private/' . self::FORM_DB_MARKER) && !is_file($root . '/project.json');
+    }
+
+    /**
+     * Lightweight database summary for ANY app (SoftN App OR SQLite-backed Form App).
+     * Unlike `glance()`, returns non-null for Form Apps that enabled Unified SQLite without a native project.
+     *
+     * @return array{tables: int|null, bytes: int|null, formDatabase: bool, hasNativeApp: bool, sharedDatabaseAppId: ?string}|null
+     */
+    public function databaseGlance(string $appId): ?array
+    {
+        $sharedDbAppId = $this->sharedDatabaseAppId($appId);
+        $dbAppId = $sharedDbAppId ?? $appId;
+        $hasNative = is_file($this->root($appId) . '/project.json');
+        $isFormDb = $this->isFormAppDatabase($dbAppId);
+        if (!$hasNative && !$this->hasManagedDatabase($dbAppId)) {
+            return null;
+        }
+        $result = [
+            'tables' => null,
+            'bytes' => null,
+            'formDatabase' => $isFormDb,
+            'hasNativeApp' => $hasNative,
+            'sharedDatabaseAppId' => $sharedDbAppId,
+        ];
+        try {
+            [$root, $lock] = $this->openShared($dbAppId, null, false);
+        } catch (RuntimeException) {
+            return $result;
+        }
+        if ($lock === null) return $result;
+        try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path) || self::linkedDatabase($path)) return $result;
+            $store = NativeRecordStore::open($path, readSnapshot: true, busyTimeout: 250);
+            try {
+                $result['tables'] = count($store->tables());
+            } finally {
+                $store->close();
+            }
+            clearstatcache(true, $path);
+            $result['bytes'] = (int) filesize($path);
+            return $result;
+        } catch (\PDOException) {
+            return $result;
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
     private function openShared(string $appId, ?int $generation = null, bool $requireProject = true): array
     {
         $root = $this->root($appId);
-        if (!is_file($root . '/project.json') && !is_file($root . self::JOURNAL)) {
+        $hasFormDb = !$requireProject && is_file($root . '/private/' . self::FORM_DB_MARKER);
+        if (!is_file($root . '/project.json') && !is_file($root . self::JOURNAL) && !$hasFormDb) {
             if ($requireProject) throw new RuntimeException('Native app not found', 404);
             return [$root, null, null];
         }
@@ -2442,6 +2660,490 @@ class NativeAppService
     }
 
     /**
+     * Starter project for a secondary SoftN API Backend app linked to an existing app's shared
+     * SQLite database. Declares no migrations of its own so it operates immediately on the shared
+     * tables and exposes clean JSON endpoints callable via FormLogic API keys (`apps:invoke`) or Flows.
+     *
+     * @param array<string, list<string>> $tableSchemas map of table name => non-hidden column names
+     * @return array{home: bool, version: int, files: array<string, string>, assets: array<string, string>, access: string}
+     */
+    public static function sharedApiBackendStarter(string $appName, string $appId, array $tableSchemas = []): array
+    {
+        $name = trim(preg_replace('/\s+/u', ' ', $appName) ?? '');
+        $name = $name === '' ? 'Shared API Backend' : mb_substr($name, 0, 120);
+        $identity = 'formlogic.api.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+        $cleanSchemas = [];
+        foreach ($tableSchemas as $table => $cols) {
+            if (!is_string($table) || preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $table) !== 1 || !is_array($cols)) {
+                continue;
+            }
+            $safeCols = [];
+            foreach ($cols as $col) {
+                if (is_string($col) && preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $col) === 1 && !NativeRecordStore::hidden($col)) {
+                    $safeCols[] = $col;
+                }
+            }
+            if ($safeCols !== []) {
+                $cleanSchemas[$table] = array_values(array_unique($safeCols));
+            }
+        }
+        $tableNames = array_keys($cleanSchemas);
+        $firstTable = $tableNames[0] ?? '';
+
+        $manifest = [
+            'name' => $name,
+            'id' => $identity,
+            'version' => '1.0.0',
+            'description' => 'Secondary SoftN API backend sharing a FormLogic app SQLite database.',
+            'engine' => 2,
+            'main' => 'index.html',
+            'files' => ['ui' => ['index.html'], 'logic' => []],
+            'server' => [
+                'entry' => 'server/main.logic',
+                'requires' => [
+                    'apiVersion' => 1,
+                    'capabilities' => ['sql', 'time'],
+                ],
+                'database' => [
+                    'kind' => 'private-sqlite',
+                    'migrations' => [],
+                ],
+                'routes' => [
+                    ['method' => 'GET', 'path' => '/api/health', 'handler' => 'health', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'GET', 'path' => '/api/tables', 'handler' => 'listTables', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'GET', 'path' => '/api/records', 'handler' => 'listRecords', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'POST', 'path' => '/api/records', 'handler' => 'createRecord', 'transaction' => 'write', 'authorization' => 'application'],
+                ],
+            ],
+        ];
+
+        $schemasLiteral = json_encode($cleanSchemas === [] ? (object) [] : $cleanSchemas, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $defaultTableLiteral = json_encode($firstTable, JSON_THROW_ON_ERROR);
+        $logic = <<<LOGIC
+"use strict";
+
+var SHARED_TABLES = {$schemasLiteral};
+
+function health(req, ctx) {
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      tables: Object.keys(SHARED_TABLES),
+      now: softn.time.now()
+    }
+  };
+}
+
+function listTables(req, ctx) {
+  return {
+    status: 200,
+    body: {
+      tables: Object.keys(SHARED_TABLES),
+      columns: SHARED_TABLES
+    }
+  };
+}
+
+function listRecords(req, ctx) {
+  var table = (req.query && req.query.table) ? String(req.query.table) : {$defaultTableLiteral};
+  var cols = SHARED_TABLES[table];
+  if (!cols || cols.length === 0) {
+    return { status: 404, body: { error: "Unknown table: " + table, tables: Object.keys(SHARED_TABLES) } };
+  }
+  var quoted = [];
+  for (var i = 0; i < cols.length; i++) {
+    quoted.push('"' + cols[i] + '"');
+  }
+  var limit = parseInt((req.query && req.query.limit) ? req.query.limit : "50", 10);
+  if (!(limit >= 1 && limit <= 250)) limit = 50;
+  var rows = softn.sql.query('SELECT ' + quoted.join(', ') + ' FROM "' + table + '" LIMIT ?', [limit]);
+  return { status: 200, body: { table: table, count: rows.length, records: rows } };
+}
+
+function createRecord(req, ctx) {
+  var body = req.body || {};
+  var table = typeof body.table === "string" ? body.table : {$defaultTableLiteral};
+  var cols = SHARED_TABLES[table];
+  var values = body.values && typeof body.values === "object" ? body.values : null;
+  if (!cols || !values) {
+    return { status: 400, body: { error: "Send { table, values: { ... } } for a configured table.", tables: Object.keys(SHARED_TABLES) } };
+  }
+  var allowed = {};
+  for (var i = 0; i < cols.length; i++) allowed[cols[i]] = true;
+  var names = [];
+  var placeholders = [];
+  var params = [];
+  var keys = Object.keys(values);
+  for (var j = 0; j < keys.length; j++) {
+    var k = keys[j];
+    if (!allowed[k]) continue;
+    names.push('"' + k + '"');
+    placeholders.push('?');
+    params.push(values[k]);
+  }
+  if (names.length === 0) {
+    return { status: 400, body: { error: "No writable columns provided.", columns: cols } };
+  }
+  softn.sql.execute(
+    'INSERT INTO "' + table + '" (' + names.join(', ') + ') VALUES (' + placeholders.join(', ') + ')',
+    params
+  );
+  return { status: 201, body: { ok: true, table: table } };
+}
+LOGIC;
+
+        $escapedName = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $html = <<<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{$escapedName}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #f8fafc; color: #0f172a; }
+    .card { max-width: 680px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.5rem; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.35rem; }
+    p { margin: 0.4rem 0; color: #475569; line-height: 1.5; }
+    code { background: #f1f5f9; padding: 0.15rem 0.4rem; border-radius: 6px; font-size: 0.85em; }
+    ul { padding-left: 1.2rem; color: #334155; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>{$escapedName}</h1>
+    <p>This secondary SoftN API backend is connected to your shared SQLite database.</p>
+    <ul>
+      <li><code>GET /api/health</code> — check backend status &amp; shared tables</li>
+      <li><code>GET /api/tables</code> — list available database tables &amp; columns</li>
+      <li><code>GET /api/records?table=...&amp;limit=50</code> — query table rows</li>
+      <li><code>POST /api/records</code> — insert rows into a shared table</li>
+    </ul>
+    <p>Invoke these endpoints externally with a FormLogic API key (<code>apps:invoke</code>) or call them from any Flow.</p>
+  </div>
+</body>
+</html>
+HTML;
+
+        return [
+            'home' => true,
+            'version' => 0,
+            'files' => [
+                'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'index.html' => $html,
+                'server/main.logic' => $logic,
+            ],
+            'assets' => [],
+            'access' => 'members',
+        ];
+    }
+
+    /**
+     * Build a full interactive SoftN v2 web app + backend API scaffolded specifically for a
+     * FormLogic Form App's Unified SQLite database, so the SoftN app and the FormLogic Forms
+     * read and write the exact same SQLite tables live.
+     *
+     * @param array<string, list<string>> $tableSchemas
+     * @return array{home: bool, version: int, files: array<string, string>, assets: array<string, string>, access: string}
+     */
+    public static function formDatabaseSoftnStarter(string $appName, string $appId, array $tableSchemas = []): array
+    {
+        $name = trim(preg_replace('/\s+/u', ' ', $appName) ?? '');
+        $name = $name === '' ? 'Form Data App' : mb_substr($name, 0, 120);
+        $identity = 'formlogic.app.' . preg_replace('/[^a-zA-Z0-9._-]/', '', $appId);
+        $cleanSchemas = [];
+        foreach ($tableSchemas as $table => $cols) {
+            if (!is_string($table) || preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $table) !== 1 || !is_array($cols)) {
+                continue;
+            }
+            $safeCols = [];
+            foreach ($cols as $col) {
+                if (is_string($col) && preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/D', $col) === 1 && !NativeRecordStore::hidden($col)) {
+                    $safeCols[] = $col;
+                }
+            }
+            if ($safeCols !== []) {
+                $cleanSchemas[$table] = array_values(array_unique($safeCols));
+            }
+        }
+        $tableNames = array_keys($cleanSchemas);
+        $firstTable = $tableNames[0] ?? '';
+
+        $manifest = [
+            'name' => $name,
+            'id' => $identity,
+            'version' => '1.0.0',
+            'description' => 'Interactive SoftN app sharing a FormLogic Form App SQLite database.',
+            'engine' => 2,
+            'main' => 'index.html',
+            'files' => ['ui' => ['index.html'], 'logic' => ['app.js']],
+            'server' => [
+                'entry' => 'server/main.logic',
+                'requires' => [
+                    'apiVersion' => 1,
+                    'capabilities' => ['sql', 'time'],
+                ],
+                'database' => [
+                    'kind' => 'private-sqlite',
+                    'migrations' => [],
+                ],
+                'routes' => [
+                    ['method' => 'GET', 'path' => '/api/health', 'handler' => 'health', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'GET', 'path' => '/api/tables', 'handler' => 'listTables', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'GET', 'path' => '/api/records', 'handler' => 'listRecords', 'transaction' => 'read', 'authorization' => 'application'],
+                    ['method' => 'POST', 'path' => '/api/records', 'handler' => 'createRecord', 'transaction' => 'write', 'authorization' => 'application'],
+                    ['method' => 'DELETE', 'path' => '/api/records', 'handler' => 'deleteRecord', 'transaction' => 'write', 'authorization' => 'application'],
+                ],
+            ],
+        ];
+
+        $schemasLiteral = json_encode($cleanSchemas === [] ? (object) [] : $cleanSchemas, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $defaultTableLiteral = json_encode($firstTable, JSON_THROW_ON_ERROR);
+        $logic = <<<LOGIC
+"use strict";
+
+var SHARED_TABLES = {$schemasLiteral};
+
+function health(req, ctx) {
+  return { status: 200, body: { ok: true, tables: Object.keys(SHARED_TABLES), now: softn.time.now() } };
+}
+
+function listTables(req, ctx) {
+  return { status: 200, body: { tables: Object.keys(SHARED_TABLES), columns: SHARED_TABLES } };
+}
+
+function listRecords(req, ctx) {
+  var table = (req.query && req.query.table) ? String(req.query.table) : {$defaultTableLiteral};
+  var cols = SHARED_TABLES[table];
+  if (!cols || cols.length === 0) {
+    return { status: 404, body: { error: "Unknown table: " + table, tables: Object.keys(SHARED_TABLES) } };
+  }
+  var quoted = [];
+  for (var i = 0; i < cols.length; i++) quoted.push('"' + cols[i] + '"');
+  var limit = parseInt((req.query && req.query.limit) ? req.query.limit : "100", 10);
+  if (!(limit >= 1 && limit <= 250)) limit = 100;
+  var rows = softn.sql.query('SELECT ' + quoted.join(', ') + ' FROM "' + table + '" LIMIT ?', [limit]);
+  return { status: 200, body: { table: table, columns: cols, count: rows.length, records: rows } };
+}
+
+function createRecord(req, ctx) {
+  var body = req.body || {};
+  var table = typeof body.table === "string" ? body.table : {$defaultTableLiteral};
+  var cols = SHARED_TABLES[table];
+  var values = body.values && typeof body.values === "object" ? body.values : null;
+  if (!cols || !values) {
+    return { status: 400, body: { error: "Send { table, values: { ... } }", tables: Object.keys(SHARED_TABLES) } };
+  }
+  var allowed = {};
+  for (var i = 0; i < cols.length; i++) allowed[cols[i]] = true;
+  if (allowed["id"] && (values.id === undefined || values.id === "")) {
+    values.id = "rec_" + String(softn.time.now()) + "_" + String(Math.floor(Math.random() * 100000));
+  }
+  var nowStr = new Date().toISOString().slice(0, 19).replace("T", " ");
+  if (allowed["created_at"] && !values.created_at) values.created_at = nowStr;
+  if (allowed["updated_at"] && !values.updated_at) values.updated_at = nowStr;
+  if (allowed["status"] && !values.status) values.status = "submitted";
+  var names = [];
+  var placeholders = [];
+  var params = [];
+  var keys = Object.keys(values);
+  for (var j = 0; j < keys.length; j++) {
+    var k = keys[j];
+    if (!allowed[k]) continue;
+    names.push('"' + k + '"');
+    placeholders.push('?');
+    params.push(values[k]);
+  }
+  if (names.length === 0) {
+    return { status: 400, body: { error: "No writable columns provided.", columns: cols } };
+  }
+  softn.sql.execute('INSERT INTO "' + table + '" (' + names.join(', ') + ') VALUES (' + placeholders.join(', ') + ')', params);
+  return { status: 201, body: { ok: true, table: table, id: values.id || null } };
+}
+
+function deleteRecord(req, ctx) {
+  var body = req.body || {};
+  var table = typeof body.table === "string" ? body.table : ((req.query && req.query.table) ? String(req.query.table) : {$defaultTableLiteral});
+  var id = body.id !== undefined ? body.id : (req.query ? req.query.id : null);
+  var cols = SHARED_TABLES[table];
+  if (!cols || id === null || id === undefined || String(id) === "") {
+    return { status: 400, body: { error: "Send table and id to delete." } };
+  }
+  softn.sql.execute('DELETE FROM "' + table + '" WHERE "id" = ?', [id]);
+  return { status: 200, body: { ok: true, table: table, id: id } };
+}
+LOGIC;
+
+        $escapedName = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $html = <<<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{$escapedName}</title>
+  <style>
+    :root { --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --ink: #0f172a; --muted: #64748b; --accent: #4f46e5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--ink); }
+    header { background: var(--card); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+    h1 { margin: 0; font-size: 18px; font-weight: 700; }
+    .sub { font-size: 13px; color: var(--muted); }
+    main { max-width: 1100px; margin: 20px auto; padding: 0 20px 40px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); cursor: pointer; font-weight: 600; font-size: 13px; color: var(--ink); }
+    .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-bottom: 12px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+    input { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); font-size: 13px; color: var(--ink); }
+    .btn { padding: 9px 16px; border-radius: 9px; border: none; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; font-size: 13px; }
+    .btn-ghost { background: #f1f5f9; color: #334155; }
+    .btn-danger { background: #fee2e2; color: #b91c1c; padding: 4px 9px; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+    th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); background: #f8fafc; }
+    .table-wrap { overflow-x: auto; }
+    .empty { text-align: center; padding: 28px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>{$escapedName}</h1>
+      <div class="sub">Live SoftN workspace connected to your FormLogic SQLite database</div>
+    </div>
+    <button id="refreshBtn" class="btn btn-ghost" type="button">Refresh</button>
+  </header>
+  <main>
+    <div id="tabs" class="tabs"></div>
+    <div class="card">
+      <h2 id="formHeading" style="margin:0 0 12px;font-size:15px;">Add Record</h2>
+      <form id="addForm">
+        <div id="formFields" class="form-grid"></div>
+        <button class="btn" type="submit">Save to SQLite</button>
+      </form>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <h2 id="tableHeading" style="margin:0;font-size:15px;">Records</h2>
+        <span id="rowCount" class="sub"></span>
+      </div>
+      <div id="recordsWrap" class="table-wrap"></div>
+    </div>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
+HTML;
+
+        $js = <<<'JS'
+import { api } from 'softn:api';
+
+let tables = [];
+let columnsByTable = {};
+let activeTable = '';
+
+const tabsEl = document.getElementById('tabs');
+const fieldsEl = document.getElementById('formFields');
+const addForm = document.getElementById('addForm');
+const recordsWrap = document.getElementById('recordsWrap');
+const tableHeading = document.getElementById('tableHeading');
+const formHeading = document.getElementById('formHeading');
+const rowCount = document.getElementById('rowCount');
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+function renderTabs() {
+  tabsEl.innerHTML = tables.map(t =>
+    `<button type="button" class="tab${t === activeTable ? ' active' : ''}" data-table="${esc(t)}">${esc(t)}</button>`
+  ).join('');
+  tabsEl.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeTable = btn.dataset.table;
+      renderTabs();
+      renderForm();
+      loadRecords();
+    });
+  });
+}
+
+function renderForm() {
+  const cols = (columnsByTable[activeTable] || []).filter(c => !['id','created_at','updated_at','is_sample'].includes(c));
+  formHeading.textContent = activeTable ? `Add row to ${activeTable}` : 'Add Record';
+  fieldsEl.innerHTML = cols.map(c =>
+    `<label>${esc(c)}<input name="${esc(c)}" placeholder="${esc(c)}" /></label>`
+  ).join('');
+}
+
+async function loadRecords() {
+  if (!activeTable) return;
+  tableHeading.textContent = `${activeTable} records`;
+  const res = await api.fetch(`/api/records?table=${encodeURIComponent(activeTable)}&limit=100`);
+  const data = await res.json();
+  const cols = data.columns || columnsByTable[activeTable] || [];
+  const rows = data.records || [];
+  rowCount.textContent = `${rows.length} row${rows.length === 1 ? '' : 's'}`;
+  if (rows.length === 0) {
+    recordsWrap.innerHTML = '<div class="empty">No records yet. Add one above or submit the linked FormLogic form!</div>';
+    return;
+  }
+  const visible = cols.slice(0, 8);
+  recordsWrap.innerHTML = `<table><thead><tr>${visible.map(c => `<th>${esc(c)}</th>`).join('')}<th></th></tr></thead><tbody>` +
+    rows.map(r => `<tr>${visible.map(c => `<td>${esc(r[c])}</td>`).join('')}<td>${r.id !== undefined ? `<button type="button" class="btn btn-danger" data-del="${esc(r.id)}">Delete</button>` : ''}</td></tr>`).join('') +
+    '</tbody></table>';
+  recordsWrap.querySelectorAll('[data-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await api.fetch('/api/records', { method: 'DELETE', body: JSON.stringify({ table: activeTable, id: btn.dataset.del }) });
+      await loadRecords();
+    });
+  });
+}
+
+addForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!activeTable) return;
+  const fd = new FormData(addForm);
+  const values = {};
+  for (const [k, v] of fd.entries()) {
+    if (String(v).trim() !== '') values[k] = String(v);
+  }
+  await api.fetch('/api/records', { method: 'POST', body: JSON.stringify({ table: activeTable, values }) });
+  addForm.reset();
+  await loadRecords();
+});
+
+document.getElementById('refreshBtn').addEventListener('click', () => loadRecords());
+
+(async () => {
+  const res = await api.fetch('/api/tables');
+  const data = await res.json();
+  tables = data.tables || [];
+  columnsByTable = data.columns || {};
+  activeTable = tables[0] || '';
+  renderTabs();
+  renderForm();
+  await loadRecords();
+})();
+JS;
+
+        return [
+            'home' => true,
+            'version' => 0,
+            'files' => [
+                'manifest.json' => json_encode($manifest, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+                'index.html' => $html,
+                'app.js' => $js,
+                'server/main.logic' => $logic,
+            ],
+            'assets' => [],
+            'access' => 'members',
+        ];
+    }
+
+    /**
      * What an app's author can do about the startup stage its host stopped at, as the owner reads
      * it where the version was refused. The stage is kept at the end for whoever supports them.
      */
@@ -2829,7 +3531,9 @@ class NativeAppService
 
             $isContainerBackend = is_array($manifest['backend'] ?? null) && !array_is_list($manifest['backend']);
             if (array_key_exists('server', $manifest) || $isContainerBackend) {
-                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend);
+                $sharedDbAppId = $this->sharedDatabaseAppId($appId);
+                $sharedDataDir = $sharedDbAppId !== null ? $this->root($sharedDbAppId) . '/private/data' : null;
+                $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend || $sharedDataDir !== null, $sharedDataDir);
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
             }
             $this->advance($root, $journal, 'migrated');
@@ -2880,17 +3584,17 @@ class NativeAppService
         // The project without its media (runtimeCache), read under the same lock: this call needs its
         // version and its manifest's server block, and decoding every picture and sound for them on
         // each call kept a PHP worker busy with a game's tens of megabytes, where it had no backend.
-        [$root, $lock] = $this->openShared($appId, null, false);
-        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        [$root, $dbAppId, $dbRoot, $locks] = $this->openWithDatabase($appId, null, false);
         try {
             $project = $this->runtimeCache($root)['project'];
             if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
             if (!self::hasBackend($project)) throw new RuntimeException('This app has no backend', 404);
             if ($from === 'app') $request = self::visitorRequest($project, $request);
             elseif ($from === 'plugin' && strlen(json_encode($request['body'] ?? (object) [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR)) > 2 * 1024 * 1024) throw new RuntimeException('This request is larger than the app accepts.', 413);
-            return $this->invoke($root, $request, $identity, $subscriptions, $bodyAsWritten);
+            $sharedDataDir = $dbAppId !== $appId ? $dbRoot . '/private/data' : null;
+            return $this->invoke($root, $request, $identity, $subscriptions, $bodyAsWritten, $sharedDataDir !== null, $sharedDataDir);
         }
-        finally { flock($lock, LOCK_UN); fclose($lock); }
+        finally { self::releaseLocks($locks); }
     }
 
     /**
@@ -2950,7 +3654,8 @@ class NativeAppService
      */
     public function withDatabase(string $appId, callable $use): mixed
     {
-        [$root, $lock] = $this->openShared($appId, null, false);
+        $dbAppId = $this->databaseAppId($appId);
+        [$root, $lock] = $this->openShared($dbAppId, null, false);
         if ($lock === null) throw new RuntimeException('Native app not found', 404);
         try {
             $path = $root . '/private/data/application.sqlite';
@@ -2960,6 +3665,40 @@ class NativeAppService
             $db->exec('PRAGMA busy_timeout=5000');
             try { return $use($db); } finally { $db = null; }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * Read non-hidden table schemas (`[table => NativeRecordStore::schema($table)]`) for `$appId`
+     * (following any shared database link). Returns empty array if no database exists yet.
+     *
+     * @return array<string, array{fields: list<array<string, mixed>>, primaryKey: list<string>, canCreate: bool}>
+     */
+    public function tableSchemas(string $appId): array
+    {
+        $dbAppId = $this->databaseAppId($appId);
+        try {
+            [$root, $lock] = $this->openShared($dbAppId, null, false);
+        } catch (RuntimeException) {
+            return [];
+        }
+        if ($lock === null) return [];
+        try {
+            $path = $root . '/private/data/application.sqlite';
+            if (!is_file($path) || self::linkedDatabase($path)) return [];
+            $store = NativeRecordStore::open($path, readSnapshot: true, busyTimeout: 1500);
+            try {
+                $out = [];
+                foreach ($store->tables() as $table) {
+                    $out[$table] = $store->schema($table);
+                }
+                return $out;
+            } finally {
+                $store->close();
+            }
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
     }
 
     /**
@@ -3093,9 +3832,10 @@ class NativeAppService
      */
     public function dispatchRecordEvents(string $appId, callable $deliver, int $limit = 100): int
     {
-        $path = $this->root($appId) . '/private/data/application.sqlite';
+        $dbAppId = $this->databaseAppId($appId);
+        $path = $this->root($dbAppId) . '/private/data/application.sqlite';
         if (!is_file($path)) return 0;
-        try { [$root, $manage] = $this->openShared($appId, null, false); }
+        try { [$root, $manage] = $this->openShared($dbAppId, null, false); }
         catch (RuntimeException $busy) { if ($busy->getCode() === 409) return 0; throw $busy; }
         if ($manage === null) return 0;
         $dispatch = fopen($root . '/private/events.lock', 'c');
@@ -3230,29 +3970,56 @@ class NativeAppService
     /**
      * Dispatch one sandboxed SoftN v2 Container HTTP request through Node `runner.mjs` ->
      * `container-backend.mjs` (ZIPP WASM safe-sandbox + `private/data/application.sqlite` +
-     * verified `SOFTN_HOST_CONTEXT`).
+     * verified `SOFTN_HOST_CONTEXT`). When `$appId` shares another app's database or `$subscriptions`
+     * is non-empty, routes through `bin/shared-native-runner.mjs` so shared DBs and container
+     * record-event diff capture work seamlessly.
      *
      * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}
      */
-    public function containerRequest(string $appId, array $request, array $identity = [], ?int $generation = null): array
+    public function containerRequest(string $appId, array $request, array $identity = [], ?int $generation = null, array $subscriptions = []): array
     {
-        [$root, $lock] = $this->openShared($appId, null, false);
-        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        [$root, $dbAppId, $dbRoot, $locks] = $this->openWithDatabase($appId, null, false);
         try {
             $project = $this->runtimeCache($root)['project'];
             if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
             if (!self::hasContainerBackend($project)) throw new RuntimeException('This app has no container backend', 404);
-            return $this->invokeContainer($root, $request, $identity);
+            $sharedDataDir = $dbAppId !== $appId ? $dbRoot . '/private/data' : null;
+            $containerIdentity = self::normalizeContainerIdentity($identity);
+            return $this->invokeContainer($root, $request, $containerIdentity, $subscriptions, $sharedDataDir);
         } finally {
-            flock($lock, LOCK_UN); fclose($lock);
+            self::releaseLocks($locks);
         }
     }
 
-    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false, bool $nodeOnly = false): array
+    /**
+     * Expose verified FormLogic identity fields both at the top level (`userId`, `roleId`, `appId`,
+     * `authenticated`) where `container-backend.mjs` reads them AND under `formlogic` for callers
+     * expecting the nested shape.
+     *
+     * @param array<string, mixed> $identity
+     * @return array<string, mixed>
+     */
+    private static function normalizeContainerIdentity(array $identity): array
+    {
+        $nested = is_array($identity['formlogic'] ?? null) ? $identity['formlogic'] : [];
+        $flat = $identity;
+        foreach (['appId', 'userId', 'roleId', 'userRole', 'authenticated', 'via'] as $k) {
+            if (!array_key_exists($k, $flat) && array_key_exists($k, $nested)) {
+                $flat[$k] = $nested[$k];
+            }
+        }
+        if (!array_key_exists('authenticated', $flat) && !empty($flat['userId'])) {
+            $flat['authenticated'] = true;
+        }
+        return $flat;
+    }
+
+    private function invoke(string $root, array $request, array $identity = [], array $subscriptions = [], bool $bodyAsWritten = false, bool $nodeOnly = false, ?string $sharedDataDir = null): array
     {
         $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
         if ($subscriptions && (!is_file($this->runtime() . '/record-events.mjs') || ($protocol['recordEvents'] ?? null) !== self::RECORD_EVENTS_PROTOCOL)) throw new RuntimeException('Update the native runtime to enable record automations', 503);
-        $runner = $nodeOnly ? null : $this->runnerBinary();
+        $useSharedRunner = $sharedDataDir !== null;
+        $runner = ($nodeOnly || $useSharedRunner) ? null : $this->runnerBinary();
         if ($runner === null) $this->assertNodeMeetsMinimum(is_array($protocol) ? $protocol : null);
         $base = $root . '/private/request-' . bin2hex(random_bytes(12));
         $input = json_encode($request, JSON_THROW_ON_ERROR);
@@ -3278,11 +4045,23 @@ class NativeAppService
             unset($input);
             $node = $this->nodeBinary();
             // Only the allowlisted variables reach the runtime (see NODE_ENV_ALLOWLIST); the
-            // three SOFTN_* values are the whole host context the worker reads.
+            // SOFTN_* values are the whole host context the worker reads.
             // An operator's cap on what one worker may use; the runner's own limit otherwise.
             $memory = Environment::nonEmpty('SOFTN_RUNNER_MEMORY_MB');
-            $env = self::nodeEnvironment(getenv(), ['SOFTN_BACKEND_ROOT' => $root, 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR), 'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR)] + ($memory !== null ? ['SOFTN_RUNNER_MEMORY_MB' => $memory] : []));
-            $command = $runner !== null ? [$runner] : self::runnerCommand($node, $this->runtime());
+            $hostEnv = [
+                'SOFTN_BACKEND_ROOT' => $root,
+                'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR),
+                'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR),
+            ];
+            if ($useSharedRunner) {
+                $hostEnv['SOFTN_DATA_ROOT'] = $sharedDataDir;
+                $hostEnv['SOFTN_RUNTIME_DIR'] = $this->runtime();
+            }
+            if ($memory !== null) $hostEnv['SOFTN_RUNNER_MEMORY_MB'] = $memory;
+            $env = self::nodeEnvironment(getenv(), $hostEnv);
+            $command = $runner !== null
+                ? [$runner]
+                : ($useSharedRunner ? self::sharedRunnerCommand($node) : self::runnerCommand($node, $this->runtime()));
             $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             // Coded: it never ran, so it committed nothing (NativeAppCharges gives a charge back for it).
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start', 503);
@@ -3316,11 +4095,12 @@ class NativeAppService
     }
 
     /**
-     * Execute one v2 container backend HTTP request via Node `runner.mjs` -> `container-backend.mjs`.
+     * Execute one v2 container backend HTTP request via Node `runner.mjs` -> `container-backend.mjs`
+     * (or `bin/shared-native-runner.mjs` when using a shared DB or capturing record events).
      *
      * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}
      */
-    private function invokeContainer(string $root, array $request, array $identity = []): array
+    private function invokeContainer(string $root, array $request, array $identity = [], array $subscriptions = [], ?string $sharedDataDir = null): array
     {
         $protocol = json_decode((string) file_get_contents($this->runtime() . '/host-protocol.json'), true);
         if (!is_file($this->runtime() . '/container-backend.mjs')) {
@@ -3334,17 +4114,34 @@ class NativeAppService
         $slots = $this->heldRoot === $root ? [] : $this->takeSlots($root);
         $this->lastRolledBack = false;
         $answered = false;
+        $useSharedRunner = $sharedDataDir !== null || $subscriptions !== [];
+        $captureLock = null;
         try {
+            if ($subscriptions !== [] && in_array(strtoupper((string) ($request['method'] ?? 'GET')), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+                $lockDir = $sharedDataDir !== null ? dirname($sharedDataDir) : $root . '/private';
+                $captureLock = @fopen($lockDir . '/container-events.lock', 'c');
+                if (is_resource($captureLock)) flock($captureLock, LOCK_EX);
+            }
             file_put_contents($base . '.in', $input);
             unset($input);
             $node = $this->nodeBinary();
             $memory = Environment::nonEmpty('SOFTN_RUNNER_MEMORY_MB');
-            $env = self::nodeEnvironment(getenv(), [
+            $hostEnv = [
                 'SOFTN_BACKEND_ROOT' => $root,
                 'SOFTN_HOST_CONTEXT' => json_encode($identity, JSON_THROW_ON_ERROR),
-                'SOFTN_RECORD_EVENTS' => '[]',
-            ] + ($memory !== null ? ['SOFTN_RUNNER_MEMORY_MB' => $memory] : []));
-            $command = self::runnerCommand($node, $this->runtime());
+                'SOFTN_RECORD_EVENTS' => json_encode($subscriptions, JSON_THROW_ON_ERROR),
+            ];
+            if ($useSharedRunner) {
+                $hostEnv['SOFTN_RUNTIME_DIR'] = $this->runtime();
+                if ($sharedDataDir !== null) {
+                    $hostEnv['SOFTN_DATA_ROOT'] = $sharedDataDir;
+                }
+            }
+            if ($memory !== null) $hostEnv['SOFTN_RUNNER_MEMORY_MB'] = $memory;
+            $env = self::nodeEnvironment(getenv(), $hostEnv);
+            $command = $useSharedRunner
+                ? self::sharedRunnerCommand($node)
+                : self::runnerCommand($node, $this->runtime());
             $process = proc_open($command, [0 => ['file', $base . '.in', 'r'], 1 => ['file', $base . '.out', 'w'], 2 => ['file', $base . '.err', 'w']], $pipes, $root, $env, ['bypass_shell' => true]);
             if (!is_resource($process)) throw new RuntimeException('Native runtime could not start', 503);
             $deadline = microtime(true) + 25;
@@ -3367,6 +4164,7 @@ class NativeAppService
             ];
         } finally {
             if (is_resource($process)) proc_close($process);
+            if (is_resource($captureLock)) { flock($captureLock, LOCK_UN); fclose($captureLock); }
             $this->releaseSlots($slots);
             if (!$answered && is_file($base . '.err') && filesize($base . '.err') > 0) {
                 error_log('Native container runner failed in ' . basename($root) . ': ' . file_get_contents($base . '.err', false, null, 0, 4096));
@@ -3387,18 +4185,34 @@ class NativeAppService
      */
     public function records(string $appId, ?string $table = null, int $offset = 0, ?int $generation = null, ?array $options = null): array
     {
-        [$root, $lock, $project] = $this->openShared($appId, $generation);
-        try {
-            // A client-only app keeps its data in its members' browsers: there is no database here
-            // (unless an earlier version with a backend left one, which is still shown).
-            if (!self::hasBackend($project ?? []) && !is_file($root . '/private/data/application.sqlite')) {
-                if ($table !== null) throw new RuntimeException('This app has no database', 404);
-                return ['installed' => true, 'tables' => [], 'backend' => false];
+        $dbAppId = $this->databaseAppId($appId);
+        if ($dbAppId === $appId) {
+            $isFormDb = $this->isFormAppDatabase($appId);
+            [$root, $lock, $project] = $this->openShared($appId, $isFormDb ? null : $generation, !$isFormDb);
+            if ($lock === null) throw new RuntimeException('Native app not found', 404);
+            try {
+                // A client-only app keeps its data in its members' browsers: there is no database here
+                // (unless an earlier version with a backend left one, which is still shown).
+                if (!$isFormDb && !self::hasBackend($project ?? []) && !is_file($root . '/private/data/application.sqlite')) {
+                    if ($table !== null) throw new RuntimeException('This app has no database', 404);
+                    return ['installed' => true, 'tables' => [], 'backend' => false];
+                }
+                $answer = $this->readRecords($root, $table, $offset, $options ?? []);
+                return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
             }
-            $answer = $this->readRecords($root, $table, $offset, $options ?? []);
-            return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
+            finally { flock($lock, LOCK_UN); fclose($lock); }
         }
-        finally { flock($lock, LOCK_UN); fclose($lock); }
+        [$dbRoot, $lock] = $this->openShared($dbAppId, null, false);
+        if ($lock === null) throw new RuntimeException('Shared database app not found', 404);
+        try {
+            if (!is_file($dbRoot . '/private/data/application.sqlite')) {
+                if ($table !== null) throw new RuntimeException('Shared database not found', 404);
+                return ['installed' => true, 'tables' => [], 'backend' => true, 'sharedDatabaseAppId' => $dbAppId];
+            }
+            $answer = $this->readRecords($dbRoot, $table, $offset, $options ?? []);
+            $answer['sharedDatabaseAppId'] = $dbAppId;
+            return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
+        } finally { flock($lock, LOCK_UN); fclose($lock); }
     }
 
     /**
@@ -3411,7 +4225,10 @@ class NativeAppService
      */
     public function exportRecords(string $appId, ?string $table, string $format, array $options = [], ?int $generation = null): array
     {
-        [$root, $lock, $project] = $this->openShared($appId, $generation);
+        $dbAppId = $this->databaseAppId($appId);
+        $isFormDb = $this->isFormAppDatabase($dbAppId);
+        [$root, $lock, $project] = $this->openShared($dbAppId, ($dbAppId === $appId && !$isFormDb) ? $generation : null, ($dbAppId === $appId) && !$isFormDb);
+        if ($lock === null) throw new RuntimeException('App database not found', 404);
         try {
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path)) throw new RuntimeException(self::hasBackend($project ?? []) ? 'App database not found' : 'This app has no database', 404);
@@ -3444,15 +4261,20 @@ class NativeAppService
      * installation is being updated or its database cannot be read just now: a list is not failed
      * for one app.
      *
-     * @return array{version: int|null, access: string|null, backend: bool, tables: int|null, bytes: int|null}|null
+     * @return array{version: int|null, access: string|null, backend: bool, tables: int|null, bytes: int|null, sharedDatabaseAppId?: string|null}|null
      */
     public function glance(string $appId): ?array
     {
         $project = $this->summary($appId);
         if ($project === null) return null;
+        $sharedDbAppId = $this->sharedDatabaseAppId($appId);
         $glance = ['version' => is_int($project['version'] ?? null) ? $project['version'] : null, 'access' => is_string($project['access'] ?? null) ? $project['access'] : null,
             'backend' => self::hasBackend($project), 'tables' => null, 'bytes' => null];
-        try { [$root, $lock] = $this->openShared($appId, null, false); }
+        if ($sharedDbAppId !== null) {
+            $glance['sharedDatabaseAppId'] = $sharedDbAppId;
+        }
+        $dbAppId = $sharedDbAppId ?? $appId;
+        try { [$root, $lock] = $this->openShared($dbAppId, null, false); }
         catch (RuntimeException) { return $glance; }
         if ($lock === null) return $glance;
         try {
@@ -3652,7 +4474,10 @@ class NativeAppService
 
     public function manageRecord(string $appId, array $input, array $subscriptions = [], ?int $generation = null): array
     {
-        [$root, $lock] = $this->openShared($appId, $generation);
+        $dbAppId = $this->databaseAppId($appId);
+        $isFormDb = $this->isFormAppDatabase($dbAppId);
+        [$root, $lock] = $this->openShared($dbAppId, ($dbAppId === $appId && !$isFormDb) ? $generation : null, ($dbAppId === $appId) && !$isFormDb);
+        if ($lock === null) throw new RuntimeException('App database not found', 404);
         try {
             $path = $root . '/private/data/application.sqlite';
             if (!is_file($path)) throw new RuntimeException('App database not found', 404);
@@ -3661,6 +4486,158 @@ class NativeAppService
             try { return $store->operate($input, $subscriptions); }
             finally { $store->close(); }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
+    }
+
+    /**
+     * Dispatch one classic `.logic` backend request against an isolated ephemeral sandbox data
+     * directory (used by MarketplaceSandboxService so visitors demo private apps without touching
+     * the listing's seed database or any user's data).
+     */
+    public function sandboxRequest(string $appId, string $sandboxDataDir, array $request, array $identity = [], bool $bodyAsWritten = false): array
+    {
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        try {
+            $project = $this->runtimeCache($root)['project'];
+            if (!self::hasBackend($project)) throw new RuntimeException('This app has no backend', 404);
+            $request = self::visitorRequest($project, $request);
+            return $this->invoke($root, $request, $identity, [], $bodyAsWritten, true, $sandboxDataDir);
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    /**
+     * Dispatch one v2 container backend request against an isolated ephemeral sandbox data
+     * directory (used by MarketplaceSandboxService).
+     *
+     * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}
+     */
+    public function sandboxContainerRequest(string $appId, string $sandboxDataDir, array $request, array $identity = []): array
+    {
+        [$root, $lock] = $this->openShared($appId, null, false);
+        if ($lock === null) throw new RuntimeException('Native app not found', 404);
+        try {
+            $project = $this->runtimeCache($root)['project'];
+            if (!self::hasContainerBackend($project)) throw new RuntimeException('This app has no container backend', 404);
+            return $this->invokeContainer($root, $request, self::normalizeContainerIdentity($identity), [], $sandboxDataDir);
+        } finally {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+        }
+    }
+
+    /**
+     * Internal paths for a hosted native installation (used by MarketplaceSandboxService for
+     * server-side DOM rendering and ephemeral SQLite seed cloning). Never expose these paths to clients.
+     *
+     * @return array{root: string, app: string, seedDatabase: string, runtime: string, node: string}|null
+     */
+    public function internalPaths(string $appId): ?array
+    {
+        $root = $this->root($appId);
+        if (!is_file($root . '/project.json') || !is_dir($root . '/app')) {
+            return null;
+        }
+        return [
+            'root' => $root,
+            'app' => $root . '/app',
+            'seedDatabase' => $root . '/private/data/application.sqlite',
+            'runtime' => $this->runtime(),
+            'node' => $this->nodeBinary(),
+        ];
+    }
+
+    /**
+     * Parse a `.softn` / `.zip` archive on disk into a validated NativeAppService project array.
+     * Supports flat archives (`manifest.json` at root) as well as archives wrapped in a single
+     * top-level directory (`my-app/manifest.json`).
+     *
+     * @return array{home: bool, version: int, files: array<string, string>, assets: array<string, string>, access: string}
+     */
+    public static function extractProjectFromArchive(string $zipPath): array
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            throw new RuntimeException('ZipArchive PHP extension is required to upload .softn packages.');
+        }
+        $zip = new \ZipArchive();
+        if ($zip->open($zipPath) !== true) {
+            throw new InvalidArgumentException('Could not open archive. Upload a valid .softn or .zip file.');
+        }
+        $files = [];
+        $assets = [];
+        $totalBytes = 0;
+        try {
+            $count = $zip->numFiles;
+            if ($count <= 0 || $count > self::MAX_SOURCE_FILES + self::MAX_MEDIA_FILES + 200) {
+                throw new InvalidArgumentException('Archive contains too many or too few entries.');
+            }
+            $entries = [];
+            for ($i = 0; $i < $count; $i++) {
+                $name = $zip->getNameIndex($i);
+                if (!is_string($name)) continue;
+                $norm = ltrim(str_replace('\\', '/', $name), '/');
+                if ($norm === '' || str_ends_with($norm, '/')) continue;
+                if (str_starts_with($norm, '__MACOSX/') || str_ends_with($norm, '/.DS_Store') || $norm === '.DS_Store') continue;
+                if (str_contains($norm, '..') || str_contains($norm, "\0")) {
+                    throw new InvalidArgumentException('Archive contains an unsafe file path.');
+                }
+                $entries[] = [$i, $norm];
+            }
+            // Strip a single common wrapper directory when manifest.json sits one level deep.
+            $prefix = '';
+            $hasRootManifest = false;
+            foreach ($entries as [, $norm]) {
+                if ($norm === 'manifest.json') { $hasRootManifest = true; break; }
+            }
+            if (!$hasRootManifest) {
+                foreach ($entries as [, $norm]) {
+                    if (preg_match('#^([^/]+)/manifest\.json$#', $norm, $m) === 1) {
+                        $prefix = $m[1] . '/';
+                        break;
+                    }
+                }
+            }
+            foreach ($entries as [$i, $norm]) {
+                if ($prefix !== '') {
+                    if (!str_starts_with($norm, $prefix)) continue;
+                    $norm = substr($norm, strlen($prefix));
+                }
+                if ($norm === '' || str_contains($norm, '..')) continue;
+                $stat = $zip->statIndex($i);
+                $size = is_array($stat) ? (int) ($stat['size'] ?? 0) : 0;
+                if ($size > self::MAX_MEDIA_FILE_BYTES) {
+                    throw new InvalidArgumentException("{$norm} exceeds the maximum allowed file size.");
+                }
+                $totalBytes += $size;
+                if ($totalBytes > self::MAX_PROJECT_BYTES) {
+                    throw new InvalidArgumentException('Archive exceeds the maximum allowed project size.');
+                }
+                $bytes = $zip->getFromIndex($i);
+                if ($bytes === false) continue;
+
+                if (preg_match(self::SOURCE_PATH, $norm) === 1 && !str_starts_with($norm, 'site/') && !str_starts_with($norm, 'assets/')) {
+                    $files[$norm] = $bytes;
+                } elseif (preg_match(self::MEDIA_PATH, $norm) === 1 || self::isSitePath($norm)) {
+                    $assets[$norm] = base64_encode($bytes);
+                }
+            }
+        } finally {
+            $zip->close();
+        }
+        if (!isset($files['manifest.json'])) {
+            throw new InvalidArgumentException('This .softn archive is missing manifest.json.');
+        }
+        $project = [
+            'home' => true,
+            'version' => 0,
+            'access' => 'members',
+            'files' => $files,
+            'assets' => $assets,
+        ];
+        self::validateProject($project);
+        return $project;
     }
 
     /**

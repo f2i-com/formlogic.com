@@ -44,7 +44,7 @@ class PackCatalogController
         $filters = [];
         // itemType and trustLevel are marketplace facets (spec §30). The service validates them
         // against its fixed enums, so an unknown value is simply ignored.
-        foreach (['search', 'category', 'tag', 'itemType', 'trustLevel'] as $filter) {
+        foreach (['search', 'category', 'tag', 'itemType', 'trustLevel', 'pricing', 'compatibleWith'] as $filter) {
             if (is_string($params[$filter] ?? null) && $params[$filter] !== '') {
                 $filters[$filter] = $params[$filter];
             }
@@ -331,6 +331,31 @@ class PackCatalogController
             ]);
         }
         if (in_array($slug, $folders['hidden'], true)) return $this->jsonResponse($response, ['message' => 'Pack not found'], 404);
+        $softnCatalog = new \FormLogic\Services\SoftnPackCatalog();
+        if ($softnCatalog->getMeta($slug) !== null) {
+            $format = (string) ($request->getQueryParams()['format'] ?? '');
+            if ($format === 'softn') {
+                $archivePath = $softnCatalog->archivePath($slug);
+                if ($archivePath === null || !is_file($archivePath)) {
+                    return $this->jsonResponse($response, ['error' => true, 'message' => 'SoftN archive not found'], 404);
+                }
+                $bytes = (string) file_get_contents($archivePath);
+                $response->getBody()->write($bytes);
+                return $response
+                    ->withHeader('Content-Type', 'application/zip')
+                    ->withHeader('Content-Disposition', 'attachment; filename="' . basename($archivePath) . '"')
+                    ->withHeader('Cache-Control', 'no-store');
+            }
+            $mode = (string) ($request->getQueryParams()['mode'] ?? 'bundle');
+            $pack = $softnCatalog->buildInstallablePack($slug, in_array($mode, ['bundle', 'softn_only'], true) ? $mode : 'bundle');
+            $meta = $softnCatalog->getMeta($slug);
+            return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), [
+                'pack' => PackService::forJson($pack ?? []),
+                'version' => (string) ($meta['version'] ?? '1.0.0'),
+                'catalogId' => null,
+                'versionId' => null,
+            ]);
+        }
         $catalog = $this->catalogService->getCatalogBySlug($slug);
         if (!$catalog) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
@@ -342,6 +367,16 @@ class PackCatalogController
         $viewerId = $request->getAttribute('userId');
         if (($catalog['visibility'] ?? 'public') === 'private' && ($catalog['publisher_id'] ?? null) !== $viewerId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Pack not found'], 404);
+        }
+
+        // Source-protected listings NEVER allow raw bundle/source downloads to non-publishers.
+        // Visitors demo them via the private sandbox, and buyers install server-side via /install.
+        if (($catalog['source_visibility'] ?? 'open') === 'private' && ($catalog['publisher_id'] ?? null) !== $viewerId) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'source_private',
+                'message' => 'This listing is source-protected. Use the live sandbox to demo it, or install it directly into your workspace.',
+            ], 403);
         }
 
         try {

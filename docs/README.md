@@ -11,8 +11,10 @@ Build a form, connect your AI, publish an app, or operate the connected desktop.
 | Connect OAIY, an API provider or an external AI | [Free access and AI setup](FREE_PLANS_AND_AI_SETUP.md) |
 | Configure free access, optional support plans and Site AI | [Administrator controls](FREE_PLANS_AND_AI_SETUP.md#administrator-controls) |
 | Combine forms, dashboards and Aokie in one app | [Connected app workspaces](CONNECTED_APPS.md) |
-| Host and edit a Softn project with private `.logic` and SQLite | [Hosted apps](HOSTED_APPS.md) |
+| Host and edit a SoftN project with private `.logic`/PHP/JS/Rust/Python backend and SQLite | [Hosted apps](HOSTED_APPS.md) |
+| Share one SQLite database across Form Apps, SoftN Apps & API backends, or generate a 1-click Admin Panel | [Hosted apps](HOSTED_APPS.md) · [One backend, many portals](ONE_BACKEND_MANY_PORTALS.md) |
 | Create, edit and delete native SQLite records | [Owner database controls and API](HOSTED_APPS.md#owner-record-api) |
+| Publish/sell private SoftN apps & modular plugins with live sandboxes | [Editable app packs & Marketplace](PACK_PROJECTS.md) |
 | Let an AI create and edit my workspace | [MCP connection guide and tool reference](MCP.md) |
 | Connect an external system using an API key | [REST API](API.md) |
 

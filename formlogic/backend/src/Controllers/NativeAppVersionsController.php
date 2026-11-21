@@ -142,6 +142,9 @@ class NativeAppVersionsController
         $app = $this->apps->getApp((string) ($args['id'] ?? ''));
         $user = $request->getAttribute('userId');
         if (!$app || !$user || $app['ownerId'] !== $user) return $this->jsonError($response, 'App not found or access denied', 404);
+        if (!empty($app['settings']['sourceProtected'])) {
+            return $this->jsonError($response, 'This Marketplace app is source-protected; version source inspection is disabled.', 403, 'source_protected');
+        }
         // DemoReadOnlyMiddleware refuses these first; this is the second guard, should that ever change.
         if ($request->getMethod() !== 'GET' && ($blocked = $this->blockIfDemo($request, $response, self::DEMO_READ_ONLY))) return $blocked;
         $response = $response->withHeader('Cache-Control', 'no-store')->withHeader('X-Content-Type-Options', 'nosniff');

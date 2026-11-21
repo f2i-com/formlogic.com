@@ -1,0 +1,1560 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "job-invoice-management-softn",
+        "name": "Job & Invoice Desk (SoftN + Forms)",
+        "description": "Turnkey job-to-quote-to-invoice-to-payment billing pipeline with client ledger, auto-numbered quotes & tax invoices, partial payment reconciliation, and overdue chase queue. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "invoicing",
+            "jobs",
+            "quotes",
+            "billing",
+            "operations",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "Receipt",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in Job & Invoice Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:job-invoice-management-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "business_name": "business_name",
+                        "contact_name": "contact_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "billing_address": "billing_address",
+                        "client_type": "client_type",
+                        "client_since": "client_since",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in Job & Invoice Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "business_name",
+                    "type": "short_text",
+                    "label": "Business Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_name",
+                    "type": "short_text",
+                    "label": "Contact Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "billing_address",
+                    "type": "long_text",
+                    "label": "Billing Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_type",
+                    "type": "dropdown",
+                    "label": "Client Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "residential",
+                                "label": "Residential",
+                                "value": "Residential"
+                            },
+                            {
+                                "id": "commercial",
+                                "label": "Commercial",
+                                "value": "Commercial"
+                            },
+                            {
+                                "id": "government",
+                                "label": "Government",
+                                "value": "Government"
+                            },
+                            {
+                                "id": "non_profit",
+                                "label": "Non-Profit",
+                                "value": "Non-Profit"
+                            }
+                        ],
+                        "defaultValue": "Commercial"
+                    }
+                },
+                {
+                    "id": "client_since",
+                    "type": "short_text",
+                    "label": "Client Since",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Client Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "client_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "business_name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "jobs",
+            "title": "Jobs",
+            "icon": "Receipt",
+            "description": "Live FormLogic form synced directly to SQLite table \"jobs\" in Job & Invoice Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Jobs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:job-invoice-management-softn-app",
+                    "table": "jobs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "title": "title",
+                        "service_type": "service_type",
+                        "status": "status",
+                        "start_date": "start_date",
+                        "description": "description",
+                        "estimated_cents": "estimated_cents"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Jobs",
+                    "description": "Connected live to SQLite table \"jobs\" in Job & Invoice Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "business_name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "title",
+                    "type": "short_text",
+                    "label": "Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "service_type",
+                    "type": "dropdown",
+                    "label": "Service Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "consulting",
+                                "label": "Consulting",
+                                "value": "Consulting"
+                            },
+                            {
+                                "id": "installation",
+                                "label": "Installation",
+                                "value": "Installation"
+                            },
+                            {
+                                "id": "repair_maintenance",
+                                "label": "Repair / Maintenance",
+                                "value": "Repair / Maintenance"
+                            },
+                            {
+                                "id": "design",
+                                "label": "Design",
+                                "value": "Design"
+                            },
+                            {
+                                "id": "support",
+                                "label": "Support",
+                                "value": "Support"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Consulting"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "lead",
+                                "label": "Lead",
+                                "value": "Lead"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Lead"
+                    }
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_cents",
+                    "type": "number",
+                    "label": "Estimated (Cents)",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Jobs by Service Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "service_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Jobs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:jobs",
+                                "titleField": "title",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "quotes",
+            "title": "Quotes",
+            "icon": "Receipt",
+            "description": "Live FormLogic form synced directly to SQLite table \"quotes\" in Job & Invoice Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Quotes",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:job-invoice-management-softn-app",
+                    "table": "quotes",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "client_id": "client_id",
+                        "quote_number": "quote_number",
+                        "issue_date": "issue_date",
+                        "valid_until": "valid_until",
+                        "subtotal_cents": "subtotal_cents",
+                        "tax_cents": "tax_cents",
+                        "total_cents": "total_cents",
+                        "status": "status",
+                        "notes": "notes",
+                        "converted_invoice_id": "converted_invoice_id"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Quotes",
+                    "description": "Connected live to SQLite table \"quotes\" in Job & Invoice Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:jobs",
+                        "displayFieldIds": [
+                            "title",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "business_name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "quote_number",
+                    "type": "short_text",
+                    "label": "Quote Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issue_date",
+                    "type": "date",
+                    "label": "Issue Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "valid_until",
+                    "type": "short_text",
+                    "label": "Valid Until",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "subtotal_cents",
+                    "type": "number",
+                    "label": "Subtotal (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_cents",
+                    "type": "number",
+                    "label": "Tax (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "lead",
+                                "label": "Lead",
+                                "value": "Lead"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Draft"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "converted_invoice_id",
+                    "type": "number",
+                    "label": "Converted Invoice",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Quotes",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quotes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Quotes by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:quotes",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Quotes",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:quotes",
+                                "titleField": "quote_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "invoices",
+            "title": "Invoices",
+            "icon": "Receipt",
+            "description": "Live FormLogic form synced directly to SQLite table \"invoices\" in Job & Invoice Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Invoices",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:job-invoice-management-softn-app",
+                    "table": "invoices",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "job_id": "job_id",
+                        "client_id": "client_id",
+                        "quote_id": "quote_id",
+                        "invoice_number": "invoice_number",
+                        "issue_date": "issue_date",
+                        "due_date": "due_date",
+                        "subtotal_cents": "subtotal_cents",
+                        "tax_cents": "tax_cents",
+                        "amount_cents": "amount_cents",
+                        "amount_paid_cents": "amount_paid_cents",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Invoices",
+                    "description": "Connected live to SQLite table \"invoices\" in Job & Invoice Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "job_id",
+                    "type": "linked_record",
+                    "label": "Job",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:jobs",
+                        "displayFieldIds": [
+                            "title",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "business_name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "quote_id",
+                    "type": "linked_record",
+                    "label": "Quote",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:quotes",
+                        "displayFieldIds": [
+                            "quote_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "invoice_number",
+                    "type": "short_text",
+                    "label": "Invoice Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issue_date",
+                    "type": "date",
+                    "label": "Issue Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "subtotal_cents",
+                    "type": "number",
+                    "label": "Subtotal (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tax_cents",
+                    "type": "number",
+                    "label": "Tax (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_paid_cents",
+                    "type": "number",
+                    "label": "Amount Paid (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "lead",
+                                "label": "Lead",
+                                "value": "Lead"
+                            },
+                            {
+                                "id": "quoted",
+                                "label": "Quoted",
+                                "value": "Quoted"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "sent",
+                                "label": "Sent",
+                                "value": "Sent"
+                            },
+                            {
+                                "id": "accepted",
+                                "label": "Accepted",
+                                "value": "Accepted"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "expired",
+                                "label": "Expired",
+                                "value": "Expired"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Invoices by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Invoices",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:invoices",
+                                "titleField": "invoice_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "payments",
+            "title": "Payments",
+            "icon": "Receipt",
+            "description": "Live FormLogic form synced directly to SQLite table \"payments\" in Job & Invoice Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Payments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:job-invoice-management-softn-app",
+                    "table": "payments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "invoice_id": "invoice_id",
+                        "payment_date": "payment_date",
+                        "amount_cents": "amount_cents",
+                        "method": "method",
+                        "reference": "reference",
+                        "notes": "notes",
+                        "recorded_by": "recorded_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Payments",
+                    "description": "Connected live to SQLite table \"payments\" in Job & Invoice Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "invoice_id",
+                    "type": "linked_record",
+                    "label": "Invoice",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:invoices",
+                        "displayFieldIds": [
+                            "invoice_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "payment_date",
+                    "type": "date",
+                    "label": "Payment Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "method",
+                    "type": "dropdown",
+                    "label": "Method",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "card",
+                                "label": "Card",
+                                "value": "Card"
+                            },
+                            {
+                                "id": "bank_transfer",
+                                "label": "Bank Transfer",
+                                "value": "Bank Transfer"
+                            },
+                            {
+                                "id": "cash",
+                                "label": "Cash",
+                                "value": "Cash"
+                            },
+                            {
+                                "id": "cheque",
+                                "label": "Cheque",
+                                "value": "Cheque"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Bank Transfer"
+                    }
+                },
+                {
+                    "id": "reference",
+                    "type": "short_text",
+                    "label": "Reference",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "recorded_by",
+                    "type": "short_text",
+                    "label": "Recorded By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Payments by Method",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "method",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:payments",
+                                "titleField": "reference",
+                                "limit": 10,
+                                "subtitleField": "method"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "job-invoice-management-softn-app",
+            "name": "Job & Invoice Desk",
+            "description": "Turnkey job-to-quote-to-invoice-to-payment billing pipeline with client ledger, auto-numbered quotes & tax invoices, partial payment reconciliation, and overdue chase queue.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "job-invoice-management-softn-forms",
+            "name": "Job & Invoice Desk Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Job & Invoice Desk's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:job-invoice-management-softn-app",
+                "linkedSoftnAppId": "@packApp:job-invoice-management-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "jobs",
+                    "displayName": "Jobs",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "quotes",
+                    "displayName": "Quotes",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "invoices",
+                    "displayName": "Invoices",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "payments",
+                    "displayName": "Payments",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_clients",
+                    "name": "Clients by Client Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "client_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_jobs",
+                    "name": "Total Jobs",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:jobs",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_jobs",
+                    "name": "Jobs by Service Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:jobs",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "service_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_quotes",
+                    "name": "Total Quotes",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:quotes",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_invoices",
+                    "name": "Total Invoices",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:invoices",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Client Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "client_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Jobs",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Jobs by Service Type",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:jobs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "service_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Quotes",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:quotes",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Invoices",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:invoices",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

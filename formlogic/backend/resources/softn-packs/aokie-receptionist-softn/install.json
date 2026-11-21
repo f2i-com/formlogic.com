@@ -1,0 +1,3409 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "aokie-receptionist-softn",
+        "name": "Aokie Receptionist (SoftN + Forms)",
+        "description": "Turnkey AI phone & front-desk console: two-pane live call console with structured Caller/AI transcripts, two-pane SMS inbox with AI draft approval, appointments & orders desk, follow-up tasks queue, callers CRM, Bluetooth dongle hardware events log and AI persona/routing configuration. Includes the full-stack SoftN application plus 10 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "receptionist",
+            "phone",
+            "aokie",
+            "desktop",
+            "flows",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "ak-customers",
+            "title": "Customers",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_customers\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Customers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_customers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "preferred_service": "preferred_service",
+                        "status": "status",
+                        "sms_capable": "sms_capable",
+                        "last_call_at": "last_call_at",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Customers",
+                    "description": "Connected live to SQLite table \"ak_customers\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "preferred_service",
+                    "type": "short_text",
+                    "label": "Preferred Service",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "sms_capable",
+                    "type": "dropdown",
+                    "label": "SMS Capable",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "last_call_at",
+                    "type": "short_text",
+                    "label": "Last Call At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Customers by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-customers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-calls",
+            "title": "Calls",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_calls\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Calls",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_calls",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "call_code": "call_code",
+                        "customer_id": "customer_id",
+                        "caller_name": "caller_name",
+                        "caller_phone": "caller_phone",
+                        "direction": "direction",
+                        "status": "status",
+                        "started_at": "started_at",
+                        "answered_at": "answered_at",
+                        "ended_at": "ended_at",
+                        "duration_seconds": "duration_seconds",
+                        "summary": "summary",
+                        "intent": "intent",
+                        "sentiment": "sentiment",
+                        "follow_up_required": "follow_up_required"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Calls",
+                    "description": "Connected live to SQLite table \"ak_calls\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "call_code",
+                    "type": "short_text",
+                    "label": "Call Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "caller_name",
+                    "type": "short_text",
+                    "label": "Caller Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "caller_phone",
+                    "type": "phone",
+                    "label": "Caller Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "direction",
+                    "type": "dropdown",
+                    "label": "Direction",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "inbound",
+                                "label": "Inbound",
+                                "value": "Inbound"
+                            },
+                            {
+                                "id": "outbound",
+                                "label": "Outbound",
+                                "value": "Outbound"
+                            }
+                        ],
+                        "defaultValue": "Inbound"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Ringing"
+                    }
+                },
+                {
+                    "id": "started_at",
+                    "type": "number",
+                    "label": "Started At",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "answered_at",
+                    "type": "number",
+                    "label": "Answered At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ended_at",
+                    "type": "number",
+                    "label": "Ended At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "duration_seconds",
+                    "type": "number",
+                    "label": "Duration Seconds",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "summary",
+                    "type": "long_text",
+                    "label": "Summary",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "intent",
+                    "type": "dropdown",
+                    "label": "Intent",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booking",
+                                "label": "Booking",
+                                "value": "Booking"
+                            },
+                            {
+                                "id": "order",
+                                "label": "Order",
+                                "value": "Order"
+                            },
+                            {
+                                "id": "question",
+                                "label": "Question",
+                                "value": "Question"
+                            },
+                            {
+                                "id": "message",
+                                "label": "Message",
+                                "value": "Message"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Question"
+                    }
+                },
+                {
+                    "id": "sentiment",
+                    "type": "dropdown",
+                    "label": "Sentiment",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "positive",
+                                "label": "Positive",
+                                "value": "Positive"
+                            },
+                            {
+                                "id": "neutral",
+                                "label": "Neutral",
+                                "value": "Neutral"
+                            },
+                            {
+                                "id": "negative",
+                                "label": "Negative",
+                                "value": "Negative"
+                            }
+                        ],
+                        "defaultValue": "Neutral"
+                    }
+                },
+                {
+                    "id": "follow_up_required",
+                    "type": "number",
+                    "label": "Follow Up Required",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Calls",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-calls",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Calls by Direction",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-calls",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "direction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Calls",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-calls",
+                                "titleField": "call_code",
+                                "limit": 10,
+                                "subtitleField": "caller_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-transcript-turns",
+            "title": "Transcript Turns",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_transcript_turns\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Transcript Turns",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_transcript_turns",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "call_id": "call_id",
+                        "turn_index": "turn_index",
+                        "speaker": "speaker",
+                        "text": "text",
+                        "source": "source",
+                        "overlapped": "overlapped"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Transcript Turns",
+                    "description": "Connected live to SQLite table \"ak_transcript_turns\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "call_id",
+                    "type": "linked_record",
+                    "label": "Call",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:ak-calls",
+                        "displayFieldIds": [
+                            "call_code",
+                            "caller_name"
+                        ]
+                    }
+                },
+                {
+                    "id": "turn_index",
+                    "type": "number",
+                    "label": "Turn Index",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "speaker",
+                    "type": "dropdown",
+                    "label": "Speaker",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "caller",
+                                "label": "Caller",
+                                "value": "Caller"
+                            },
+                            {
+                                "id": "aokie",
+                                "label": "Aokie",
+                                "value": "Aokie"
+                            },
+                            {
+                                "id": "operator",
+                                "label": "Operator",
+                                "value": "Operator"
+                            },
+                            {
+                                "id": "system",
+                                "label": "System",
+                                "value": "System"
+                            }
+                        ],
+                        "defaultValue": "Caller"
+                    }
+                },
+                {
+                    "id": "text",
+                    "type": "short_text",
+                    "label": "Text",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "source",
+                    "type": "dropdown",
+                    "label": "Source",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "stt",
+                                "label": "stt",
+                                "value": "stt"
+                            },
+                            {
+                                "id": "audio_model",
+                                "label": "audio_model",
+                                "value": "audio_model"
+                            },
+                            {
+                                "id": "operator",
+                                "label": "operator",
+                                "value": "operator"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "flow",
+                                "value": "flow"
+                            },
+                            {
+                                "id": "call",
+                                "label": "Call",
+                                "value": "Call"
+                            },
+                            {
+                                "id": "sms",
+                                "label": "SMS",
+                                "value": "SMS"
+                            },
+                            {
+                                "id": "manual",
+                                "label": "Manual",
+                                "value": "Manual"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "Flow",
+                                "value": "Flow"
+                            }
+                        ],
+                        "defaultValue": "stt"
+                    }
+                },
+                {
+                    "id": "overlapped",
+                    "type": "number",
+                    "label": "Overlapped",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Transcript Turns",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-transcript-turns",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Transcript Turns by Speaker",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-transcript-turns",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "speaker",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Transcript Turns",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-transcript-turns",
+                                "titleField": "turn_index",
+                                "limit": 10,
+                                "subtitleField": "speaker"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-sms-threads",
+            "title": "SMS Threads",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_sms_threads\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save SMS Threads",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_sms_threads",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "phone": "phone",
+                        "display_name": "display_name",
+                        "last_message_at": "last_message_at",
+                        "last_preview": "last_preview",
+                        "unread_count": "unread_count",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "SMS Threads",
+                    "description": "Connected live to SQLite table \"ak_sms_threads\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "display_name",
+                    "type": "short_text",
+                    "label": "Display Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "last_message_at",
+                    "type": "number",
+                    "label": "Last Message At",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "last_preview",
+                    "type": "short_text",
+                    "label": "Last Preview",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unread_count",
+                    "type": "number",
+                    "label": "Unread Count",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total SMS Threads",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-sms-threads",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "SMS Threads by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-sms-threads",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent SMS Threads",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-sms-threads",
+                                "titleField": "display_name",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-sms-messages",
+            "title": "SMS Messages",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_sms_messages\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save SMS Messages",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_sms_messages",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "thread_id": "thread_id",
+                        "phone": "phone",
+                        "direction": "direction",
+                        "body": "body",
+                        "status": "status",
+                        "is_ai_reply": "is_ai_reply",
+                        "approval_status": "approval_status",
+                        "delivery_note": "delivery_note"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "SMS Messages",
+                    "description": "Connected live to SQLite table \"ak_sms_messages\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "thread_id",
+                    "type": "linked_record",
+                    "label": "Thread",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:ak-sms-threads",
+                        "displayFieldIds": [
+                            "display_name",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "direction",
+                    "type": "dropdown",
+                    "label": "Direction",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "inbound",
+                                "label": "Inbound",
+                                "value": "Inbound"
+                            },
+                            {
+                                "id": "outbound",
+                                "label": "Outbound",
+                                "value": "Outbound"
+                            }
+                        ],
+                        "defaultValue": "Outbound"
+                    }
+                },
+                {
+                    "id": "body",
+                    "type": "long_text",
+                    "label": "Body",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "id": "is_ai_reply",
+                    "type": "number",
+                    "label": "Is Ai Reply",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "approval_status",
+                    "type": "short_text",
+                    "label": "Approval Status",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "delivery_note",
+                    "type": "short_text",
+                    "label": "Delivery Note",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total SMS Messages",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-sms-messages",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "SMS Messages by Direction",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-sms-messages",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "direction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent SMS Messages",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-sms-messages",
+                                "titleField": "phone",
+                                "limit": 10,
+                                "subtitleField": "direction"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-appointments",
+            "title": "Appointments",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_appointments\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Appointments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_appointments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "call_id": "call_id",
+                        "caller_name": "caller_name",
+                        "phone": "phone",
+                        "service": "service",
+                        "appt_date": "appt_date",
+                        "appt_time": "appt_time",
+                        "status": "status",
+                        "source": "source",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Appointments",
+                    "description": "Connected live to SQLite table \"ak_appointments\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "call_id",
+                    "type": "linked_record",
+                    "label": "Call",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-calls",
+                        "displayFieldIds": [
+                            "call_code",
+                            "caller_name"
+                        ]
+                    }
+                },
+                {
+                    "id": "caller_name",
+                    "type": "short_text",
+                    "label": "Caller Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "service",
+                    "type": "short_text",
+                    "label": "Service",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "appt_date",
+                    "type": "date",
+                    "label": "Appt Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "appt_time",
+                    "type": "time",
+                    "label": "Appt Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Requested"
+                    }
+                },
+                {
+                    "id": "source",
+                    "type": "dropdown",
+                    "label": "Source",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "stt",
+                                "label": "stt",
+                                "value": "stt"
+                            },
+                            {
+                                "id": "audio_model",
+                                "label": "audio_model",
+                                "value": "audio_model"
+                            },
+                            {
+                                "id": "operator",
+                                "label": "operator",
+                                "value": "operator"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "flow",
+                                "value": "flow"
+                            },
+                            {
+                                "id": "call",
+                                "label": "Call",
+                                "value": "Call"
+                            },
+                            {
+                                "id": "sms",
+                                "label": "SMS",
+                                "value": "SMS"
+                            },
+                            {
+                                "id": "manual",
+                                "label": "Manual",
+                                "value": "Manual"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "Flow",
+                                "value": "Flow"
+                            }
+                        ],
+                        "defaultValue": "Call"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-appointments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Appointments by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-appointments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-appointments",
+                                "titleField": "phone",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-orders",
+            "title": "Orders",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_orders\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Orders",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_orders",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "call_id": "call_id",
+                        "customer_name": "customer_name",
+                        "phone": "phone",
+                        "status": "status",
+                        "source": "source",
+                        "total_cents": "total_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Orders",
+                    "description": "Connected live to SQLite table \"ak_orders\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "call_id",
+                    "type": "linked_record",
+                    "label": "Call",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-calls",
+                        "displayFieldIds": [
+                            "call_code",
+                            "caller_name"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "New"
+                    }
+                },
+                {
+                    "id": "source",
+                    "type": "dropdown",
+                    "label": "Source",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "stt",
+                                "label": "stt",
+                                "value": "stt"
+                            },
+                            {
+                                "id": "audio_model",
+                                "label": "audio_model",
+                                "value": "audio_model"
+                            },
+                            {
+                                "id": "operator",
+                                "label": "operator",
+                                "value": "operator"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "flow",
+                                "value": "flow"
+                            },
+                            {
+                                "id": "call",
+                                "label": "Call",
+                                "value": "Call"
+                            },
+                            {
+                                "id": "sms",
+                                "label": "SMS",
+                                "value": "SMS"
+                            },
+                            {
+                                "id": "manual",
+                                "label": "Manual",
+                                "value": "Manual"
+                            },
+                            {
+                                "id": "flow",
+                                "label": "Flow",
+                                "value": "Flow"
+                            }
+                        ],
+                        "defaultValue": "Call"
+                    }
+                },
+                {
+                    "id": "total_cents",
+                    "type": "number",
+                    "label": "Total (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Orders by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-orders",
+                                "titleField": "phone",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-tasks",
+            "title": "Tasks",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_tasks\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Tasks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_tasks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_id": "customer_id",
+                        "call_id": "call_id",
+                        "phone": "phone",
+                        "summary": "summary",
+                        "due_at": "due_at",
+                        "status": "status",
+                        "assignee": "assignee",
+                        "priority": "priority",
+                        "sms_state": "sms_state",
+                        "callback_state": "callback_state",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Tasks",
+                    "description": "Connected live to SQLite table \"ak_tasks\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_id",
+                    "type": "linked_record",
+                    "label": "Customer",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-customers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "call_id",
+                    "type": "linked_record",
+                    "label": "Call",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:ak-calls",
+                        "displayFieldIds": [
+                            "call_code",
+                            "caller_name"
+                        ]
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "summary",
+                    "type": "long_text",
+                    "label": "Summary",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "due_at",
+                    "type": "short_text",
+                    "label": "Due At",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "ringing",
+                                "label": "Ringing",
+                                "value": "Ringing"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "missed",
+                                "label": "Missed",
+                                "value": "Missed"
+                            },
+                            {
+                                "id": "voicemail",
+                                "label": "Voicemail",
+                                "value": "Voicemail"
+                            },
+                            {
+                                "id": "requested",
+                                "label": "Requested",
+                                "value": "Requested"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-show",
+                                "value": "No-show"
+                            },
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "ready",
+                                "label": "Ready",
+                                "value": "Ready"
+                            },
+                            {
+                                "id": "delivered",
+                                "label": "Delivered",
+                                "value": "Delivered"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In progress",
+                                "value": "In progress"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "vip",
+                                "label": "VIP",
+                                "value": "VIP"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                },
+                {
+                    "id": "assignee",
+                    "type": "short_text",
+                    "label": "Assignee",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "sms_state",
+                    "type": "short_text",
+                    "label": "SMS State",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "callback_state",
+                    "type": "short_text",
+                    "label": "Callback State",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-tasks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Tasks by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-tasks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-tasks",
+                                "titleField": "phone",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-hardware-events",
+            "title": "Hardware Events",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_hardware_events\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Hardware Events",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_hardware_events",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "event_name": "event_name",
+                        "severity": "severity",
+                        "message": "message",
+                        "dongle_id": "dongle_id",
+                        "occurred_at": "occurred_at",
+                        "payload_json": "payload_json",
+                        "acknowledged": "acknowledged"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Hardware Events",
+                    "description": "Connected live to SQLite table \"ak_hardware_events\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "event_name",
+                    "type": "short_text",
+                    "label": "Event Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "info",
+                                "label": "Info",
+                                "value": "Info"
+                            },
+                            {
+                                "id": "warning",
+                                "label": "Warning",
+                                "value": "Warning"
+                            },
+                            {
+                                "id": "error",
+                                "label": "Error",
+                                "value": "Error"
+                            }
+                        ],
+                        "defaultValue": "Info"
+                    }
+                },
+                {
+                    "id": "message",
+                    "type": "long_text",
+                    "label": "Message",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "dongle_id",
+                    "type": "short_text",
+                    "label": "Dongle",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "occurred_at",
+                    "type": "number",
+                    "label": "Occurred At",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "payload_json",
+                    "type": "short_text",
+                    "label": "Payload Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "acknowledged",
+                    "type": "number",
+                    "label": "Acknowledged",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Hardware Events",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-hardware-events",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Hardware Events by Severity",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-hardware-events",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "severity",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Hardware Events",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-hardware-events",
+                                "titleField": "event_name",
+                                "limit": 10,
+                                "subtitleField": "severity"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "ak-receptionist-config",
+            "title": "Receptionist Config",
+            "icon": "PhoneCall",
+            "description": "Live FormLogic form synced directly to SQLite table \"ak_receptionist_config\" in Aokie Receptionist.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Receptionist Config",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:aokie-receptionist-softn-app",
+                    "table": "ak_receptionist_config",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "active": "active",
+                        "greeting": "greeting",
+                        "instructions": "instructions",
+                        "business_info": "business_info",
+                        "reply_mode": "reply_mode",
+                        "sms_enabled": "sms_enabled",
+                        "whitelist_only": "whitelist_only",
+                        "default_country_code": "default_country_code",
+                        "call_route": "call_route",
+                        "voice": "voice",
+                        "model": "model",
+                        "llm_source": "llm_source",
+                        "llm_endpoint": "llm_endpoint",
+                        "stt_source": "stt_source",
+                        "stt_endpoint": "stt_endpoint",
+                        "tts_source": "tts_source",
+                        "tts_endpoint": "tts_endpoint",
+                        "correction_source": "correction_source",
+                        "correction_endpoint": "correction_endpoint",
+                        "background_ai_source": "background_ai_source",
+                        "background_ai_model": "background_ai_model"
+                    },
+                    "createdAtColumn": null,
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Receptionist Config",
+                    "description": "Connected live to SQLite table \"ak_receptionist_config\" in Aokie Receptionist.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "greeting",
+                    "type": "short_text",
+                    "label": "Greeting",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "instructions",
+                    "type": "long_text",
+                    "label": "Instructions",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "business_info",
+                    "type": "short_text",
+                    "label": "Business Info",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reply_mode",
+                    "type": "dropdown",
+                    "label": "Reply Mode",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "built_in_ai_agent",
+                                "label": "Built-in AI agent",
+                                "value": "Built-in AI agent"
+                            },
+                            {
+                                "id": "custom_flow",
+                                "label": "Custom flow",
+                                "value": "Custom flow"
+                            }
+                        ],
+                        "defaultValue": "Built-in AI agent"
+                    }
+                },
+                {
+                    "id": "sms_enabled",
+                    "type": "dropdown",
+                    "label": "SMS Enabled",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                },
+                {
+                    "id": "whitelist_only",
+                    "type": "dropdown",
+                    "label": "Whitelist Only",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            },
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "default_country_code",
+                    "type": "short_text",
+                    "label": "Default Country Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "call_route",
+                    "type": "short_text",
+                    "label": "Call Route",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "voice",
+                    "type": "short_text",
+                    "label": "Voice",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "model",
+                    "type": "short_text",
+                    "label": "Model",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "llm_source",
+                    "type": "short_text",
+                    "label": "Llm Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "llm_endpoint",
+                    "type": "short_text",
+                    "label": "Llm Endpoint",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "stt_source",
+                    "type": "short_text",
+                    "label": "Stt Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "stt_endpoint",
+                    "type": "short_text",
+                    "label": "Stt Endpoint",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tts_source",
+                    "type": "short_text",
+                    "label": "Tts Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "tts_endpoint",
+                    "type": "short_text",
+                    "label": "Tts Endpoint",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "correction_source",
+                    "type": "short_text",
+                    "label": "Correction Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "correction_endpoint",
+                    "type": "short_text",
+                    "label": "Correction Endpoint",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "background_ai_source",
+                    "type": "short_text",
+                    "label": "Background Ai Source",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "background_ai_model",
+                    "type": "short_text",
+                    "label": "Background Ai Model",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Receptionist Config",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-receptionist-config",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Receptionist Config by Active",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:ak-receptionist-config",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "active",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Receptionist Config",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:ak-receptionist-config",
+                                "titleField": "active",
+                                "limit": 10,
+                                "subtitleField": "greeting"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "aokie-receptionist-softn-app",
+            "name": "Aokie Receptionist",
+            "description": "Turnkey AI phone & front-desk console: two-pane live call console with structured Caller/AI transcripts, two-pane SMS inbox with AI draft approval, appointments & orders desk, follow-up tasks queue, callers CRM, Bluetooth dongle hardware events log and AI persona/routing configuration.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "aokie-receptionist-softn-forms",
+            "name": "Aokie Receptionist Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Aokie Receptionist's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:aokie-receptionist-softn-app",
+                "linkedSoftnAppId": "@packApp:aokie-receptionist-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "ak-customers",
+                    "displayName": "Customers",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-calls",
+                    "displayName": "Calls",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-transcript-turns",
+                    "displayName": "Transcript Turns",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-sms-threads",
+                    "displayName": "SMS Threads",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-sms-messages",
+                    "displayName": "SMS Messages",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-appointments",
+                    "displayName": "Appointments",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-orders",
+                    "displayName": "Orders",
+                    "sortOrder": 6,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-tasks",
+                    "displayName": "Tasks",
+                    "sortOrder": 7,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-hardware-events",
+                    "displayName": "Hardware Events",
+                    "sortOrder": 8,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "ak-receptionist-config",
+                    "displayName": "Receptionist Config",
+                    "sortOrder": 9,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_ak_customers",
+                    "name": "Total Customers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-customers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_ak_customers",
+                    "name": "Customers by Status",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-customers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "status",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_ak_calls",
+                    "name": "Total Calls",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-calls",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_ak_calls",
+                    "name": "Calls by Direction",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-calls",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "direction",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_ak_transcript_turns",
+                    "name": "Total Transcript Turns",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-transcript-turns",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_ak_sms_threads",
+                    "name": "Total SMS Threads",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:ak-sms-threads",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Customers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-customers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Customers by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-customers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Calls",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-calls",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Calls by Direction",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-calls",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "direction",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Transcript Turns",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-transcript-turns",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total SMS Threads",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:ak-sms-threads",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

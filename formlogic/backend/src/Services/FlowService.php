@@ -2309,6 +2309,31 @@ class FlowService
     }
 
     /**
+     * Every binding (enabled AND disabled) pointing at any flow owned by $ownerUserId across both
+     * workspace and app scopes. Used by the Flows workspace UI to hydrate every flow's triggers in
+     * a single query instead of an N+1 fan-out across every app and flow.
+     *
+     * @return array[]
+     */
+    public function listAllOwnerBindings(string $ownerUserId): array
+    {
+        $stmt = $this->mysql->prepare("
+            SELECT b.*, f.slug AS flow_slug
+            FROM app_flow_bindings b
+            JOIN flow_definitions f ON f.id = b.flow_definition_id
+            LEFT JOIN forms frm ON frm.id = b.form_id
+            WHERE f.owner_user_id = :owner
+              AND (
+                (b.app_id IS NOT NULL AND f.app_id = b.app_id)
+                OR (b.app_id IS NULL AND f.app_id IS NULL AND (b.form_id IS NULL OR frm.user_id = :owner2))
+              )
+            ORDER BY b.sort_order ASC, b.created_at ASC, b.id ASC
+        ");
+        $stmt->execute(['owner' => $ownerUserId, 'owner2' => $ownerUserId]);
+        return array_map([$this, 'formatBinding'], $stmt->fetchAll());
+    }
+
+    /**
      * Every binding that points at one owned flow. App flows read app-scoped bindings by the
      * selected flow's app + slug; workspace flows read only app_id NULL form bindings on forms
      * owned by the same user. Returns null when the flow is missing or foreign.
@@ -3305,8 +3330,22 @@ class FlowService
     /** Capture the enabled targets at write time; newly added bindings must not replay old signups. */
     public function nativeRecordSubscriptions(string $appId): array
     {
-        $stmt = $this->mysql->prepare("SELECT b.id, b.event_name FROM app_flow_bindings b JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id WHERE b.app_id=? AND b.enabled=1 AND f.enabled=1 AND b.mode != 'manual' AND b.event_name LIKE 'app.record.%' ORDER BY b.id LIMIT 100");
-        $stmt->execute([$appId]);
+        return $this->nativeRecordSubscriptionsForApps([$appId]);
+    }
+
+    /**
+     * Capture enabled `app.record.*` subscriptions across a shared-database group of apps owned by
+     * the same account so writes from ANY app sharing a SQLite database trigger flows on all of them.
+     *
+     * @param list<string> $appIds
+     */
+    public function nativeRecordSubscriptionsForApps(array $appIds): array
+    {
+        $ids = array_values(array_unique(array_filter($appIds, static fn($id) => is_string($id) && $id !== '')));
+        if ($ids === []) return [];
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->mysql->prepare("SELECT b.id, b.event_name FROM app_flow_bindings b JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id WHERE b.app_id IN ($placeholders) AND b.enabled=1 AND f.enabled=1 AND b.mode != 'manual' AND b.event_name LIKE 'app.record.%' ORDER BY b.id LIMIT 100");
+        $stmt->execute($ids);
         $subscriptions = [];
         foreach ($stmt->fetchAll() as $row) {
             if (!preg_match('/^app\.record\.(created|updated|deleted)\.([A-Za-z][A-Za-z0-9_]{0,62})$/D', $row['event_name'])) continue;
@@ -3317,12 +3356,36 @@ class FlowService
         return $result;
     }
 
-    /** Durable outbox delivery: duplicate deliveries reuse the same flow run. */
+    /**
+     * Durable outbox delivery: duplicate deliveries reuse the same flow run.
+     * Supports bindings on `$appId` as well as any same-owner apps sharing `$appId`'s database.
+     */
     public function enqueueNativeRecordEvent(string $appId, string $eventId, string $event, array $data, array $bindingIds): int
     {
         if (!preg_match('/^[a-f0-9]{32}$/D', $eventId) || !preg_match('/^app\.record\.(created|updated|deleted)\.[A-Za-z][A-Za-z0-9_]{0,62}$/D', $event)) throw new \InvalidArgumentException('Invalid native record event');
-        $stmt = $this->mysql->prepare('SELECT b.id AS binding_id, f.* FROM app_flow_bindings b JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id WHERE b.app_id=? AND b.event_name=? AND b.enabled=1 AND f.enabled=1 AND b.mode != \'manual\' ORDER BY b.sort_order,b.id LIMIT 100');
-        $stmt->execute([$appId, $event]);
+        $cleanBindingIds = array_values(array_unique(array_filter($bindingIds, static fn($id) => is_string($id) && $id !== '')));
+        if ($cleanBindingIds === []) return 0;
+        $placeholders = implode(',', array_fill(0, count($cleanBindingIds), '?'));
+        $stmt = $this->mysql->prepare(
+            "SELECT b.id AS binding_id, f.*
+             FROM app_flow_bindings b
+             JOIN flow_definitions f ON f.id=b.flow_definition_id AND f.app_id=b.app_id
+             WHERE b.id IN ($placeholders)
+               AND b.event_name=?
+               AND b.enabled=1
+               AND f.enabled=1
+               AND b.mode != 'manual'
+               AND (
+                   b.app_id = ?
+                   OR EXISTS (
+                       SELECT 1 FROM apps a1 JOIN apps a2 ON a2.owner_id = a1.owner_id
+                       WHERE a1.id = ? AND a2.id = b.app_id
+                   )
+               )
+             ORDER BY b.sort_order, b.id
+             LIMIT 100"
+        );
+        $stmt->execute([...$cleanBindingIds, $event, $appId, $appId]);
         $snapshot = ['event' => ['name' => $event, 'data' => array_merge($data, ['appId' => $appId, 'eventId' => $eventId])]];
         // A record preview can contain multibyte strings. Keep the complete event envelope
         // even when JSON escaping pushes the bounded preview over the flow snapshot limit.
@@ -3332,7 +3395,7 @@ class FlowService
         }
         $count = 0;
         foreach ($stmt->fetchAll() as $row) {
-            if (!in_array($row['binding_id'], $bindingIds, true)) continue;
+            if (!in_array($row['binding_id'], $cleanBindingIds, true)) continue;
             $result = $this->enqueueRun($this->formatFlow($row), [
                 'triggerEvent' => $event, 'correlationId' => 'native-' . $eventId,
                 'idempotencyKey' => 'native:' . $eventId . ':' . $row['binding_id'],
@@ -3341,6 +3404,49 @@ class FlowService
             if ($result['created']) $count++;
         }
         return $count;
+    }
+
+    /**
+     * Find queued flow runs created for a specific native record event that are eligible for
+     * immediate cloud execution (`execution_location = 'cloud'`, or `'auto'` when cloud-eligible).
+     *
+     * @param list<string> $bindingIds
+     * @return list<array{run: array<string, mixed>, flow: array<string, mixed>}>
+     */
+    public function queuedCloudRunsForNativeEvent(string $eventId, array $bindingIds): array
+    {
+        if (!preg_match('/^[a-f0-9]{32}$/D', $eventId) || $bindingIds === []) return [];
+        $keys = [];
+        foreach ($bindingIds as $bid) {
+            if (is_string($bid) && $bid !== '') $keys[] = 'native:' . $eventId . ':' . $bid;
+        }
+        if ($keys === []) return [];
+        $placeholders = implode(',', array_fill(0, count($keys), '?'));
+        $stmt = $this->mysql->prepare(
+            "SELECT r.id AS run_id, r.input_snapshot_json, r.binding_id, r.trigger_event, f.*
+             FROM flow_run_logs r
+             JOIN flow_definitions f ON f.id = r.flow_definition_id
+             WHERE r.idempotency_key IN ($placeholders)
+               AND r.status = 'queued'
+               AND f.enabled = 1
+               AND f.execution_location IN ('cloud', 'auto')"
+        );
+        $stmt->execute($keys);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $runId = (string) ($row['run_id'] ?? '');
+            $inputs = json_decode((string) ($row['input_snapshot_json'] ?? '{}'), true);
+            $out[] = [
+                'run' => [
+                    'id' => $runId,
+                    'bindingId' => $row['binding_id'] ?? null,
+                    'triggerEvent' => (string) ($row['trigger_event'] ?? ''),
+                    'inputs' => is_array($inputs) ? $inputs : [],
+                ],
+                'flow' => $this->formatFlow($row),
+            ];
+        }
+        return $out;
     }
 
     public function enqueueSubmissionBindings(string $formId, string $responseId, array $answers, ?string $sourceRunId = null): int

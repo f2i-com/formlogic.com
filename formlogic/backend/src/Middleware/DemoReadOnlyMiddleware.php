@@ -52,6 +52,10 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
             '/api/mcp/tokens*',
             '*/reports/run',
             '*/reports/run-batch',
+            '*/demo/session',
+            '*/demo/reset',
+            '*/demo/ui-event',
+            '*/demo/request',
         ];
     }
 

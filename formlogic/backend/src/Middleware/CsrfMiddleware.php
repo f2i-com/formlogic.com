@@ -191,6 +191,11 @@ class CsrfMiddleware implements MiddlewareInterface
         if ($method === 'POST' && preg_match('#^/api/forms/[^/]+/responses$#', $path)) {
             return true;
         }
+        // Marketplace ephemeral sandbox endpoints (stateless HMAC-signed demo token in body,
+        // called from opaque-origin sandbox iframes with no session cookies)
+        if ($method === 'POST' && preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset)$#', $path)) {
+            return true;
+        }
 
         return false;
     }

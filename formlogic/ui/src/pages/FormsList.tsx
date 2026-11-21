@@ -762,7 +762,9 @@ export function FormsList() {
 
   const selectedApp = selectedAppId ? appGroups.find((g) => g.id === selectedAppId) : null;
   // The grid only waits on the forms themselves — the apps rail loads independently.
-  const gridLoading = formsLoading;
+  // Once forms have loaded (even if every form belongs to an app, leaving 0 standalone forms),
+  // don't keep flashing skeleton placeholders over the standalone section.
+  const gridLoading = formsLoading && forms.length === 0;
 
   // Close dropdown menu on scroll, resize, or Escape to prevent stale positioning. Only a scroll
   // that can move the trigger (the page or an ancestor) makes the position stale; the menu's own
@@ -1129,16 +1131,16 @@ export function FormsList() {
 
         {/* Search first (free search): typing switches the page to GLOBAL results across every
             app and form — nothing is scoped away. Sort/view/pack controls sit to the right. */}
-        <div className="mb-4 sm:mb-6 flex flex-col gap-3 @3xl/forms:flex-row @3xl/forms:items-center">
+        <div className="mb-4 sm:mb-6 flex flex-col gap-3 @3xl/forms:flex-row @3xl/forms:flex-wrap @3xl/forms:items-center">
           <Input
             placeholder="Search all forms and apps..."
             aria-label="Search forms and apps"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             leftIcon={<Search className="h-4 w-4" />}
-            className="w-full @3xl/forms:max-w-md"
+            className="min-w-0 w-full @3xl/forms:max-w-sm @3xl/forms:flex-1"
           />
-          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-3 @3xl/forms:ml-auto @3xl/forms:flex @3xl/forms:w-auto">
+          <div className="grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2.5 @3xl/forms:ml-auto @3xl/forms:flex @3xl/forms:w-auto @3xl/forms:flex-wrap @3xl/forms:items-center">
             {/* Grid / list view toggle */}
             <div className="flex flex-none rounded-lg border border-gray-300 dark:border-slate-700 overflow-hidden" role="group" aria-label="View mode">
               <button

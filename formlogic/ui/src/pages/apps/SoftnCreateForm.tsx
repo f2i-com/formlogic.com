@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Database, FileCheck2, FileUp, KeyRound } from 'lucide-react';
+import { ArrowRight, Database, FileCheck2, FileUp, KeyRound, Link2 } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { declaredAppId, readKeyFile } from '../../lib/appKeyFile';
@@ -9,8 +9,10 @@ import { siteOf } from '../../lib/siteApps';
 import { holdsSignInSettings } from '../../lib/signInCodes';
 import { backendOf, withBackend } from '../../lib/softnBackend';
 import { api } from '../../lib/api';
-import { createSoftnApp, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName } from '../../lib/softnApps';
+import { createSoftnApp, isSoftnApp, projectBackendRuntime, projectFromUpload, projectHasBackend, softnWorkspacePath, uploadName } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
+import { useAppStore } from '../../stores/appStore';
+import { useAuthStore } from '../../stores/authStore';
 import { toast } from '../../stores/toastStore';
 
 type FileSlot = 'app' | 'backend' | 'database' | 'key';
@@ -18,7 +20,7 @@ type FileSlot = 'app' | 'backend' | 'database' | 'key';
 /** What a chosen .softn file holds, read as soon as it is chosen: its app's name, and whether it brings a backend. */
 /** `asks`: what the app asks of FormLogic itself (its AI, its payments), said before it is created. */
 /** `codes`: its manifest names a provider for the sign-in codes it sends by text. */
-interface FileReview { project: NativeProject; notes: string[]; name: string; backend: boolean; backendId?: string; asks: string[]; codes: boolean }
+interface FileReview { project: NativeProject; notes: string[]; name: string; backend: boolean; backendRuntime: string | null; backendId?: string; asks: string[]; codes: boolean }
 
 const isFileDrag = (event: React.DragEvent) => [...(event.dataTransfer?.types ?? [])].includes('Files');
 const dropSlot = (target: EventTarget): FileSlot => {
@@ -34,6 +36,10 @@ const fileKinds: Record<FileSlot, { accepts: RegExp; hint: string }> = {
 
 export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
   const navigate = useNavigate();
+  const userId = useAuthStore((s) => s.user?.id);
+  const existingApps = useAppStore((s) => s.apps);
+  const shareableApps = existingApps.filter((a) => isSoftnApp(a) && a.ownerId === userId && !a.settings?.sharedDatabaseAppId);
+  const [sharedDbAppId, setSharedDbAppId] = useState('');
   const [name, setName] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [review, setReview] = useState<FileReview | null>(null);
@@ -113,7 +119,7 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
     try {
       const notes: string[] = [];
       const project = await projectFromUpload(picked, '', notes);
-      if (latest.current === picked) setReview({ project, notes, name: uploadName(project, picked), backend: projectHasBackend(project), backendId: declaredAppId(project.files['manifest.json']), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
+      if (latest.current === picked) setReview({ project, notes, name: uploadName(project, picked), backend: projectHasBackend(project), backendRuntime: projectBackendRuntime(project), backendId: declaredAppId(project.files['manifest.json']), asks: formlogicAsks(project), codes: !!phoneCodeProvider(project) });
     } catch (reason) {
       if (latest.current === picked) setFileError(reason instanceof Error ? reason.message : 'That file could not be read as an app project.');
     }
@@ -147,7 +153,11 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
       const created = await createSoftnApp({ name, start: { kind: 'upload', file, ...start } });
       if (created.error) toast.info('Your app was created', created.error);
       // Its data, once its first version is in: installed as the next version, or not at all.
-      if (created.project && withItsBackend && data) {
+      if (created.project && withItsBackend && sharedDbAppId) {
+        const linked = await api.setNativeDatabaseLink(created.app.id, sharedDbAppId);
+        if (linked.error) toast.warning('Database link skipped', linked.error);
+        else toast.success('Shared database linked', `Connected to ${linked.data?.databaseOwner?.name ?? 'the selected app'}'s SQLite database.`);
+      } else if (created.project && withItsBackend && data) {
         // What the key file holds for the app's sign-in codes is given to the plugin on this site
         // that sends them, where there is one and it takes those settings from such a file.
         let codes = false;
@@ -188,7 +198,7 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
         <div role="status" className="min-w-0 break-words text-sm">
           <span className="font-semibold text-gray-900 dark:text-white">{review?.name ?? file.name}</span>
           {review && <>
-            <span className="text-xs text-gray-600 dark:text-slate-300"> · {review.backend ? 'with its own backend and database' : backendFile ? 'with the attached backend and database' : 'runs in the browser, no backend'}</span>
+            <span className="text-xs text-gray-600 dark:text-slate-300"> · {review.backend ? `with its own ${review.backendRuntime && review.backendRuntime !== 'softn-logic' && review.backendRuntime !== 'logic' ? `${review.backendRuntime.toUpperCase()} ` : ''}backend and database` : backendFile ? 'with the attached backend and database' : 'runs in the browser, no backend'}</span>
             <span className="mt-0.5 block break-all text-xs leading-5 text-gray-500 dark:text-slate-400">{file.name}</span>
           </>}
           {!review && !fileError && <span className="block text-xs text-gray-500 dark:text-slate-400">Reading app…</span>}
@@ -219,7 +229,28 @@ export function SoftnCreateForm({ disabled = false }: { disabled?: boolean }) {
       {backendError && <p role="alert" className="mt-2 rounded-lg bg-red-50 p-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">{backendError}</p>}
       {dropHint('backend')}
     </div>}
-    {withItsBackend && <div data-file-slot="database" className={cn('rounded-xl border p-4 transition-colors', dragging === 'database' ? dropHighlight : 'border-gray-200 dark:border-white/10')}>
+    {withItsBackend && shareableApps.length > 0 && <div className="rounded-xl border border-gray-200 p-4 dark:border-white/10">
+      <label htmlFor="softn-shared-db" className="flex items-center gap-2 text-sm font-semibold text-gray-900 dark:text-white">
+        <Link2 className="h-4 w-4 text-primary-500" aria-hidden="true" />
+        Share an existing app&rsquo;s database <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
+      </label>
+      <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">
+        Connect this app directly to another hosted app&rsquo;s SQLite database instead of creating a separate one.
+      </p>
+      <select
+        id="softn-shared-db"
+        value={sharedDbAppId}
+        onChange={(e) => { setSharedDbAppId(e.target.value); if (e.target.value) chooseDatabase(null); }}
+        disabled={creating || disabled}
+        className="mt-2.5 h-10 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+      >
+        <option value="">Use its own standalone SQLite database</option>
+        {shareableApps.map((target) => (
+          <option key={target.id} value={target.id}>Share database with: {target.name}</option>
+        ))}
+      </select>
+    </div>}
+    {withItsBackend && !sharedDbAppId && <div data-file-slot="database" className={cn('rounded-xl border p-4 transition-colors', dragging === 'database' ? dropHighlight : 'border-gray-200 dark:border-white/10')}>
 
       <p className="text-sm font-semibold text-gray-900 dark:text-white">Bring its data too <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></p>
       <p className="mt-1 break-words text-xs leading-5 text-gray-500 dark:text-slate-400">To bring existing records, stop the old site and choose or drop <code>private/data/application.sqlite</code> here.</p>

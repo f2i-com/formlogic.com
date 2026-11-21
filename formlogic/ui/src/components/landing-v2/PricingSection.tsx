@@ -1,10 +1,12 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, Check } from "lucide-react";
 import { usePublicConfig } from "../../hooks/usePublicConfig";
+import { useAuthStore } from "../../stores/authStore";
 import { SectionLabel } from "./shared";
 
 export function PricingSection({ beta }: { beta: boolean }) {
   const { plans } = usePublicConfig();
+  const signedIn = useAuthStore((s) => !!s.user && !s.user.isDemo);
   const paid = plans.paymentsEnabled && !beta;
   const cards = [
     {
@@ -13,13 +15,13 @@ export function PricingSection({ beta }: { beta: boolean }) {
       period: "no card required",
       description: plans.freeDescription,
       items: [
-        "Forms, apps and automations",
-        "Your backend logic and databases",
-        "Use OAIY, Codex or your own API provider",
-        "Visual builders work without AI",
+        "Forms, live charts & hosted SoftN apps",
+        "Shared SQLite databases & secondary API backends",
+        "External API keys & cross-app visual flows",
+        "Visual builders work with or without AI",
       ],
-      to: "/signup",
-      action: "Create a free workspace",
+      to: signedIn ? "/" : "/signup",
+      action: signedIn ? "Open your workspace" : "Create a free workspace",
     },
     ...(paid
       ? [
@@ -37,7 +39,7 @@ export function PricingSection({ beta }: { beta: boolean }) {
               "Prepaid, with no auto-renewal",
               "AI provider charges are separate",
             ],
-            to: "/billing",
+            to: signedIn ? "/billing" : "/signup",
             action: "View support options",
           },
         ]
@@ -53,7 +55,7 @@ export function PricingSection({ beta }: { beta: boolean }) {
         "Local models on your computer",
         "Change providers in Settings",
       ],
-      to: "/connect-ai",
+      to: signedIn ? "/connect-ai" : "/ai-setup",
       action: "Explore AI setup",
     },
   ];

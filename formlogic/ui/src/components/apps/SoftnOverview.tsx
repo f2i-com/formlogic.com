@@ -3,8 +3,9 @@
 // an app's page costs a few small requests and never starts its runtime.
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Braces, Check, ChevronRight, ClipboardList, Copy, Database, ExternalLink, Globe, History, Layers, PencilRuler, Rocket, Settings, Table2, Users, Workflow, type LucideIcon } from 'lucide-react';
+import { BarChart3, Braces, Check, ChevronRight, ClipboardList, Copy, Database, ExternalLink, Globe, History, KeyRound, Layers, Link2, PencilRuler, Puzzle, Rocket, Settings, ShieldCheck, Store, Table2, Users, Workflow, type LucideIcon } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { PublishSoftnModal } from '../marketplace/PublishSoftnModal';
 import { followAppLink } from '../layout/useAppSectionSidebar';
 import { api, type AppDomain } from '../../lib/api';
 import { declaresFormlogicAi, declaresFormlogicPayments, phoneCodeProvider, type NativeDataSummary, type NativeProject } from '../../lib/nativeHosting';
@@ -48,6 +49,8 @@ export function SoftnOverview({ app, project, version, published, dirty, draftSt
   // Undefined while loading, null when a summary could not be read.
   const [flows, setFlows] = useState<{ all: number; running: number } | null>();
   const [copied, setCopied] = useState(false);
+  const [publishMktOpen, setPublishMktOpen] = useState(false);
+  const sourceProtected = app.settings?.sourceProtected === true;
 
   useEffect(() => {
     if (!backend) return;
@@ -107,11 +110,22 @@ export function SoftnOverview({ app, project, version, published, dirty, draftSt
           {dirty && draftStatus && <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">Unpublished changes · {draftStatus}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {showPublish && <Button size="sm" onClick={onPublish} disabled={!canPublish} isLoading={busy} leftIcon={<Rocket className="size-4" />}>{published ? 'Publish changes' : 'Publish'}</Button>}
+          {showPublish && !sourceProtected && <Button size="sm" onClick={onPublish} disabled={!canPublish} isLoading={busy} leftIcon={<Rocket className="size-4" />}>{published ? 'Publish changes' : 'Publish'}</Button>}
           <a href={liveUrl} target="_blank" rel="noopener noreferrer" className={cn(action, !showPublish && 'border-primary-200 bg-primary-50 text-primary-800 hover:bg-primary-100 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/20')}><ExternalLink className="size-4" aria-hidden="true" />{published ? 'Open the app' : 'Preview draft'}</a>
-          {!readOnly && <Link to={softnWorkspacePath(app.id, 'edit')} className={action}><PencilRuler className="size-4" aria-hidden="true" />Edit app</Link>}
+          {!readOnly && !sourceProtected && <Link to={softnWorkspacePath(app.id, 'edit')} className={action}><PencilRuler className="size-4" aria-hidden="true" />Edit app</Link>}
+          {ownerControls && !sourceProtected && (
+            <button type="button" onClick={() => setPublishMktOpen(true)} className={cn(action, 'cursor-pointer border-indigo-200 bg-indigo-50/70 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200 dark:hover:bg-indigo-500/20')}>
+              <Store className="size-4" aria-hidden="true" />Publish to Marketplace
+            </button>
+          )}
         </div>
       </div>
+      {sourceProtected && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200 @2xl/overview:mx-5">
+          <ShieldCheck className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+          <span>Installed from FormLogic Marketplace with source protection enabled. You have full access to run the app, manage its database, create linked Forms &amp; Charts, attach Plugins, and run Automations.</span>
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap items-center justify-between gap-x-5 border-t border-slate-200 bg-slate-50/70 px-4 py-1 dark:border-slate-700/80 dark:bg-slate-800/30 @2xl/overview:px-5">
         <button type="button" onClick={() => void copyLink()} aria-label={copied ? 'Link copied' : `Copy app address ${liveUrl}`} title={copied ? 'Link copied' : `Copy ${liveUrl}`} className="flex min-h-9 min-w-0 max-w-full items-center gap-2 rounded text-slate-600 hover:text-primary-700 dark:text-slate-300 dark:hover:text-primary-300 max-sm:min-h-11">
           {copied ? <Check className="size-3.5 shrink-0" aria-hidden="true" /> : <Copy className="size-3.5 shrink-0" aria-hidden="true" />}
@@ -121,9 +135,88 @@ export function SoftnOverview({ app, project, version, published, dirty, draftSt
       </div>
     </section>
 
+    {/* Big, easy-to-use quick actions for the most common owner tasks */}
+    {ownerControls && (
+      <section aria-label="Quick actions" className="grid gap-3 sm:grid-cols-2 @5xl/overview:grid-cols-4">
+        <Link
+          to={`${softnWorkspacePath(app.id, 'data')}?tool=admin`}
+          className="group flex items-start gap-3 rounded-xl border border-primary-200/80 bg-gradient-to-br from-primary-50/60 via-white to-white p-3.5 transition-all hover:border-primary-400 hover:shadow-sm dark:border-primary-500/30 dark:from-primary-500/10 dark:via-slate-900 dark:to-slate-900 dark:hover:border-primary-400/60"
+        >
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white shadow-xs">
+            <BarChart3 className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold leading-snug text-slate-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300">
+              Build Admin Panel (CRUD)
+            </span>
+            <span className="mt-0.5 block text-xs leading-4 text-slate-500 dark:text-slate-400">
+              1-click CRUD forms &amp; charts from SQLite
+            </span>
+          </span>
+        </Link>
+
+        <Link
+          to={softnWorkspacePath(app.id, backend ? 'api' : 'data')}
+          className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5 transition-all hover:border-primary-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:hover:border-primary-500/50"
+        >
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
+            <KeyRound className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold leading-snug text-slate-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300">
+              {backend ? 'API & External Keys' : 'Add a Backend'}
+            </span>
+            <span className="mt-0.5 block text-xs leading-4 text-slate-500 dark:text-slate-400">
+              {backend ? 'Invoke routes & add shared-DB APIs' : 'Add SQLite tables & API routes'}
+            </span>
+          </span>
+        </Link>
+
+        <Link
+          to={softnWorkspacePath(app.id, backend ? 'automations' : 'edit')}
+          className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5 transition-all hover:border-primary-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:hover:border-primary-500/50"
+        >
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-300">
+            <Workflow className="h-5 w-5" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold leading-snug text-slate-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300">
+              Automations &amp; Flows
+            </span>
+            <span className="mt-0.5 block text-xs leading-4 text-slate-500 dark:text-slate-400">
+              Link DB triggers &amp; cross-app flows
+            </span>
+          </span>
+        </Link>
+
+        <Link
+          to={sourceProtected ? `${settings}#settings-plugins` : softnWorkspacePath(app.id, 'edit')}
+          className="group flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3.5 transition-all hover:border-primary-300 hover:shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:hover:border-primary-500/50"
+        >
+          <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-300">
+            {sourceProtected ? <Puzzle className="h-5 w-5" /> : <PencilRuler className="h-5 w-5" />}
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold leading-snug text-slate-900 group-hover:text-primary-700 dark:text-white dark:group-hover:text-primary-300">
+              {sourceProtected ? 'Modular Plugins' : 'Edit & Preview App'}
+            </span>
+            <span className="mt-0.5 block text-xs leading-4 text-slate-500 dark:text-slate-400">
+              {sourceProtected ? 'Attach Marketplace plugins to this app' : 'AI Studio, Visual Builder & source code'}
+            </span>
+          </span>
+        </Link>
+      </section>
+    )}
+
     <div className="grid items-start gap-4 @3xl/overview:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] @min-[68rem]/overview:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-4">
         <Panel title="Data" icon={Database} action={backend && <Link to={softnWorkspacePath(app.id, 'data')} className={link}>Open data<ChevronRight className="size-3.5" aria-hidden="true" /></Link>}>
+          {app.settings?.sharedDatabaseAppId && (
+            <p className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+              <Link2 className="h-3 w-3" />
+              Sharing database with another app
+            </p>
+          )}
           {!backend ? <div className={detail}>
             {dirty && projectHasBackend(project) ? <><p>Your draft includes a backend.</p><Link to={softnWorkspacePath(app.id, 'data')} className={link}>Review backend changes<ChevronRight className="size-3.5" aria-hidden="true" /></Link></>
               : <><p className={summaryText}>Browser storage</p><p>Local records stay in each visitor&rsquo;s browser.</p>{ownerControls && <Link to={softnWorkspacePath(app.id, 'data')} className={link}>Add a backend<ChevronRight className="size-3.5" aria-hidden="true" /></Link>}</>}
@@ -181,6 +274,7 @@ export function SoftnOverview({ app, project, version, published, dirty, draftSt
               {isOwner && backend && declaresFormlogicPayments(project) && <Jump to={`${settings}#settings-payments`} label="Payments" />}
               {isOwner && backend && !!phoneCodeProvider(project) && <Jump to={`${settings}#settings-signin`} label="Phone sign-in codes" />}
               {isOwner && <Jump to={`${settings}#settings-before`} label="Before it opens" />}
+              {isOwner && <Jump to={`${settings}#settings-plugins`} label="Modular plugins" />}
               {isOwner && <Jump to={`${settings}#settings-look`} label="Look and sharing" />}
               <Jump to={`${settings}#settings-engine`} label="Engine" />
             </ul>
@@ -188,6 +282,14 @@ export function SoftnOverview({ app, project, version, published, dirty, draftSt
         </div>
       </div>
     </div>
+    {publishMktOpen && (
+      <PublishSoftnModal
+        isOpen={publishMktOpen}
+        onClose={() => setPublishMktOpen(false)}
+        defaultSourceAppId={app.id}
+        onPublished={(newSlug) => onLeave(`/packs/${newSlug}`)}
+      />
+    )}
   </div>;
 }
 

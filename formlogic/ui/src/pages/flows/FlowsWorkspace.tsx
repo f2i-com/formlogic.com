@@ -20,7 +20,14 @@ import { api } from '../../lib/api';
 import { deferEffect } from '../../lib/deferredEffect';
 import { lazyWithRetry } from '../../lib/lazyWithRetry';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
-import { demoApplyFlowOverlay, demoApplyFormBindingOverlay, demoCreateFlow, demoUpdateFlow, demoDeleteFlow } from '../../lib/demoLocal';
+import {
+  demoApplyFormBindingOverlay,
+  demoCreateFlow,
+  demoDeleteFlow,
+  demoReadFlowOverlay,
+  demoUpdateFlow,
+  mergeFlowOverlay,
+} from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
 import { FlowEditor } from '../../components/flows/editor/FlowEditor';
 import type { CloudRunFeedback, FlowExecutionLocation } from '../../components/flows/editor/executionLocation';
@@ -67,7 +74,6 @@ function uniqueFlowIdentity(name: string, slug: string, siblings: FlowDefinition
 
 export function FlowsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const libraryVisible = searchParams.get('view') === 'existing' && searchParams.get('new') !== '1';
   const navigate = useNavigate();
   // Origin-relative Back: opened as /flows?flow=X FROM another surface (App
   // Studio Automations), the editor's back link returns there; otherwise it
@@ -113,6 +119,10 @@ export function FlowsWorkspace() {
   const selectedFlow = selectedId ? flowById.get(selectedId) ?? null : null;
 
   const allFlows = useMemo(() => groups.flatMap((group) => group.flows), [groups]);
+  const viewParam = searchParams.get('view');
+  const libraryVisible =
+    searchParams.get('new') !== '1' &&
+    (viewParam === 'existing' || (viewParam !== 'create' && allFlows.length > 0));
   // The selected flow's sibling flows (same app / same workspace) feed the §9.1 outcome-trigger
   // source picker AND the flow_call child picker — the same lists the runtimes resolve against.
   const selectedAppFlows = useMemo(
@@ -121,15 +131,21 @@ export function FlowsWorkspace() {
   );
   // Editor context (docs §4): the palette + connector pickers depend on whether the selected flow
   // is app-scoped and which connectors its app actually grants. Workspace flows have no connectors
-  // but DO carry sibling flows (workspace flow_call resolves from the owner's workspace list).
+  // but DO carry sibling flows + account apps for cross-app steps.
   const editorContext = useMemo<FlowEditorContext>(() => {
-    const flowContext = { flows: flowPickOptions(selectedAppFlows), currentFlowId: selectedFlow?.id };
+    const accountApps = apps.map((a) => ({
+      id: a.id,
+      name: a.name,
+      slug: a.slug,
+      softnApp: !!a.settings?.softnApp,
+    }));
+    const flowContext = { flows: flowPickOptions(selectedAppFlows), currentFlowId: selectedFlow?.id, apps: accountApps };
     if (!selectedFlow?.appId) return { ...EMPTY_FLOW_EDITOR_CONTEXT, ...flowContext };
     const app = groups.find((g) => g.app?.id === selectedFlow.appId)?.app ?? null;
     // The app's own forms scope the Find/Submit/Update form picker to a short labelled list.
     const appFormIds = (app?.navConfig ?? []).map((n) => n.formId).filter((id): id is string => typeof id === 'string');
     return { appScoped: true, connectors: deriveFlowConnectors(app), appFormIds, ...flowContext };
-  }, [selectedFlow, groups, selectedAppFlows]);
+  }, [selectedFlow, groups, selectedAppFlows, apps]);
   const selectedFlowBindings = selectedFlow ? flowBindingsById[selectedFlow.id] ?? [] : [];
   const availableConnectorIds = useMemo(
     () => [...new Set(apps.flatMap((app) => deriveFlowConnectors(app).map((connector) => connector.id)))].sort(),
@@ -224,41 +240,74 @@ export function FlowsWorkspace() {
     setLoadError(null);
     try {
       const demo = api.isDemoMode();
-      const [wsRes, appsRes, formsRes] = await Promise.all([
-        api.listWorkspaceFlows(),
+      const [wsRes, appsRes, formsRes, flowOverlay] = await Promise.all([
+        api.listWorkspaceFlows({ scope: 'all' }),
         api.getApps(),
         api.getForms({ limit: 500 }),
+        demo ? demoReadFlowOverlay() : Promise.resolve(null),
       ]);
       if (wsRes.error || !wsRes.data) throw new Error(typeof wsRes.error === 'string' ? wsRes.error : 'Failed to load workspace flows');
       if (appsRes.error || !appsRes.data) throw new Error(typeof appsRes.error === 'string' ? appsRes.error : 'Failed to load apps');
       if (formsRes.error || !formsRes.data) throw new Error(typeof formsRes.error === 'string' ? formsRes.error : 'Failed to load forms');
 
       const appList = appsRes.data.apps;
-      const appFlowLists = await Promise.all(appList.map((app) => api.listFlows(app.id)));
-      const failedAppFlows = appFlowLists.find((result) => result.error || !result.data);
-      if (failedAppFlows) throw new Error(typeof failedAppFlows.error === 'string' ? failedAppFlows.error : 'Failed to load app flows');
+      const bundledAll = wsRes.data.scope === 'all';
+
+      let rawWorkspaceFlows: FlowDefinition[];
+      let appFlowsById: Map<string, FlowDefinition[]>;
+      if (bundledAll) {
+        rawWorkspaceFlows = [];
+        appFlowsById = new Map();
+        for (const flow of wsRes.data.flows) {
+          if (flow.appId === null) {
+            rawWorkspaceFlows.push(flow);
+          } else {
+            const bucket = appFlowsById.get(flow.appId);
+            if (bucket) bucket.push(flow);
+            else appFlowsById.set(flow.appId, [flow]);
+          }
+        }
+      } else {
+        rawWorkspaceFlows = wsRes.data.flows;
+        const appFlowLists = await Promise.all(appList.map((app) => api.listFlows(app.id)));
+        const failedAppFlows = appFlowLists.find((result) => result.error || !result.data);
+        if (failedAppFlows) throw new Error(typeof failedAppFlows.error === 'string' ? failedAppFlows.error : 'Failed to load app flows');
+        appFlowsById = new Map(appList.map((app, i) => [app.id, appFlowLists[i].data?.flows ?? []]));
+      }
       if (isCancelled()) return;
 
       // In the shared demo, merge each scope's server-seeded flows with the per-browser overlay
       // (creates/edits/deletes kept in IndexedDB) so exploring flows persists locally, not to the server.
-      const workspaceFlows = demo
-        ? await demoApplyFlowOverlay(null, wsRes.data.flows)
-        : wsRes.data.flows;
-      const appGroups: FlowGroup[] = (
-        await Promise.all(
-          appList.map(async (app, i) => ({
+      const workspaceFlows = flowOverlay
+        ? mergeFlowOverlay(null, rawWorkspaceFlows, flowOverlay)
+        : rawWorkspaceFlows;
+      const appGroups: FlowGroup[] = appList
+        .map((app) => {
+          const serverFlows = appFlowsById.get(app.id) ?? [];
+          return {
             app,
-            flows: demo
-              ? await demoApplyFlowOverlay(app.id, appFlowLists[i].data?.flows ?? [])
-              : appFlowLists[i].data?.flows ?? [],
-          })),
-        )
-      ).filter((group) => group.flows.length > 0);
+            flows: flowOverlay ? mergeFlowOverlay(app.id, serverFlows, flowOverlay) : serverFlows,
+          };
+        })
+        .filter((group) => group.flows.length > 0);
       if (isCancelled()) return;
 
       const nextGroups: FlowGroup[] = [{ app: null, flows: workspaceFlows }, ...appGroups];
       setApps(appList);
       setGroups(nextGroups);
+      if (bundledAll && Array.isArray(wsRes.data.bindings)) {
+        const allBindings = wsRes.data.bindings;
+        const hydratedBindings: Record<string, FlowBinding[]> = {};
+        for (const group of nextGroups) {
+          for (const flow of group.flows) {
+            // Match each flow's own scope so workspace slugs never collide with app slugs.
+            hydratedBindings[flow.id] = allBindings.filter((binding) => (
+              (binding.appId ?? null) === (flow.appId ?? null) && bindingReferencesFlow(binding, flow)
+            ));
+          }
+        }
+        setFlowBindingsById(hydratedBindings);
+      }
       setForms(
         formsRes.data.forms.map((form) => ({
           id: form.id,
@@ -375,7 +424,7 @@ export function FlowsWorkspace() {
   const openNewFlow = (template: FlowStarterTemplate | null = null) => {
     setNewFlowInitialTemplate(template);
     setRightPanel(null);
-    setSearchParams({}, { replace: true });
+    setSearchParams({ view: 'create' }, { replace: true });
   };
 
   const createFlow = async ({ name, slug, description, template, appId }: { name: string; slug: string; description: string; template: FlowStarterTemplate; appId: string | null }) => {
@@ -525,10 +574,16 @@ export function FlowsWorkspace() {
           <Header
             title="Automations"
             actions={
-              <>
+              <div className="flex items-center gap-2">
                 <AiServicesChip onClick={() => setShowAiServices(true)} />
-
-              </>
+                <Button
+                  size="sm"
+                  onClick={() => openNewFlow()}
+                  leftIcon={<Plus className="h-4 w-4" />}
+                >
+                  New flow
+                </Button>
+              </div>
             }
           />
         </div>
@@ -624,8 +679,8 @@ export function FlowsWorkspace() {
               label="Automation workspace"
               current={libraryVisible ? 'existing' : 'create'}
               items={[
-                { value: 'create', label: 'Create a flow', icon: Plus, to: { search: '' } },
                 { value: 'existing', label: 'Existing flows', icon: Workflow, to: { search: '?view=existing' }, mark: allFlows.length },
+                { value: 'create', label: 'Create a flow', icon: Plus, to: { search: '?view=create' } },
               ]}
             />
             <div className="mt-4 min-w-0">

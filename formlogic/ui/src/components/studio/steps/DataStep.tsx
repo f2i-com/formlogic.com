@@ -38,6 +38,7 @@ import type { App, AppForm } from '../../../types/app';
 import type { FieldType, Form, FormField } from '../../../types/form';
 import { NativeDatabaseTables } from '../NativeDatabaseTables';
 import type { NativeTableState } from '../useNativeTables';
+import { AppDatabasePanel } from '../../apps/AppDatabasePanel';
 
 const FIELD_TYPE_LABELS: Record<string, string> = {
   short_text: 'Short text',
@@ -883,6 +884,12 @@ export function DataStep({
           </div>
           <span className="sr-only">{formsResolving ? 'Loading this form' : 'Preparing this form'}</span>
         </section>
+      )}
+
+      {!acting && !isDemo && !app.settings?.softnApp && (
+        <div className="@2xl/studio:col-span-2">
+          <AppDatabasePanel appId={app.id} appName={app.name} />
+        </div>
       )}
 
       <Modal isOpen={showAddType} onClose={closeFormDialog} title={designFirstForm ? 'Add your first form' : 'Add a form'} size="sm">

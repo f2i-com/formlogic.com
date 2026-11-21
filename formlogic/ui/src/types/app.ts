@@ -108,6 +108,22 @@ export interface AppSettings {
   softnMadeBy?: { app: string; from: string };
   /** How a hosted SoftN app looks before it opens and where it is shared (AppLookService). */
   softnLook?: SoftnLook;
+  /** Optional sibling app ID whose SQLite database this hosted app shares directly. */
+  sharedDatabaseAppId?: string;
+  /** True when a Form App has enabled Unified SQLite (each form acts as a real SQLite table). */
+  unifiedSqlite?: boolean;
+  /** Optional linked SoftN app / backend ID paired with a Form App's SQLite database. */
+  linkedSoftnAppId?: string;
+  /** Storage mode hint (`sqlite` when Unified SQLite is active). */
+  databaseMode?: string;
+  /** True when this app was installed from a private, source-hidden Marketplace listing. */
+  sourceProtected?: boolean;
+  /** Marketplace catalog listing ID if installed from the Marketplace. */
+  marketplaceCatalogId?: string;
+  /** Marketplace catalog slug if installed from the Marketplace. */
+  marketplaceSlug?: string;
+  /** Marketplace license ID backing this installation. */
+  marketplaceLicenseId?: string;
 }
 
 /**

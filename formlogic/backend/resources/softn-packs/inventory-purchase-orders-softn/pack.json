@@ -1,0 +1,47 @@
+{
+    "id": "inventory-purchase-orders-softn",
+    "slug": "inventory-purchase-orders-softn",
+    "name": "Inventory & POs — SoftN App & Linked Forms",
+    "shortName": "Inventory & POs",
+    "description": "Turnkey warehouse stock control and purchasing hub: SKU bin locations, low-stock reorder alerts with 1-click Draft PO, multi-line purchase order builder, atomic goods receiving, printable POs, suppliers, and stock audit ledger. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Package",
+    "category": "Business apps",
+    "tags": [
+        "inventory",
+        "purchasing",
+        "stock",
+        "suppliers",
+        "warehouse",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "inventory-purchase-orders-softn.softn",
+    "softnPackAppId": "inventory-purchase-orders-softn-app",
+    "formsPackAppId": "inventory-purchase-orders-softn-forms",
+    "companionPackSlug": "inventory-purchase-orders",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "suppliers",
+        "products",
+        "purchase_orders",
+        "po_line_items",
+        "stock_movements"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/inventory-purchase-orders.png"
+        }
+    ]
+}

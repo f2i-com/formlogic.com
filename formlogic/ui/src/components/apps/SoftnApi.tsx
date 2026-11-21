@@ -5,7 +5,7 @@
 // page does) and shows what came back; and the app's latest calls, as the server recorded them
 // (NativeAppCalls), asked for again every ten seconds while the section is open.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Database, RefreshCw, Route, Send } from 'lucide-react';
+import { Activity, Check, Code2, Copy, Database, KeyRound, Plus, RefreshCw, Route, Send, Server } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { LoadFailure } from '../ui/LoadFailure';
@@ -18,7 +18,10 @@ import {
   type ApiRoute, type NativeCallList,
 } from '../../lib/appApi';
 import { databaseChangeName } from '../../lib/nativeVersions';
+import { softnWorkspacePath } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
+import { useAppStore } from '../../stores/appStore';
+import { toast } from '../../stores/toastStore';
 import type { App } from '../../types/app';
 
 /** How many seconds apart the latest calls are asked for while the section is open and the tab is in view. */
@@ -37,7 +40,7 @@ const TONES = {
 } as const;
 const field = 'block w-full rounded-lg border border-gray-300 bg-white px-2.5 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white';
 
-export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
+export function SoftnApi({ app, access, manifest, version, dirty, readOnly, onNavigate }: {
   app: App;
   /** Who can use the app, the installed project's `access`: whoever can open it may call its routes. */
   access: 'members' | 'application' | undefined;
@@ -49,12 +52,36 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
   dirty: boolean;
   /** The shared demo: it browses, and its apps' backends do not run for it. */
   readOnly: boolean;
+  /** Optional SPA navigation callback (falls back to window.location.assign when rendered outside a Router). */
+  onNavigate?: (to: string) => void;
 }) {
+  const goTo = useCallback((to: string) => {
+    if (onNavigate) onNavigate(to);
+    else if (typeof window !== 'undefined') window.location.assign(to);
+  }, [onNavigate]);
+  const fetchApps = useAppStore(s => s.fetchApps);
   const described = useMemo(() => apiOf(manifest), [manifest]);
   const served = useMemo(() => (described?.routes ?? []).filter(triable), [described]);
   // The route Try it has chosen (by its method and address), and the calls asked for again once it has sent one.
   const [chosen, setChosen] = useState<string | null>(null);
   const [sent, setSent] = useState(0);
+  const [creatingApi, setCreatingApi] = useState(false);
+
+  const createSharedApi = async () => {
+    setCreatingApi(true);
+    try {
+      const res = await api.createSharedApiBackend(app.id, { name: `${app.name} API` });
+      if (res.error || !res.data?.app) {
+        toast.error('Could not create shared-DB API backend', typeof res.error === 'string' ? res.error : undefined);
+        return;
+      }
+      await fetchApps();
+      toast.success('Shared-DB API backend created', `Connected directly to ${app.name}'s SQLite database.`);
+      goTo(softnWorkspacePath(res.data.app.id, 'api'));
+    } finally {
+      setCreatingApi(false);
+    }
+  };
   // A row's Try it: the form below, scrolled to and given the keyboard (its route chosen).
   const tryRoute = (route: ApiRoute) => {
     setChosen(routeKey(route));
@@ -65,9 +92,49 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
   };
 
   return <div className="mt-4" data-testid="softn-api">
-    <p className="mb-4 max-w-3xl text-sm leading-6 text-slate-600 dark:text-slate-300">
-      The app&rsquo;s pages read and save their data through these addresses. Each one runs a function of its backend, here on the server. Try one as yourself, and see the calls the app has had lately.
-    </p>
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 max-w-3xl">
+        <div className="flex flex-wrap items-center gap-2">
+          {described?.containerRuntime && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+              <Server className="h-3.5 w-3.5" />
+              {described.containerRuntime.toUpperCase()} Container Backend
+            </span>
+          )}
+          {app.settings?.sharedDatabaseAppId && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+              <Database className="h-3.5 w-3.5" />
+              Connected to Shared SQLite DB
+            </span>
+          )}
+        </div>
+        <p className="mt-1.5 text-sm leading-6 text-slate-600 dark:text-slate-300">
+          Your app&rsquo;s pages and external services read and write data through these endpoints. Test any route live, call it externally with an API key, or spin up a dedicated API backend on the same database.
+        </p>
+      </div>
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => goTo('/settings#api-keys')}
+            leftIcon={<KeyRound className="h-4 w-4" />}
+            className="min-h-9 font-semibold"
+          >
+            API Keys
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => void createSharedApi()}
+            isLoading={creatingApi}
+            leftIcon={<Plus className="h-4 w-4" />}
+            className="min-h-9 font-semibold"
+          >
+            Add Shared-DB API Backend
+          </Button>
+        </div>
+      )}
+    </div>
     {dirty && <p role="note" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
       You have changes that are not live yet. This is the live app, version {version}: publish your changes to see their routes here.
     </p>}
@@ -94,8 +161,12 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
                 </ol>
                 <p className={cn(HELP, 'mt-3')}>Each has run on the app&rsquo;s database, in this order. One that has run is never changed or removed: a new change is a new file, listed after the last.</p>
               </>
-              : <p className="text-sm text-slate-600 dark:text-slate-300">{described.database ? 'Its database has no changes listed yet.' : 'Its backend keeps no database of its own.'}</p>}
+              : <p className="text-sm text-slate-600 dark:text-slate-300">{described.database ? 'Database schema is managed by this app backend.' : 'Its backend keeps no database of its own.'}</p>}
           </Panel>
+        </div>
+
+        <div className="mt-4">
+          <ExternalApiAccessPanel app={app} firstRoute={served[0]} onOpenApiKeys={() => goTo('/settings#api-keys')} />
         </div>
 
         <div className="mt-4 grid items-start gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
@@ -104,7 +175,7 @@ export function SoftnApi({ app, access, manifest, version, dirty, readOnly }: {
               ? <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">This is the shared demo: its apps&rsquo; backends do not run here, so nothing can be sent.</p>
               : served.length === 0
                 ? <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">The app has no route this server can call.</p>
-                : <TryIt key={JSON.stringify([app.id, app.slug, version])} app={app} routes={served} chosen={chosen} onChoose={setChosen} onSent={() => setSent(n => n + 1)} />}
+                : <TryIt key={JSON.stringify([app.id, app.slug, version])} app={app} routes={served} containerRuntime={described.containerRuntime} chosen={chosen} onChoose={setChosen} onSent={() => setSent(n => n + 1)} />}
           </Panel>
           <RecentCalls appId={app.id} sent={sent} />
         </div>
@@ -200,9 +271,14 @@ type LiveRequest = { method: string; path: string; query: Record<string, string>
  * is sent. A route that can change the app's data asks first. What came back is shown as it came:
  * its status, the time it took, and the answer, laid out to read where it is JSON.
  */
-function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: ApiRoute[]; chosen: string | null; onChoose(key: string): void; onSent(): void }) {
+function TryIt({ app, routes, containerRuntime, chosen, onChoose, onSent }: { app: App; routes: ApiRoute[]; containerRuntime?: string; chosen: string | null; onChoose(key: string): void; onSent(): void }) {
   const route = routes.find(candidate => routeKey(candidate) === chosen) ?? routes[0];
   const key = routeKey(route);
+  const isContainer = !!containerRuntime;
+  const [customMethod, setCustomMethod] = useState(route.method === 'ANY' ? 'GET' : route.method);
+  const [customPath, setCustomPath] = useState(route.path);
+  const effectiveMethod = isContainer ? customMethod : route.method;
+  const effectivePath = isContainer ? (customPath.trim() || route.path) : route.path;
   // What was typed for each route, kept while the section is open.
   const [texts, setTexts] = useState<Record<string, typeof emptyDraft>>({});
   const text = texts[key] ?? emptyDraft;
@@ -223,11 +299,11 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
     return null;
   };
   const [asking, setAsking] = useState<LiveRequest | null>(null);
-  if (asking && routeKey(asking) !== key) setAsking(null);
+  if (asking && !isContainer && routeKey(asking) !== key) setAsking(null);
   const [sending, setSending] = useState(false);
   const [answer, setAnswer] = useState<Answer | null>(null);
-  const hasBody = route.method !== 'GET';
-  const writes = routeWrites(route);
+  const hasBody = effectiveMethod !== 'GET';
+  const writes = isContainer ? effectiveMethod !== 'GET' : routeWrites(route);
 
   const checked = (): LiveRequest | null => {
     const query = checkQuery(text.query);
@@ -246,7 +322,7 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
       headers['idempotency-key'] = text['idempotency-key'];
     }
     setProblemOf(null);
-    return { path: route.path, method: route.method, query: query.value, headers, body: body.value };
+    return { path: effectivePath.startsWith('/') ? effectivePath : `/${effectivePath}`, method: effectiveMethod, query: query.value, headers, body: body.value };
   };
 
   const send = async (ready: LiveRequest) => {
@@ -257,11 +333,12 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
     setSending(false);
     setAsking(null);
     const answered = result.data?.result;
-    if (answered && typeof answered.status === 'number') setAnswer({ route: key, status: answered.status, body: answered.body, took });
-    else if (result.transportFailure) setAnswer({ route: key, status: 0, took, error: writes
+    const label = `${ready.method} ${ready.path}`;
+    if (answered && typeof answered.status === 'number') setAnswer({ route: label, status: answered.status, body: answered.body, took });
+    else if (result.transportFailure) setAnswer({ route: label, status: 0, took, error: writes
       ? 'The connection ended before an answer arrived. Check the app’s data or recent calls before sending this write again.'
       : 'The call could not be sent. Check your connection and try again.' });
-    else setAnswer({ route: key, status: result.status ?? 0, took, error: result.error || 'The server did not answer.' });
+    else setAnswer({ route: label, status: result.status ?? 0, took, error: result.error || 'The server did not answer.' });
     onSent();
   };
 
@@ -274,11 +351,40 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
 
   const shown = answer && answer.error === undefined ? answerText(answer.body) : null;
   return <div>
-    <label htmlFor="api-try-route" className="text-xs font-medium text-slate-600 dark:text-slate-300">Route</label>
-    <select id="api-try-route" value={key} onChange={event => { onChoose(event.target.value); setProblemOf(null); }}
-      className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
-      {routes.map(option => <option key={routeKey(option)} value={routeKey(option)}>{routeKey(option)}</option>)}
-    </select>
+    {isContainer ? (
+      <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-2">
+        <div>
+          <label htmlFor="api-try-method" className="text-xs font-medium text-slate-600 dark:text-slate-300">Method</label>
+          <select
+            id="api-try-method"
+            value={customMethod}
+            onChange={e => setCustomMethod(e.target.value)}
+            className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+          >
+            {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="api-try-route" className="text-xs font-medium text-slate-600 dark:text-slate-300">Path</label>
+          <input
+            id="api-try-route"
+            type="text"
+            value={customPath}
+            onChange={e => { setCustomPath(e.target.value); setProblemOf(null); }}
+            placeholder="/api/items"
+            className={cn(field, 'mt-1 h-9 max-sm:h-11')}
+          />
+        </div>
+      </div>
+    ) : (
+      <>
+        <label htmlFor="api-try-route" className="text-xs font-medium text-slate-600 dark:text-slate-300">Route</label>
+        <select id="api-try-route" value={key} onChange={event => { onChoose(event.target.value); setProblemOf(null); }}
+          className="mt-1 h-9 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 font-mono text-xs text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+          {routes.map(option => <option key={routeKey(option)} value={routeKey(option)}>{routeKey(option)}</option>)}
+        </select>
+      </>
+    )}
 
     <label htmlFor="api-try-query" className="mt-3 block text-xs font-medium text-slate-600 dark:text-slate-300">Query <span className="font-normal text-slate-500 dark:text-slate-400">(JSON, optional)</span></label>
     <textarea id="api-try-query" rows={2} value={text.query} onChange={event => type('query', event.target.value)} spellCheck={false}
@@ -332,8 +438,87 @@ function TryIt({ app, routes, chosen, onChoose, onSent }: { app: App; routes: Ap
 
     {asking && <ConfirmDialog isOpen onClose={() => { if (!sending) setAsking(null); }} onConfirm={() => void send(asking)} isLoading={sending}
       title="Send this to the live app?" confirmLabel="Send it"
-      message={`${route.method} ${route.path} can change ${app.name}’s data. It runs on the live app, as you, and what it changes stays changed: anyone using the app sees it.`} />}
+      message={`${asking.method} ${asking.path} can change ${app.name}’s data. It runs on the live app, as you, and what it changes stays changed: anyone using the app sees it.`} />}
   </div>;
+}
+
+function ExternalApiAccessPanel({
+  app,
+  firstRoute,
+  onOpenApiKeys,
+}: {
+  app: App;
+  firstRoute?: ApiRoute;
+  onOpenApiKeys: () => void;
+}) {
+  const [tab, setTab] = useState<'invoke' | 'direct' | 'js'>('invoke');
+  const [copied, setCopied] = useState(false);
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://formlogic.com';
+  const samplePath = firstRoute?.path || '/api/status';
+  const sampleMethod = firstRoute?.method && firstRoute.method !== 'ANY' ? firstRoute.method : 'GET';
+  const trimmedPath = samplePath.replace(/^\/+/, '');
+
+  const snippets = {
+    invoke: `curl -X POST "${origin}/api/v1/apps/${app.id}/invoke" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"method": "${sampleMethod}", "path": "${samplePath}", "query": {}, "body": {}}'`,
+    direct: `curl -X ${sampleMethod} "${origin}/api/v1/apps/${app.id}/routes/${trimmedPath}" \\\n  -H "Authorization: Bearer flk_YOUR_API_KEY"`,
+    js: `const res = await fetch("${origin}/api/v1/apps/${app.id}/invoke", {\n  method: "POST",\n  headers: {\n    "Authorization": "Bearer flk_YOUR_API_KEY",\n    "Content-Type": "application/json",\n  },\n  body: JSON.stringify({ method: "${sampleMethod}", path: "${samplePath}" }),\n});\nconst data = await res.json();`,
+  };
+
+  const copyCode = () => {
+    void navigator.clipboard?.writeText(snippets[tab]).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }).catch(() => undefined);
+  };
+
+  return (
+    <Panel title="External API Access (API Key)" icon={<KeyRound className="h-4 w-4" />}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs leading-5 text-slate-600 dark:text-slate-300">
+          Call this backend from external apps, scripts, or webhooks using a FormLogic API key with the{' '}
+          <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] dark:bg-slate-800">apps:invoke</code> scope.
+        </p>
+        <Button size="sm" variant="outline" onClick={onOpenApiKeys} leftIcon={<KeyRound className="h-3.5 w-3.5" />}>
+          Create / Manage API Keys
+        </Button>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+          {([
+            ['invoke', 'Invoke API (cURL)'],
+            ['direct', 'Direct Route (cURL)'],
+            ['js', 'JavaScript fetch'],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setTab(id)}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                tab === id
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                  : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white',
+              )}
+            >
+              <Code2 className="h-3 w-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={copyCode}
+          leftIcon={copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+        >
+          {copied ? 'Copied' : 'Copy snippet'}
+        </Button>
+      </div>
+      <pre className="mt-2.5 overflow-x-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100 dark:bg-slate-950">
+        {snippets[tab]}
+      </pre>
+    </Panel>
+  );
 }
 
 /** How long a read may take before a timed refresh stops waiting for it and asks again. */

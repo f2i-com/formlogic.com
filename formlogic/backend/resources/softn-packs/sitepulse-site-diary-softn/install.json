@@ -1,0 +1,1897 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "sitepulse-site-diary-softn",
+        "name": "SitePulse (SoftN + Forms)",
+        "description": "Turnkey construction site diary and builder command hub: active projects overview, daily site diaries with weather & sign-off, defect snag list, client-approved variations, deliveries log, and subcontractor insurance expiry tracking. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "construction",
+            "site-diary",
+            "builders",
+            "defects",
+            "projects",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "projects",
+            "title": "Projects",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"projects\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Projects",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "projects",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "project_name": "project_name",
+                        "client": "client",
+                        "site_address": "site_address",
+                        "start_date": "start_date",
+                        "target_completion": "target_completion",
+                        "project_manager": "project_manager",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Projects",
+                    "description": "Connected live to SQLite table \"projects\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_name",
+                    "type": "short_text",
+                    "label": "Project Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "client",
+                    "type": "short_text",
+                    "label": "Client",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "site_address",
+                    "type": "long_text",
+                    "label": "Site Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "target_completion",
+                    "type": "short_text",
+                    "label": "Target Completion",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_manager",
+                    "type": "short_text",
+                    "label": "Project Manager",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "planning",
+                                "label": "Planning",
+                                "value": "Planning"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "practical_completion",
+                                "label": "Practical Completion",
+                                "value": "Practical Completion"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "rectified",
+                                "label": "Rectified",
+                                "value": "Rectified"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "pending_review",
+                                "label": "Pending Review",
+                                "value": "Pending Review"
+                            },
+                            {
+                                "id": "expired_insurance",
+                                "label": "Expired Insurance",
+                                "value": "Expired Insurance"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Projects",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:projects",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Projects by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:projects",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Projects",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:projects",
+                                "titleField": "project_name",
+                                "limit": 10,
+                                "subtitleField": "client"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "site-diaries",
+            "title": "Site Diaries",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"site_diaries\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Site Diaries",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "site_diaries",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "project_id": "project_id",
+                        "diary_date": "diary_date",
+                        "weather": "weather",
+                        "workers_on_site": "workers_on_site",
+                        "work_completed": "work_completed",
+                        "delays": "delays",
+                        "visitors": "visitors",
+                        "signed_by": "signed_by",
+                        "signed_at": "signed_at"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Site Diaries",
+                    "description": "Connected live to SQLite table \"site_diaries\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_id",
+                    "type": "linked_record",
+                    "label": "Project",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:projects",
+                        "displayFieldIds": [
+                            "project_name",
+                            "client"
+                        ]
+                    }
+                },
+                {
+                    "id": "diary_date",
+                    "type": "date",
+                    "label": "Diary Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "weather",
+                    "type": "dropdown",
+                    "label": "Weather",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sunny",
+                                "label": "Sunny",
+                                "value": "Sunny"
+                            },
+                            {
+                                "id": "cloudy",
+                                "label": "Cloudy",
+                                "value": "Cloudy"
+                            },
+                            {
+                                "id": "rain",
+                                "label": "Rain",
+                                "value": "Rain"
+                            },
+                            {
+                                "id": "windy",
+                                "label": "Windy",
+                                "value": "Windy"
+                            },
+                            {
+                                "id": "storm",
+                                "label": "Storm",
+                                "value": "Storm"
+                            },
+                            {
+                                "id": "fine",
+                                "label": "Fine",
+                                "value": "Fine"
+                            },
+                            {
+                                "id": "overcast",
+                                "label": "Overcast",
+                                "value": "Overcast"
+                            },
+                            {
+                                "id": "wind",
+                                "label": "Wind",
+                                "value": "Wind"
+                            },
+                            {
+                                "id": "heat",
+                                "label": "Heat",
+                                "value": "Heat"
+                            }
+                        ],
+                        "defaultValue": "Fine"
+                    }
+                },
+                {
+                    "id": "workers_on_site",
+                    "type": "number",
+                    "label": "Workers On Site",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "work_completed",
+                    "type": "short_text",
+                    "label": "Work Completed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "delays",
+                    "type": "short_text",
+                    "label": "Delays",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "visitors",
+                    "type": "short_text",
+                    "label": "Visitors",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "signed_by",
+                    "type": "short_text",
+                    "label": "Signed By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "signed_at",
+                    "type": "number",
+                    "label": "Signed At",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Site Diaries",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:site-diaries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Site Diaries by Weather",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:site-diaries",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "weather",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Site Diaries",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:site-diaries",
+                                "titleField": "diary_date",
+                                "limit": 10,
+                                "subtitleField": "weather"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "defects",
+            "title": "Defects",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"defects\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Defects",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "defects",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "defect_code": "defect_code",
+                        "project_id": "project_id",
+                        "issue_title": "issue_title",
+                        "category": "category",
+                        "priority": "priority",
+                        "status": "status",
+                        "assigned_to": "assigned_to",
+                        "due_date": "due_date",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Defects",
+                    "description": "Connected live to SQLite table \"defects\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "defect_code",
+                    "type": "short_text",
+                    "label": "Defect Code",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_id",
+                    "type": "linked_record",
+                    "label": "Project",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:projects",
+                        "displayFieldIds": [
+                            "project_name",
+                            "client"
+                        ]
+                    }
+                },
+                {
+                    "id": "issue_title",
+                    "type": "short_text",
+                    "label": "Issue Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "structural",
+                                "label": "Structural",
+                                "value": "Structural"
+                            },
+                            {
+                                "id": "waterproofing",
+                                "label": "Waterproofing",
+                                "value": "Waterproofing"
+                            },
+                            {
+                                "id": "finishes",
+                                "label": "Finishes",
+                                "value": "Finishes"
+                            },
+                            {
+                                "id": "services",
+                                "label": "Services",
+                                "value": "Services"
+                            },
+                            {
+                                "id": "safety",
+                                "label": "Safety",
+                                "value": "Safety"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Finishes"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "planning",
+                                "label": "Planning",
+                                "value": "Planning"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "practical_completion",
+                                "label": "Practical Completion",
+                                "value": "Practical Completion"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "rectified",
+                                "label": "Rectified",
+                                "value": "Rectified"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "pending_review",
+                                "label": "Pending Review",
+                                "value": "Pending Review"
+                            },
+                            {
+                                "id": "expired_insurance",
+                                "label": "Expired Insurance",
+                                "value": "Expired Insurance"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Defects",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:defects",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Defects by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:defects",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Defects",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:defects",
+                                "titleField": "defect_code",
+                                "limit": 10,
+                                "subtitleField": "issue_title"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "variations",
+            "title": "Variations",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"variations\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Variations",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "variations",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "var_number": "var_number",
+                        "project_id": "project_id",
+                        "variation_title": "variation_title",
+                        "description": "description",
+                        "estimated_cost_cents": "estimated_cost_cents",
+                        "status": "status",
+                        "client_approval_name": "client_approval_name",
+                        "client_approved_at": "client_approved_at"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Variations",
+                    "description": "Connected live to SQLite table \"variations\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "var_number",
+                    "type": "short_text",
+                    "label": "Var Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_id",
+                    "type": "linked_record",
+                    "label": "Project",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:projects",
+                        "displayFieldIds": [
+                            "project_name",
+                            "client"
+                        ]
+                    }
+                },
+                {
+                    "id": "variation_title",
+                    "type": "short_text",
+                    "label": "Variation Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "estimated_cost_cents",
+                    "type": "number",
+                    "label": "Estimated Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "planning",
+                                "label": "Planning",
+                                "value": "Planning"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "practical_completion",
+                                "label": "Practical Completion",
+                                "value": "Practical Completion"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "rectified",
+                                "label": "Rectified",
+                                "value": "Rectified"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "pending_review",
+                                "label": "Pending Review",
+                                "value": "Pending Review"
+                            },
+                            {
+                                "id": "expired_insurance",
+                                "label": "Expired Insurance",
+                                "value": "Expired Insurance"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                },
+                {
+                    "id": "client_approval_name",
+                    "type": "short_text",
+                    "label": "Client Approval Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_approved_at",
+                    "type": "number",
+                    "label": "Client Approved At",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Variations",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:variations",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Variations by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:variations",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Variations",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:variations",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "deliveries",
+            "title": "Deliveries",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"deliveries\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Deliveries",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "deliveries",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "project_id": "project_id",
+                        "delivery_date": "delivery_date",
+                        "supplier": "supplier",
+                        "material": "material",
+                        "quantity": "quantity",
+                        "unit": "unit",
+                        "received_by": "received_by",
+                        "has_issue": "has_issue",
+                        "issues": "issues"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Deliveries",
+                    "description": "Connected live to SQLite table \"deliveries\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "project_id",
+                    "type": "linked_record",
+                    "label": "Project",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:projects",
+                        "displayFieldIds": [
+                            "project_name",
+                            "client"
+                        ]
+                    }
+                },
+                {
+                    "id": "delivery_date",
+                    "type": "date",
+                    "label": "Delivery Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "supplier",
+                    "type": "short_text",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "material",
+                    "type": "short_text",
+                    "label": "Material",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "quantity",
+                    "type": "number",
+                    "label": "Quantity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "short_text",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "received_by",
+                    "type": "short_text",
+                    "label": "Received By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "has_issue",
+                    "type": "number",
+                    "label": "Has Issue",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issues",
+                    "type": "short_text",
+                    "label": "Issues",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Deliveries",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:deliveries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Deliveries",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:deliveries",
+                                "titleField": "delivery_date",
+                                "limit": 10,
+                                "subtitleField": "supplier"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "subcontractors",
+            "title": "Subcontractors",
+            "icon": "HardHat",
+            "description": "Live FormLogic form synced directly to SQLite table \"subcontractors\" in SitePulse.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Subcontractors",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:sitepulse-site-diary-softn-app",
+                    "table": "subcontractors",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "business_name": "business_name",
+                        "contact": "contact",
+                        "phone": "phone",
+                        "trade": "trade",
+                        "insurance_expiry": "insurance_expiry",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Subcontractors",
+                    "description": "Connected live to SQLite table \"subcontractors\" in SitePulse.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "business_name",
+                    "type": "short_text",
+                    "label": "Business Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "contact",
+                    "type": "short_text",
+                    "label": "Contact",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "trade",
+                    "type": "dropdown",
+                    "label": "Trade",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "electrical",
+                                "label": "Electrical",
+                                "value": "Electrical"
+                            },
+                            {
+                                "id": "plumbing",
+                                "label": "Plumbing",
+                                "value": "Plumbing"
+                            },
+                            {
+                                "id": "carpentry",
+                                "label": "Carpentry",
+                                "value": "Carpentry"
+                            },
+                            {
+                                "id": "concreting",
+                                "label": "Concreting",
+                                "value": "Concreting"
+                            },
+                            {
+                                "id": "roofing",
+                                "label": "Roofing",
+                                "value": "Roofing"
+                            },
+                            {
+                                "id": "painting",
+                                "label": "Painting",
+                                "value": "Painting"
+                            },
+                            {
+                                "id": "earthworks",
+                                "label": "Earthworks",
+                                "value": "Earthworks"
+                            },
+                            {
+                                "id": "tiling",
+                                "label": "Tiling",
+                                "value": "Tiling"
+                            },
+                            {
+                                "id": "waterproofing",
+                                "label": "Waterproofing",
+                                "value": "Waterproofing"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Carpentry"
+                    }
+                },
+                {
+                    "id": "insurance_expiry",
+                    "type": "date",
+                    "label": "Insurance Expiry",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "planning",
+                                "label": "Planning",
+                                "value": "Planning"
+                            },
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "practical_completion",
+                                "label": "Practical Completion",
+                                "value": "Practical Completion"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "rectified",
+                                "label": "Rectified",
+                                "value": "Rectified"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "rejected",
+                                "label": "Rejected",
+                                "value": "Rejected"
+                            },
+                            {
+                                "id": "pending_review",
+                                "label": "Pending Review",
+                                "value": "Pending Review"
+                            },
+                            {
+                                "id": "expired_insurance",
+                                "label": "Expired Insurance",
+                                "value": "Expired Insurance"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Approved"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Subcontractors",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:subcontractors",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Subcontractors by Trade",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:subcontractors",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "trade",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Subcontractors",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:subcontractors",
+                                "titleField": "business_name",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "sitepulse-site-diary-softn-app",
+            "name": "SitePulse",
+            "description": "Turnkey construction site diary and builder command hub: active projects overview, daily site diaries with weather & sign-off, defect snag list, client-approved variations, deliveries log, and subcontractor insurance expiry tracking.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "sitepulse-site-diary-softn-forms",
+            "name": "SitePulse Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to SitePulse's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:sitepulse-site-diary-softn-app",
+                "linkedSoftnAppId": "@packApp:sitepulse-site-diary-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "projects",
+                    "displayName": "Projects",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "site-diaries",
+                    "displayName": "Site Diaries",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "defects",
+                    "displayName": "Defects",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "variations",
+                    "displayName": "Variations",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "deliveries",
+                    "displayName": "Deliveries",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "subcontractors",
+                    "displayName": "Subcontractors",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_projects",
+                    "name": "Total Projects",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:projects",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_projects",
+                    "name": "Projects by Status",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:projects",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "status",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_site_diaries",
+                    "name": "Total Site Diaries",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:site-diaries",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_site_diaries",
+                    "name": "Site Diaries by Weather",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:site-diaries",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "weather",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_defects",
+                    "name": "Total Defects",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:defects",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_variations",
+                    "name": "Total Variations",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:variations",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Projects",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:projects",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Projects by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:projects",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Site Diaries",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:site-diaries",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Site Diaries by Weather",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:site-diaries",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "weather",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Defects",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:defects",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Variations",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:variations",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

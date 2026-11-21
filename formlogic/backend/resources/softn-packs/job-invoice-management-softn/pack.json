@@ -1,0 +1,47 @@
+{
+    "id": "job-invoice-management-softn",
+    "slug": "job-invoice-management-softn",
+    "name": "Job & Invoice Desk — SoftN App & Linked Forms",
+    "shortName": "Job & Invoice Desk",
+    "description": "Turnkey job-to-quote-to-invoice-to-payment billing pipeline with client ledger, auto-numbered quotes & tax invoices, partial payment reconciliation, and overdue chase queue. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Receipt",
+    "category": "Business apps",
+    "tags": [
+        "invoicing",
+        "jobs",
+        "quotes",
+        "billing",
+        "operations",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "job-invoice-management-softn.softn",
+    "softnPackAppId": "job-invoice-management-softn-app",
+    "formsPackAppId": "job-invoice-management-softn-forms",
+    "companionPackSlug": "job-invoice-management",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": true,
+    "tables": [
+        "clients",
+        "jobs",
+        "quotes",
+        "invoices",
+        "payments"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/job-invoice-management.png"
+        }
+    ]
+}

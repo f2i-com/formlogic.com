@@ -1,0 +1,1348 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "property-maintenance-softn",
+        "name": "Property Maintenance (SoftN + Forms)",
+        "description": "Turnkey property maintenance and handyman operations desk: tenant request triage board, 1-click work order dispatch, properties register with access notes, tenants directory, and rated property inspections. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "property",
+            "maintenance",
+            "handyman",
+            "jobs",
+            "landlord",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "properties",
+            "title": "Properties",
+            "icon": "Home",
+            "description": "Live FormLogic form synced directly to SQLite table \"properties\" in Property Maintenance.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Properties",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:property-maintenance-softn-app",
+                    "table": "properties",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "address": "address",
+                        "property_type": "property_type",
+                        "owner_manager": "owner_manager",
+                        "manager_phone": "manager_phone",
+                        "access_notes": "access_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Properties",
+                    "description": "Connected live to SQLite table \"properties\" in Property Maintenance.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "property_type",
+                    "type": "dropdown",
+                    "label": "Property Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "house",
+                                "label": "House",
+                                "value": "House"
+                            },
+                            {
+                                "id": "apartment",
+                                "label": "Apartment",
+                                "value": "Apartment"
+                            },
+                            {
+                                "id": "commercial",
+                                "label": "Commercial",
+                                "value": "Commercial"
+                            },
+                            {
+                                "id": "strata_body_corporate",
+                                "label": "Strata / Body Corporate",
+                                "value": "Strata / Body Corporate"
+                            }
+                        ],
+                        "defaultValue": "House"
+                    }
+                },
+                {
+                    "id": "owner_manager",
+                    "type": "short_text",
+                    "label": "Owner Manager",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "manager_phone",
+                    "type": "phone",
+                    "label": "Manager Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "access_notes",
+                    "type": "long_text",
+                    "label": "Access Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Properties by Property Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "property_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:properties",
+                                "titleField": "address",
+                                "limit": 10,
+                                "subtitleField": "property_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "tenants",
+            "title": "Tenants",
+            "icon": "Home",
+            "description": "Live FormLogic form synced directly to SQLite table \"tenants\" in Property Maintenance.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Tenants",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:property-maintenance-softn-app",
+                    "table": "tenants",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "name": "name",
+                        "phone": "phone",
+                        "email": "email",
+                        "unit": "unit",
+                        "lease_start": "lease_start"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Tenants",
+                    "description": "Connected live to SQLite table \"tenants\" in Property Maintenance.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "unit",
+                    "type": "short_text",
+                    "label": "Unit",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "lease_start",
+                    "type": "date",
+                    "label": "Lease Start",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Tenants",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:tenants",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Tenants",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:tenants",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "maintenance-requests",
+            "title": "Maintenance Requests",
+            "icon": "Home",
+            "description": "Live FormLogic form synced directly to SQLite table \"maintenance_requests\" in Property Maintenance.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Maintenance Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:property-maintenance-softn-app",
+                    "table": "maintenance_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "request_number": "request_number",
+                        "property_id": "property_id",
+                        "tenant_id": "tenant_id",
+                        "category": "category",
+                        "priority": "priority",
+                        "status": "status",
+                        "description": "description",
+                        "reported_date": "reported_date"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Maintenance Requests",
+                    "description": "Connected live to SQLite table \"maintenance_requests\" in Property Maintenance.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "request_number",
+                    "type": "short_text",
+                    "label": "Request Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "tenant_id",
+                    "type": "linked_record",
+                    "label": "Tenant",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:tenants",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "plumbing",
+                                "label": "Plumbing",
+                                "value": "Plumbing"
+                            },
+                            {
+                                "id": "electrical",
+                                "label": "Electrical",
+                                "value": "Electrical"
+                            },
+                            {
+                                "id": "appliance",
+                                "label": "Appliance",
+                                "value": "Appliance"
+                            },
+                            {
+                                "id": "structural",
+                                "label": "Structural",
+                                "value": "Structural"
+                            },
+                            {
+                                "id": "garden_grounds",
+                                "label": "Garden / Grounds",
+                                "value": "Garden / Grounds"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Plumbing"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "normal",
+                                "label": "Normal",
+                                "value": "Normal"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            }
+                        ],
+                        "defaultValue": "Normal"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "work_order_assigned",
+                                "label": "Work Order Assigned",
+                                "value": "Work Order Assigned"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "New"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "reported_date",
+                    "type": "date",
+                    "label": "Reported Date",
+                    "required": true,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Maintenance Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Maintenance Requests by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:maintenance-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Maintenance Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:maintenance-requests",
+                                "titleField": "request_number",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "work-orders",
+            "title": "Work Orders",
+            "icon": "Home",
+            "description": "Live FormLogic form synced directly to SQLite table \"work_orders\" in Property Maintenance.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Work Orders",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:property-maintenance-softn-app",
+                    "table": "work_orders",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "wo_number": "wo_number",
+                        "request_id": "request_id",
+                        "property_id": "property_id",
+                        "assigned_to": "assigned_to",
+                        "scheduled_date": "scheduled_date",
+                        "hours": "hours",
+                        "cost_cents": "cost_cents",
+                        "status": "status",
+                        "work_done": "work_done"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Work Orders",
+                    "description": "Connected live to SQLite table \"work_orders\" in Property Maintenance.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "wo_number",
+                    "type": "short_text",
+                    "label": "Work Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "request_id",
+                    "type": "linked_record",
+                    "label": "Request",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:maintenance-requests",
+                        "displayFieldIds": [
+                            "request_number",
+                            "description"
+                        ]
+                    }
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "scheduled_date",
+                    "type": "date",
+                    "label": "Scheduled Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "hours",
+                    "type": "number",
+                    "label": "Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "work_order_assigned",
+                                "label": "Work Order Assigned",
+                                "value": "Work Order Assigned"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "on_hold",
+                                "label": "On Hold",
+                                "value": "On Hold"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "work_done",
+                    "type": "long_text",
+                    "label": "Work Done",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Work Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:work-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Work Orders by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:work-orders",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Work Orders",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:work-orders",
+                                "titleField": "wo_number",
+                                "limit": 10,
+                                "subtitleField": "status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "inspections",
+            "title": "Inspections",
+            "icon": "Home",
+            "description": "Live FormLogic form synced directly to SQLite table \"inspections\" in Property Maintenance.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Inspections",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:property-maintenance-softn-app",
+                    "table": "inspections",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "property_id": "property_id",
+                        "inspection_type": "inspection_type",
+                        "inspection_date": "inspection_date",
+                        "condition_rating": "condition_rating",
+                        "inspector": "inspector",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Inspections",
+                    "description": "Connected live to SQLite table \"inspections\" in Property Maintenance.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "property_id",
+                    "type": "linked_record",
+                    "label": "Property",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:properties",
+                        "displayFieldIds": [
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "inspection_type",
+                    "type": "dropdown",
+                    "label": "Inspection Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "entry",
+                                "label": "Entry",
+                                "value": "Entry"
+                            },
+                            {
+                                "id": "routine",
+                                "label": "Routine",
+                                "value": "Routine"
+                            },
+                            {
+                                "id": "exit",
+                                "label": "Exit",
+                                "value": "Exit"
+                            },
+                            {
+                                "id": "safety_compliance",
+                                "label": "Safety / Compliance",
+                                "value": "Safety / Compliance"
+                            },
+                            {
+                                "id": "final",
+                                "label": "Final",
+                                "value": "Final"
+                            }
+                        ],
+                        "defaultValue": "Routine"
+                    }
+                },
+                {
+                    "id": "inspection_date",
+                    "type": "date",
+                    "label": "Inspection Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "condition_rating",
+                    "type": "number",
+                    "label": "Condition Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "inspector",
+                    "type": "short_text",
+                    "label": "Inspector",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Inspections",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:inspections",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Inspections by Inspection Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:inspections",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "inspection_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Inspections",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:inspections",
+                                "titleField": "inspection_type",
+                                "limit": 10,
+                                "subtitleField": "inspection_date"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "property-maintenance-softn-app",
+            "name": "Property Maintenance",
+            "description": "Turnkey property maintenance and handyman operations desk: tenant request triage board, 1-click work order dispatch, properties register with access notes, tenants directory, and rated property inspections.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "property-maintenance-softn-forms",
+            "name": "Property Maintenance Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Property Maintenance's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:property-maintenance-softn-app",
+                "linkedSoftnAppId": "@packApp:property-maintenance-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "properties",
+                    "displayName": "Properties",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "tenants",
+                    "displayName": "Tenants",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "maintenance-requests",
+                    "displayName": "Maintenance Requests",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "work-orders",
+                    "displayName": "Work Orders",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "inspections",
+                    "displayName": "Inspections",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_properties",
+                    "name": "Total Properties",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:properties",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_properties",
+                    "name": "Properties by Property Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:properties",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "property_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_tenants",
+                    "name": "Total Tenants",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:tenants",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "kpi_maintenance_requests",
+                    "name": "Total Maintenance Requests",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:maintenance-requests",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_work_orders",
+                    "name": "Total Work Orders",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:work-orders",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Properties",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Properties by Property Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:properties",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "property_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Tenants",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:tenants",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Maintenance Requests",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:maintenance-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Work Orders",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:work-orders",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

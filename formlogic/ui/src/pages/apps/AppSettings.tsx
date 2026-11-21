@@ -15,6 +15,8 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ConnectAiModal } from '../../components/mcp/ConnectAiModal';
 import { Switch } from '../../components/ui/Switch';
 import { AppTile } from '../../components/apps/AppTile';
+import { AppPluginsPanel } from '../../components/apps/AppPluginsPanel';
+import { AppDatabasePanel } from '../../components/apps/AppDatabasePanel';
 import { RequirementsSetting } from '../../components/apps/RequirementsSetting';
 import { SignInPageFields } from '../../components/apps/SignInPageFields';
 import { TimezoneSelect } from '../../components/ui/TimezoneSelect';
@@ -851,6 +853,16 @@ export function AppSettings() {
                   />
                 ))}
               </SettingsPanel>
+            )}
+            {!acting && (
+              <div className="space-y-6 pb-24 lg:col-span-2">
+                <div className="min-w-0">
+                  <AppDatabasePanel appId={app.id} appName={app.name} readOnly={false} />
+                </div>
+                <div className="min-w-0">
+                  <AppPluginsPanel appId={app.id} hasNativeDatabase={!!app.settings?.unifiedSqlite || !!app.settings?.sharedDatabaseAppId} readOnly={false} />
+                </div>
+              </div>
             )}
             <SettingsPanel title="App availability" icon={Power} description="Draft and archived apps are unavailable to members. Publish through App Studio when you’re ready.">
               <div>

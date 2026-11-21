@@ -1,0 +1,1371 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "clinic-appointment-intake-softn",
+        "name": "Clinic Front Desk (SoftN + Forms)",
+        "description": "Turnkey clinic reception and patient flow desk: live waiting room queue, patient directory and dossiers, digital intake and consent forms, clinician roster, and follow-up recall queue. Includes the full-stack SoftN application plus 5 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "clinic",
+            "appointments",
+            "intake",
+            "patients",
+            "front-desk",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "patients",
+            "title": "Patients",
+            "icon": "Stethoscope",
+            "description": "Live FormLogic form synced directly to SQLite table \"patients\" in Clinic Front Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Patients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:clinic-appointment-intake-softn-app",
+                    "table": "patients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "full_name": "full_name",
+                        "date_of_birth": "date_of_birth",
+                        "phone": "phone",
+                        "email": "email",
+                        "address": "address",
+                        "emergency_contact_name": "emergency_contact_name",
+                        "emergency_contact_phone": "emergency_contact_phone",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Patients",
+                    "description": "Connected live to SQLite table \"patients\" in Clinic Front Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "full_name",
+                    "type": "short_text",
+                    "label": "Full Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "date_of_birth",
+                    "type": "date",
+                    "label": "Date Of Birth",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "address",
+                    "type": "long_text",
+                    "label": "Address",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_name",
+                    "type": "short_text",
+                    "label": "Emergency Contact Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact_phone",
+                    "type": "phone",
+                    "label": "Emergency Contact Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Patients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:patients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Patients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:patients",
+                                "titleField": "full_name",
+                                "limit": 10,
+                                "subtitleField": "address"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "providers",
+            "title": "Providers",
+            "icon": "Stethoscope",
+            "description": "Live FormLogic form synced directly to SQLite table \"providers\" in Clinic Front Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Providers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:clinic-appointment-intake-softn-app",
+                    "table": "providers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "full_name": "full_name",
+                        "role": "role",
+                        "email": "email",
+                        "phone": "phone",
+                        "room": "room",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Providers",
+                    "description": "Connected live to SQLite table \"providers\" in Clinic Front Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "full_name",
+                    "type": "short_text",
+                    "label": "Full Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "general_practitioner",
+                                "label": "General Practitioner",
+                                "value": "General Practitioner"
+                            },
+                            {
+                                "id": "physiotherapist",
+                                "label": "Physiotherapist",
+                                "value": "Physiotherapist"
+                            },
+                            {
+                                "id": "dentist",
+                                "label": "Dentist",
+                                "value": "Dentist"
+                            },
+                            {
+                                "id": "nurse",
+                                "label": "Nurse",
+                                "value": "Nurse"
+                            },
+                            {
+                                "id": "allied_health",
+                                "label": "Allied Health",
+                                "value": "Allied Health"
+                            },
+                            {
+                                "id": "psychologist",
+                                "label": "Psychologist",
+                                "value": "Psychologist"
+                            },
+                            {
+                                "id": "specialist",
+                                "label": "Specialist",
+                                "value": "Specialist"
+                            },
+                            {
+                                "id": "admin",
+                                "label": "admin",
+                                "value": "admin"
+                            },
+                            {
+                                "id": "front_desk",
+                                "label": "front_desk",
+                                "value": "front_desk"
+                            },
+                            {
+                                "id": "provider",
+                                "label": "provider",
+                                "value": "provider"
+                            }
+                        ],
+                        "defaultValue": "General Practitioner"
+                    }
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "room",
+                    "type": "short_text",
+                    "label": "Room",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "number",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Providers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:providers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Providers by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:providers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Providers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:providers",
+                                "titleField": "full_name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "appointments",
+            "title": "Appointments",
+            "icon": "Stethoscope",
+            "description": "Live FormLogic form synced directly to SQLite table \"appointments\" in Clinic Front Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Appointments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:clinic-appointment-intake-softn-app",
+                    "table": "appointments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "patient_id": "patient_id",
+                        "provider_id": "provider_id",
+                        "appt_date": "appt_date",
+                        "appt_time": "appt_time",
+                        "appt_type": "appt_type",
+                        "status": "status",
+                        "room": "room",
+                        "notes": "notes",
+                        "checked_in_at": "checked_in_at"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Appointments",
+                    "description": "Connected live to SQLite table \"appointments\" in Clinic Front Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "patient_id",
+                    "type": "linked_record",
+                    "label": "Patient",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:patients",
+                        "displayFieldIds": [
+                            "full_name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "provider_id",
+                    "type": "linked_record",
+                    "label": "Provider",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:providers",
+                        "displayFieldIds": [
+                            "full_name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "appt_date",
+                    "type": "date",
+                    "label": "Appt Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "appt_time",
+                    "type": "time",
+                    "label": "Appt Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "appt_type",
+                    "type": "dropdown",
+                    "label": "Appt Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new_patient",
+                                "label": "New Patient",
+                                "value": "New Patient"
+                            },
+                            {
+                                "id": "follow_up",
+                                "label": "Follow-up",
+                                "value": "Follow-up"
+                            },
+                            {
+                                "id": "consultation",
+                                "label": "Consultation",
+                                "value": "Consultation"
+                            },
+                            {
+                                "id": "procedure",
+                                "label": "Procedure",
+                                "value": "Procedure"
+                            },
+                            {
+                                "id": "telehealth",
+                                "label": "Telehealth",
+                                "value": "Telehealth"
+                            }
+                        ],
+                        "defaultValue": "Consultation"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "in_room",
+                                "label": "In Room",
+                                "value": "In Room"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Booked"
+                    }
+                },
+                {
+                    "id": "room",
+                    "type": "short_text",
+                    "label": "Room",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "checked_in_at",
+                    "type": "number",
+                    "label": "Checked In At",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Appointments by Appt Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "appt_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Appointments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:appointments",
+                                "titleField": "appt_date",
+                                "limit": 10,
+                                "subtitleField": "appt_time"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "intake-forms",
+            "title": "Intake Forms",
+            "icon": "Stethoscope",
+            "description": "Live FormLogic form synced directly to SQLite table \"intake_forms\" in Clinic Front Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Intake Forms",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:clinic-appointment-intake-softn-app",
+                    "table": "intake_forms",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "patient_id": "patient_id",
+                        "appointment_id": "appointment_id",
+                        "reason_for_visit": "reason_for_visit",
+                        "symptoms": "symptoms",
+                        "current_medications": "current_medications",
+                        "preferred_contact": "preferred_contact",
+                        "consent_json": "consent_json",
+                        "signed_by": "signed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Intake Forms",
+                    "description": "Connected live to SQLite table \"intake_forms\" in Clinic Front Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "patient_id",
+                    "type": "linked_record",
+                    "label": "Patient",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:patients",
+                        "displayFieldIds": [
+                            "full_name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "appointment_id",
+                    "type": "linked_record",
+                    "label": "Appointment",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:appointments",
+                        "displayFieldIds": [
+                            "appt_date",
+                            "appt_time"
+                        ]
+                    }
+                },
+                {
+                    "id": "reason_for_visit",
+                    "type": "short_text",
+                    "label": "Reason For Visit",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "symptoms",
+                    "type": "short_text",
+                    "label": "Symptoms",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_medications",
+                    "type": "short_text",
+                    "label": "Current Medications",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "preferred_contact",
+                    "type": "dropdown",
+                    "label": "Preferred Contact",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "phone_call",
+                                "label": "Phone Call",
+                                "value": "Phone Call"
+                            },
+                            {
+                                "id": "text_message",
+                                "label": "Text Message",
+                                "value": "Text Message"
+                            },
+                            {
+                                "id": "email",
+                                "label": "Email",
+                                "value": "Email"
+                            }
+                        ],
+                        "defaultValue": "Phone Call"
+                    }
+                },
+                {
+                    "id": "consent_json",
+                    "type": "short_text",
+                    "label": "Consent Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "signed_by",
+                    "type": "short_text",
+                    "label": "Signed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Intake Forms",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:intake-forms",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Intake Forms by Preferred Contact",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:intake-forms",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "preferred_contact",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Intake Forms",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:intake-forms",
+                                "titleField": "reason_for_visit",
+                                "limit": 10,
+                                "subtitleField": "symptoms"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "follow-ups",
+            "title": "Follow Ups",
+            "icon": "Stethoscope",
+            "description": "Live FormLogic form synced directly to SQLite table \"follow_ups\" in Clinic Front Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Follow Ups",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:clinic-appointment-intake-softn-app",
+                    "table": "follow_ups",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "appointment_id": "appointment_id",
+                        "patient_id": "patient_id",
+                        "provider_id": "provider_id",
+                        "followup_date": "followup_date",
+                        "action": "action",
+                        "status": "status",
+                        "booked_appointment_id": "booked_appointment_id"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Follow Ups",
+                    "description": "Connected live to SQLite table \"follow_ups\" in Clinic Front Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "appointment_id",
+                    "type": "linked_record",
+                    "label": "Appointment",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:appointments",
+                        "displayFieldIds": [
+                            "appt_date",
+                            "appt_time"
+                        ]
+                    }
+                },
+                {
+                    "id": "patient_id",
+                    "type": "linked_record",
+                    "label": "Patient",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:patients",
+                        "displayFieldIds": [
+                            "full_name",
+                            "address"
+                        ]
+                    }
+                },
+                {
+                    "id": "provider_id",
+                    "type": "linked_record",
+                    "label": "Provider",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:providers",
+                        "displayFieldIds": [
+                            "full_name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "followup_date",
+                    "type": "date",
+                    "label": "Followup Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "action",
+                    "type": "short_text",
+                    "label": "Action",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "booked",
+                                "label": "Booked",
+                                "value": "Booked"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "in_room",
+                                "label": "In Room",
+                                "value": "In Room"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                },
+                {
+                    "id": "booked_appointment_id",
+                    "type": "number",
+                    "label": "Booked Appointment",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Follow Ups",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:follow-ups",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Follow Ups by Status",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:follow-ups",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "status",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Follow Ups",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:follow-ups",
+                                "titleField": "followup_date",
+                                "limit": 10,
+                                "subtitleField": "action"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "clinic-appointment-intake-softn-app",
+            "name": "Clinic Front Desk",
+            "description": "Turnkey clinic reception and patient flow desk: live waiting room queue, patient directory and dossiers, digital intake and consent forms, clinician roster, and follow-up recall queue.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "clinic-appointment-intake-softn-forms",
+            "name": "Clinic Front Desk Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Clinic Front Desk's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:clinic-appointment-intake-softn-app",
+                "linkedSoftnAppId": "@packApp:clinic-appointment-intake-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "patients",
+                    "displayName": "Patients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "providers",
+                    "displayName": "Providers",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "appointments",
+                    "displayName": "Appointments",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "intake-forms",
+                    "displayName": "Intake Forms",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "follow-ups",
+                    "displayName": "Follow Ups",
+                    "sortOrder": 4,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_patients",
+                    "name": "Total Patients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:patients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "kpi_providers",
+                    "name": "Total Providers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:providers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_providers",
+                    "name": "Providers by Role",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:providers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "role",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_appointments",
+                    "name": "Total Appointments",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:appointments",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_intake_forms",
+                    "name": "Total Intake Forms",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:intake-forms",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Patients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:patients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Providers",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:providers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Providers by Role",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:providers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Appointments",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:appointments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Intake Forms",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:intake-forms",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

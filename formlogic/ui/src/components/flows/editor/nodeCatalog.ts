@@ -79,6 +79,8 @@ export type FieldType =
   | 'boolean'
   /** Form picker (select of the author's forms) with a "dynamic value" escape hatch (id / selector). */
   | 'form'
+  /** App picker (select of the author's apps in the same account) with a custom/dynamic fallback. */
+  | 'app'
   /** Flow picker — a select of the context's sibling flows by STABLE id (flow_call); free text without context flows. */
   | 'flow'
   /** The Trigger node's declared inputs: rows of { name, example? } shown as chips on the node card. */
@@ -382,6 +384,8 @@ export interface FlowEditorContext {
   flows?: FlowPickOption[];
   /** The flow being edited — powers the flow_call self-recursion warning. */
   currentFlowId?: string;
+  /** Apps owned by the current account — powers cross-app pickers on native_app_request / native_record_action. */
+  apps?: Array<{ id: string; name: string; slug: string; softnApp?: boolean }>;
 }
 
 /** One flow a flow_call node may target, with the child contract the panel checks against. */
@@ -793,6 +797,136 @@ const EXECUTABLE_SPECS: NodeSpec[] = [
       { key: 'form', label: 'Form', type: 'form', required: true, help: 'The target form. Pick one, or use a dynamic value (id / selector).' },
       { key: 'responseId', label: 'Response id', type: 'text', required: true, placeholder: '$nodes.lookup.first.id' },
       { key: 'answers', label: 'Answers', type: 'code', language: 'json', placeholder: '{ "status": "done" }' },
+    ],
+  },
+  {
+    type: 'native_app_request',
+    label: 'Call another app',
+    category: 'formlogic',
+    description: 'Invoke a route on another hosted SoftN, PHP, Rust, JS, or Python app in your account.',
+    icon: Server,
+    accent: 'indigo',
+    executable: true,
+    output: 'Object { status: number, ok: boolean, body } from the target app backend. Reference as $nodes.<id>.body.',
+    inputs: IN,
+    outputs: OUT,
+    properties: [
+      {
+        key: 'appId',
+        label: 'Target app',
+        type: 'app',
+        placeholder: 'This app (default)',
+        help: 'Pick any hosted app in your account, or leave blank to call the current app.',
+      },
+      {
+        key: 'method',
+        label: 'Method',
+        type: 'select',
+        default: 'GET',
+        options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => ({ value: m, label: m })),
+      },
+      {
+        key: 'path',
+        label: 'Backend path',
+        type: 'text',
+        required: true,
+        placeholder: '/api/orders',
+        help: 'Route path on the app backend. Supports {{...}} templating against the run scope.',
+        referenceSyntax: 'template',
+      },
+      {
+        key: 'query',
+        label: 'Query params',
+        type: 'code',
+        language: 'json',
+        placeholder: '{ "status": "open" }',
+        help: 'Optional query parameters object.',
+      },
+      {
+        key: 'body',
+        label: 'JSON body',
+        type: 'code',
+        language: 'json',
+        placeholder: '{ "customer": "$inputs.name" }',
+        showIf: { property: 'method', notEquals: 'GET' },
+      },
+    ],
+  },
+  {
+    type: 'native_record_action',
+    label: 'App database',
+    category: 'formlogic',
+    description: 'Read, create, update, or delete rows directly in a hosted SoftN app SQLite database (follows shared databases).',
+    icon: DatabaseZap,
+    accent: 'indigo',
+    executable: true,
+    output: 'For list: { rows, count, total, first, found }. For read/create/update/delete: { record, table, appId }.',
+    inputs: IN,
+    outputs: OUT,
+    properties: [
+      {
+        key: 'appId',
+        label: 'Target app',
+        type: 'app',
+        placeholder: 'This app (default)',
+        help: 'Pick the app whose SQLite database to query or update. Shared database links are resolved automatically.',
+      },
+      {
+        key: 'table',
+        label: 'Table name',
+        type: 'text',
+        required: true,
+        placeholder: 'orders',
+        help: 'SQLite table name inside the app database. Supports {{...}} templating.',
+        referenceSyntax: 'template',
+      },
+      {
+        key: 'operation',
+        label: 'Action',
+        type: 'select',
+        default: 'list',
+        options: [
+          { value: 'list', label: 'List / search rows' },
+          { value: 'read', label: 'Get one row' },
+          { value: 'create', label: 'Create row' },
+          { value: 'update', label: 'Update row' },
+          { value: 'delete', label: 'Delete row' },
+        ],
+      },
+      {
+        key: 'q',
+        label: 'Search text',
+        type: 'text',
+        placeholder: '{{ inputs.query }}',
+        help: 'Optional text search across columns.',
+        showIf: { property: 'operation', equals: 'list' },
+        referenceSyntax: 'template',
+      },
+      {
+        key: 'limit',
+        label: 'Max rows',
+        type: 'number',
+        placeholder: '50',
+        showIf: { property: 'operation', equals: 'list' },
+      },
+      {
+        key: 'key',
+        label: 'Row key (JSON)',
+        type: 'code',
+        language: 'json',
+        placeholder: '{ "id": "$inputs.id" }',
+        help: 'Primary key columns identifying the row.',
+        showIf: { property: 'operation', in: ['read', 'update', 'delete'] },
+      },
+      {
+        key: 'values',
+        label: 'Column values (JSON)',
+        type: 'code',
+        language: 'json',
+        placeholder: '{ "status": "completed" }',
+        help: 'Column names and values to write. String values may be $ selectors.',
+        showIf: { property: 'operation', in: ['create', 'update'] },
+      },
     ],
   },
   {

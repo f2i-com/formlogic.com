@@ -1,0 +1,30 @@
+{
+  "id": "formlogic.landing.pottery-studio",
+  "name": "Kiln & Wheel Pottery Studio",
+  "version": "1.0.0",
+  "description": "Live embedded FormLogic SoftN app with a real SQLite backend for pottery class bookings.",
+  "engine": 2,
+  "main": "index.html",
+  "config": {
+    "server": {
+      "requestsPerMinute": 600
+    }
+  },
+  "backend": {
+    "runtime": "php",
+    "entry": "server/index.php",
+    "mode": "api",
+    "routes": [
+      "/api/"
+    ]
+  },
+  "databases": [
+    {
+      "name": "app",
+      "engine": "sqlite",
+      "file": "data/app.db",
+      "seedSql": "server/schema.sql",
+      "persist": true
+    }
+  ]
+}

@@ -322,6 +322,14 @@ class FlowController
         if (!$userId) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Authentication required'], 401);
         }
+        $scope = (string) (($request->getQueryParams()['scope'] ?? '') ?: 'workspace');
+        if ($scope === 'all') {
+            return $this->jsonResponse($response, [
+                'flows' => $this->flows->listOwnerFlows($userId),
+                'bindings' => $this->flows->listAllOwnerBindings($userId),
+                'scope' => 'all',
+            ]);
+        }
         return $this->jsonResponse($response, ['flows' => $this->flows->listWorkspaceFlows($userId)]);
     }
 

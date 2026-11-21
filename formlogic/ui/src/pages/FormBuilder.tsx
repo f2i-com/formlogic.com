@@ -29,6 +29,7 @@ import {
   Mail,
   Type,
   CircleDot,
+  Database,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -1342,6 +1343,23 @@ export default function FormBuilder() {
                 Private
               </span>
             )}
+            {(() => {
+              const nativeTable = (form.settings as { nativeTableBinding?: { appId?: string; table?: string } } | undefined)?.nativeTableBinding;
+              if (!nativeTable?.table) return null;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (nativeTable.appId) navigate(`/apps/${nativeTable.appId}/web/data/${encodeURIComponent(nativeTable.table!)}`);
+                  }}
+                  className="hidden md:inline-flex flex-none cursor-pointer items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-[11px] font-medium text-indigo-700 transition hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/15 dark:text-indigo-300 dark:hover:bg-indigo-500/25"
+                  title={`Live-bound to SQLite table "${nativeTable.table}" — submissions read & write directly to the shared SQLite database`}
+                >
+                  <Database className="h-3 w-3" aria-hidden="true" />
+                  <span>SQLite · <span className="font-mono">{nativeTable.table}</span></span>
+                </button>
+              );
+            })()}
           </div>
         </div>
 

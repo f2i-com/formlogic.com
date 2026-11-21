@@ -238,6 +238,72 @@ function cnRow(active: boolean): string {
   );
 }
 
+/** App picker for cross-app nodes (native_app_request / native_record_action). */
+function AppPickerField({
+  spec,
+  value,
+  context,
+  onChange,
+}: {
+  spec: NodePropertySpec;
+  value: unknown;
+  context: FlowEditorContext;
+  onChange: (value: unknown) => void;
+}) {
+  const raw = typeof value === 'string' ? value : '';
+  const apps = context.apps ?? [];
+  const isDynamic = raw.includes('{{') || raw.startsWith('$') || (raw !== '' && !apps.some((a) => a.id === raw || a.slug === raw));
+  const [customMode, setCustomMode] = useState(isDynamic);
+
+  if (apps.length === 0 || customMode) {
+    return (
+      <div className="block">
+        <div className="flex items-center justify-between gap-2">
+          <span className={LABEL_CLS}>{spec.label}</span>
+          {apps.length > 0 && (
+            <button type="button" onClick={() => setCustomMode(false)} className={LINK_CLS}>
+              Pick from my apps
+            </button>
+          )}
+        </div>
+        <input
+          type="text"
+          value={raw}
+          placeholder={spec.placeholder ?? 'App ID or slug (leave blank for this app)'}
+          onChange={(e) => onChange(e.target.value)}
+          className={INPUT_CLS}
+          data-ref-syntax="template"
+        />
+        <FieldHelp text={spec.help} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="block">
+      <div className="flex items-center justify-between gap-2">
+        <span className={LABEL_CLS}>{spec.label}</span>
+        <button type="button" onClick={() => setCustomMode(true)} className={LINK_CLS}>
+          Dynamic / ID
+        </button>
+      </div>
+      <select
+        value={raw}
+        onChange={(e) => onChange(e.target.value)}
+        className={INPUT_CLS + ' cursor-pointer'}
+      >
+        <option value="">{context.appScoped ? 'This app (default)' : 'Select an app…'}</option>
+        {apps.map((app) => (
+          <option key={app.id} value={app.id}>
+            {app.name}{app.softnApp ? ' (SoftN)' : ''} — /{app.slug}
+          </option>
+        ))}
+      </select>
+      <FieldHelp text={spec.help} />
+    </div>
+  );
+}
+
 /**
  * Form picker (the "too many forms" fix): app-scoped flows get ONLY their app's forms as a short
  * labelled list; workspace flows (or apps with many forms) get a searchable typeahead. A "dynamic
@@ -1401,6 +1467,9 @@ export function NodeProperties({ nodeId, type, data, onPatch, onDelete, forms, c
                 }
                 if (p.type === 'form') {
                   return <FormPickerField key={p.key} spec={p} value={data[p.key]} forms={forms} context={context} onChange={onChange} />;
+                }
+                if (p.type === 'app') {
+                  return <AppPickerField key={p.key} spec={p} value={data[p.key]} context={context} onChange={onChange} />;
                 }
                 if (p.type === 'flow') {
                   return <FlowPickerField key={p.key} spec={p} value={data[p.key]} context={context} onChange={onChange} />;

@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Store,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useUIStore } from '../../stores/uiStore';
@@ -192,6 +193,7 @@ export function Sidebar({ floating = false, placementControl }: { floating?: boo
         <SidebarNavLink to="/apps" icon={Boxes} label="Apps" collapsed={sidebarCollapsed} />
         <SidebarNavLink to="/forms" icon={FileText} label="Forms" collapsed={sidebarCollapsed} />
         <SidebarNavLink to="/flows" icon={Workflow} label="Automations" collapsed={sidebarCollapsed} />
+        <SidebarNavLink to="/packs?tab=browse" icon={Store} label="Marketplace" collapsed={sidebarCollapsed} />
 
         {/* Your apps — published and draft */}
         {!sidebarCollapsed && (

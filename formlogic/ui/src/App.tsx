@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { isFormLogicMainHost } from './client-runtime/detectEnvironment';
 import { isPublicPath } from './lib/publicPaths';
@@ -236,6 +236,42 @@ function AuthRedirector() {
   return null;
 }
 
+/** Auto-start the public no-signup demo session and open the live demo workspace. */
+function DemoEntry() {
+  const navigate = useNavigate();
+  const [failed, setFailed] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void useAuthStore.getState().startDemo().then((res) => {
+      if (cancelled) return;
+      if (res.success) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        setFailed(res.error || 'The live demo is not available right now.');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [navigate]);
+  if (failed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6 text-center dark:bg-slate-950">
+        <div className="max-w-sm space-y-3">
+          <p className="text-base font-semibold text-gray-900 dark:text-white">Could not start the demo</p>
+          <p className="text-sm text-gray-600 dark:text-slate-400">{failed}</p>
+          <button
+            type="button"
+            onClick={() => navigate('/', { replace: true })}
+            className="cursor-pointer text-sm font-semibold text-primary-600 hover:underline dark:text-primary-400"
+          >
+            Back to home
+          </button>
+        </div>
+      </div>
+    );
+  }
+  return <LoadingFallback />;
+}
+
 /** Return to the linked workspace or approval page after signing in. */
 function SignInFirst() {
   const location = useLocation();
@@ -295,6 +331,8 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/" element={<Landing />} />
+        <Route path="/demo" element={<DemoEntry />} />
+        <Route path="/dashboard" element={<DemoEntry />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route path="/connect-ai" element={<Navigate to="/login?redirect=%2Fconnect-ai" replace />} />
@@ -357,6 +395,7 @@ function AppRoutes() {
       <Routes>
         {/* Marketing landing stays at "/" for the demo so a refresh is landing, not the app */}
         <Route path="/" element={<Landing />} />
+        <Route path="/demo" element={<Navigate to="/dashboard" replace />} />
         {/* Leaving the demo for a real account (Login/Signup log the demo out, then show the form) */}
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
@@ -410,6 +449,8 @@ function AppRoutes() {
           <Route path="/packs" element={<PackGalleryPage />} />
           <Route path="/packs/:slug" element={<PackDetailPage />} />
         <Route path="/" element={<Dashboard />} />
+        <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        <Route path="/demo" element={<Navigate to="/" replace />} />
         {workspacePages}
         {/* §11B O2: the Connect-your-AI wizard (three doors, skip always visible). */}
         <Route path="/connect-ai" element={<ConnectAiWizard />} />

@@ -1,0 +1,2828 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "customer-service-softn",
+        "name": "Service Desk (SoftN + Forms)",
+        "description": "Turnkey customer support helpdesk with ticket triage queue, 1-click escalations, bug tracker, upvotable feature board, refunds desk, live NPS calculator, and searchable knowledge base. Includes the full-stack SoftN application plus 7 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "customer-service",
+            "support",
+            "crm",
+            "tickets",
+            "feedback",
+            "helpdesk",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "support-tickets",
+            "title": "Support Tickets",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"support_tickets\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Support Tickets",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "support_tickets",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ticket_number": "ticket_number",
+                        "customer_name": "customer_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "category": "category",
+                        "priority": "priority",
+                        "status": "status",
+                        "subject": "subject",
+                        "description": "description",
+                        "assigned_to": "assigned_to",
+                        "internal_notes_json": "internal_notes_json"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Support Tickets",
+                    "description": "Connected live to SQLite table \"support_tickets\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ticket_number",
+                    "type": "short_text",
+                    "label": "Ticket Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "getting_started",
+                                "label": "Getting Started",
+                                "value": "Getting Started"
+                            },
+                            {
+                                "id": "account_management",
+                                "label": "Account Management",
+                                "value": "Account Management"
+                            },
+                            {
+                                "id": "billing_payments",
+                                "label": "Billing & Payments",
+                                "value": "Billing & Payments"
+                            },
+                            {
+                                "id": "technical",
+                                "label": "Technical",
+                                "value": "Technical"
+                            },
+                            {
+                                "id": "troubleshooting",
+                                "label": "Troubleshooting",
+                                "value": "Troubleshooting"
+                            },
+                            {
+                                "id": "how_to_guide",
+                                "label": "How-To Guide",
+                                "value": "How-To Guide"
+                            },
+                            {
+                                "id": "faq",
+                                "label": "FAQ",
+                                "value": "FAQ"
+                            },
+                            {
+                                "id": "policy",
+                                "label": "Policy",
+                                "value": "Policy"
+                            },
+                            {
+                                "id": "billing",
+                                "label": "Billing",
+                                "value": "Billing"
+                            },
+                            {
+                                "id": "general_inquiry",
+                                "label": "General Inquiry",
+                                "value": "General Inquiry"
+                            },
+                            {
+                                "id": "account",
+                                "label": "Account",
+                                "value": "Account"
+                            },
+                            {
+                                "id": "shipping_delivery",
+                                "label": "Shipping / Delivery",
+                                "value": "Shipping / Delivery"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Technical"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "nice_to_have",
+                                "label": "Nice to Have",
+                                "value": "Nice to Have"
+                            },
+                            {
+                                "id": "important",
+                                "label": "Important",
+                                "value": "Important"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                },
+                {
+                    "id": "subject",
+                    "type": "short_text",
+                    "label": "Subject",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_to",
+                    "type": "short_text",
+                    "label": "Assigned To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "internal_notes_json",
+                    "type": "long_text",
+                    "label": "Internal Notes Json",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Support Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:support-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Support Tickets by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:support-tickets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Support Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:support-tickets",
+                                "titleField": "subject",
+                                "limit": 10,
+                                "subtitleField": "ticket_number"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "bug-reports",
+            "title": "Bug Reports",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"bug_reports\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Bug Reports",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "bug_reports",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "bug_number": "bug_number",
+                        "reporter_name": "reporter_name",
+                        "email": "email",
+                        "product": "product",
+                        "severity": "severity",
+                        "bug_title": "bug_title",
+                        "steps_to_reproduce": "steps_to_reproduce",
+                        "expected_behavior": "expected_behavior",
+                        "actual_behavior": "actual_behavior",
+                        "browser_os": "browser_os",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Bug Reports",
+                    "description": "Connected live to SQLite table \"bug_reports\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "bug_number",
+                    "type": "short_text",
+                    "label": "Bug Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reporter_name",
+                    "type": "short_text",
+                    "label": "Reporter Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "product",
+                    "type": "dropdown",
+                    "label": "Product",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "web_application",
+                                "label": "Web Application",
+                                "value": "Web Application"
+                            },
+                            {
+                                "id": "mobile_app_ios_",
+                                "label": "Mobile App (iOS)",
+                                "value": "Mobile App (iOS)"
+                            },
+                            {
+                                "id": "mobile_app_android_",
+                                "label": "Mobile App (Android)",
+                                "value": "Mobile App (Android)"
+                            },
+                            {
+                                "id": "desktop_application",
+                                "label": "Desktop Application",
+                                "value": "Desktop Application"
+                            },
+                            {
+                                "id": "api",
+                                "label": "API",
+                                "value": "API"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Web Application"
+                    }
+                },
+                {
+                    "id": "severity",
+                    "type": "dropdown",
+                    "label": "Severity",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "bug_title",
+                    "type": "short_text",
+                    "label": "Bug Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "steps_to_reproduce",
+                    "type": "short_text",
+                    "label": "Steps To Reproduce",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "expected_behavior",
+                    "type": "short_text",
+                    "label": "Expected Behavior",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "actual_behavior",
+                    "type": "short_text",
+                    "label": "Actual Behavior",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "browser_os",
+                    "type": "short_text",
+                    "label": "Browser Os",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "New"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Bug Reports",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bug-reports",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Bug Reports by Product",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bug-reports",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "product",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Bug Reports",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:bug-reports",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "product"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "feature-requests",
+            "title": "Feature Requests",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"feature_requests\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Feature Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "feature_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "submitter_name": "submitter_name",
+                        "email": "email",
+                        "feature_title": "feature_title",
+                        "description": "description",
+                        "use_case": "use_case",
+                        "priority": "priority",
+                        "impact_score": "impact_score",
+                        "additional_context": "additional_context",
+                        "upvotes": "upvotes",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Feature Requests",
+                    "description": "Connected live to SQLite table \"feature_requests\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "submitter_name",
+                    "type": "short_text",
+                    "label": "Submitter Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "feature_title",
+                    "type": "short_text",
+                    "label": "Feature Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "use_case",
+                    "type": "short_text",
+                    "label": "Use Case",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "nice_to_have",
+                                "label": "Nice to Have",
+                                "value": "Nice to Have"
+                            },
+                            {
+                                "id": "important",
+                                "label": "Important",
+                                "value": "Important"
+                            },
+                            {
+                                "id": "critical",
+                                "label": "Critical",
+                                "value": "Critical"
+                            },
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            },
+                            {
+                                "id": "urgent",
+                                "label": "Urgent",
+                                "value": "Urgent"
+                            }
+                        ],
+                        "defaultValue": "Important"
+                    }
+                },
+                {
+                    "id": "impact_score",
+                    "type": "number",
+                    "label": "Impact Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "additional_context",
+                    "type": "short_text",
+                    "label": "Additional Context",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "upvotes",
+                    "type": "number",
+                    "label": "Upvotes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Under Review"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Feature Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:feature-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Feature Requests by Priority",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:feature-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "priority",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Feature Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:feature-requests",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "description"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "refund-requests",
+            "title": "Refund Requests",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"refund_requests\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Refund Requests",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "refund_requests",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "customer_name": "customer_name",
+                        "email": "email",
+                        "order_number": "order_number",
+                        "purchase_date": "purchase_date",
+                        "items": "items",
+                        "reason": "reason",
+                        "refund_method": "refund_method",
+                        "amount_cents": "amount_cents",
+                        "additional_details": "additional_details",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Refund Requests",
+                    "description": "Connected live to SQLite table \"refund_requests\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "order_number",
+                    "type": "short_text",
+                    "label": "Order Number",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "purchase_date",
+                    "type": "date",
+                    "label": "Purchase Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "items",
+                    "type": "short_text",
+                    "label": "Items",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reason",
+                    "type": "dropdown",
+                    "label": "Reason",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "defective_damaged",
+                                "label": "Defective / Damaged",
+                                "value": "Defective / Damaged"
+                            },
+                            {
+                                "id": "wrong_item_received",
+                                "label": "Wrong Item Received",
+                                "value": "Wrong Item Received"
+                            },
+                            {
+                                "id": "not_as_described",
+                                "label": "Not as Described",
+                                "value": "Not as Described"
+                            },
+                            {
+                                "id": "no_longer_needed",
+                                "label": "No Longer Needed",
+                                "value": "No Longer Needed"
+                            },
+                            {
+                                "id": "billing_error",
+                                "label": "Billing Error",
+                                "value": "Billing Error"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "Defective / Damaged"
+                    }
+                },
+                {
+                    "id": "refund_method",
+                    "type": "dropdown",
+                    "label": "Refund Method",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "original_payment_method",
+                                "label": "Original Payment Method",
+                                "value": "Original Payment Method"
+                            },
+                            {
+                                "id": "store_credit",
+                                "label": "Store Credit",
+                                "value": "Store Credit"
+                            },
+                            {
+                                "id": "bank_transfer",
+                                "label": "Bank Transfer",
+                                "value": "Bank Transfer"
+                            },
+                            {
+                                "id": "check",
+                                "label": "Check",
+                                "value": "Check"
+                            }
+                        ],
+                        "defaultValue": "Original Payment Method"
+                    }
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "additional_details",
+                    "type": "long_text",
+                    "label": "Additional Details",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Pending"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Refund Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:refund-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Refund Requests by Reason",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:refund-requests",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "reason",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Refund Requests",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:refund-requests",
+                                "titleField": "order_number",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "escalations",
+            "title": "Escalations",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"escalations\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Escalations",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "escalations",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ticket_id": "ticket_id",
+                        "escalation_reason": "escalation_reason",
+                        "current_status": "current_status",
+                        "desired_outcome": "desired_outcome",
+                        "urgency": "urgency",
+                        "escalated_to": "escalated_to",
+                        "escalated_by": "escalated_by",
+                        "escalation_date": "escalation_date",
+                        "notes": "notes",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Escalations",
+                    "description": "Connected live to SQLite table \"escalations\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ticket_id",
+                    "type": "linked_record",
+                    "label": "Ticket",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:support-tickets",
+                        "displayFieldIds": [
+                            "subject",
+                            "ticket_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "escalation_reason",
+                    "type": "dropdown",
+                    "label": "Escalation Reason",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sla_breach",
+                                "label": "SLA Breach",
+                                "value": "SLA Breach"
+                            },
+                            {
+                                "id": "customer_dissatisfied",
+                                "label": "Customer Dissatisfied",
+                                "value": "Customer Dissatisfied"
+                            },
+                            {
+                                "id": "complex_technical_issue",
+                                "label": "Complex Technical Issue",
+                                "value": "Complex Technical Issue"
+                            },
+                            {
+                                "id": "repeated_contact",
+                                "label": "Repeated Contact",
+                                "value": "Repeated Contact"
+                            },
+                            {
+                                "id": "legal_compliance",
+                                "label": "Legal / Compliance",
+                                "value": "Legal / Compliance"
+                            },
+                            {
+                                "id": "vip_customer",
+                                "label": "VIP Customer",
+                                "value": "VIP Customer"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "SLA Breach"
+                    }
+                },
+                {
+                    "id": "current_status",
+                    "type": "short_text",
+                    "label": "Current Status",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "desired_outcome",
+                    "type": "short_text",
+                    "label": "Desired Outcome",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "urgency",
+                    "type": "dropdown",
+                    "label": "Urgency",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low_within_48h_",
+                                "label": "Low (within 48h)",
+                                "value": "Low (within 48h)"
+                            },
+                            {
+                                "id": "medium_within_24h_",
+                                "label": "Medium (within 24h)",
+                                "value": "Medium (within 24h)"
+                            },
+                            {
+                                "id": "high_within_4h_",
+                                "label": "High (within 4h)",
+                                "value": "High (within 4h)"
+                            },
+                            {
+                                "id": "critical_immediate_",
+                                "label": "Critical (immediate)",
+                                "value": "Critical (immediate)"
+                            }
+                        ],
+                        "defaultValue": "High (within 4h)"
+                    }
+                },
+                {
+                    "id": "escalated_to",
+                    "type": "short_text",
+                    "label": "Escalated To",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "escalated_by",
+                    "type": "short_text",
+                    "label": "Escalated By",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "escalation_date",
+                    "type": "date",
+                    "label": "Escalation Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ]
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Escalations",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:escalations",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Escalations by Escalation Reason",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:escalations",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "escalation_reason",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Escalations",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:escalations",
+                                "titleField": "escalation_reason",
+                                "limit": 10,
+                                "subtitleField": "current_status"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "customer-feedback",
+            "title": "Customer Feedback",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"customer_feedback\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Customer Feedback",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "customer_feedback",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "ticket_id": "ticket_id",
+                        "customer_name": "customer_name",
+                        "overall_satisfaction": "overall_satisfaction",
+                        "response_time_rating": "response_time_rating",
+                        "resolution_rating": "resolution_rating",
+                        "agent_rating": "agent_rating",
+                        "nps_score": "nps_score",
+                        "nps_category": "nps_category",
+                        "comments": "comments",
+                        "would_recommend": "would_recommend"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Customer Feedback",
+                    "description": "Connected live to SQLite table \"customer_feedback\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "ticket_id",
+                    "type": "linked_record",
+                    "label": "Ticket",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:support-tickets",
+                        "displayFieldIds": [
+                            "subject",
+                            "ticket_number"
+                        ]
+                    }
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "overall_satisfaction",
+                    "type": "number",
+                    "label": "Overall Satisfaction",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "response_time_rating",
+                    "type": "number",
+                    "label": "Response Time Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "resolution_rating",
+                    "type": "number",
+                    "label": "Resolution Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "agent_rating",
+                    "type": "number",
+                    "label": "Agent Rating",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "nps_score",
+                    "type": "number",
+                    "label": "Nps Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "nps_category",
+                    "type": "short_text",
+                    "label": "Nps Category",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "comments",
+                    "type": "long_text",
+                    "label": "Comments",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "would_recommend",
+                    "type": "dropdown",
+                    "label": "Would Recommend",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "maybe",
+                                "label": "Maybe",
+                                "value": "Maybe"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "Yes"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Customer Feedback",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customer-feedback",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Customer Feedback by Would Recommend",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:customer-feedback",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "would_recommend",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Customer Feedback",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:customer-feedback",
+                                "titleField": "customer_name",
+                                "limit": 10,
+                                "subtitleField": "overall_satisfaction"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "kb-articles",
+            "title": "KB Articles",
+            "icon": "LifeBuoy",
+            "description": "Live FormLogic form synced directly to SQLite table \"kb_articles\" in Service Desk.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save KB Articles",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:customer-service-softn-app",
+                    "table": "kb_articles",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "title": "title",
+                        "category": "category",
+                        "question": "question",
+                        "answer": "answer",
+                        "keywords": "keywords",
+                        "related_articles": "related_articles",
+                        "author": "author",
+                        "last_reviewed": "last_reviewed",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "KB Articles",
+                    "description": "Connected live to SQLite table \"kb_articles\" in Service Desk.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "title",
+                    "type": "short_text",
+                    "label": "Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "getting_started",
+                                "label": "Getting Started",
+                                "value": "Getting Started"
+                            },
+                            {
+                                "id": "account_management",
+                                "label": "Account Management",
+                                "value": "Account Management"
+                            },
+                            {
+                                "id": "billing_payments",
+                                "label": "Billing & Payments",
+                                "value": "Billing & Payments"
+                            },
+                            {
+                                "id": "technical",
+                                "label": "Technical",
+                                "value": "Technical"
+                            },
+                            {
+                                "id": "troubleshooting",
+                                "label": "Troubleshooting",
+                                "value": "Troubleshooting"
+                            },
+                            {
+                                "id": "how_to_guide",
+                                "label": "How-To Guide",
+                                "value": "How-To Guide"
+                            },
+                            {
+                                "id": "faq",
+                                "label": "FAQ",
+                                "value": "FAQ"
+                            },
+                            {
+                                "id": "policy",
+                                "label": "Policy",
+                                "value": "Policy"
+                            },
+                            {
+                                "id": "billing",
+                                "label": "Billing",
+                                "value": "Billing"
+                            },
+                            {
+                                "id": "general_inquiry",
+                                "label": "General Inquiry",
+                                "value": "General Inquiry"
+                            },
+                            {
+                                "id": "account",
+                                "label": "Account",
+                                "value": "Account"
+                            },
+                            {
+                                "id": "shipping_delivery",
+                                "label": "Shipping / Delivery",
+                                "value": "Shipping / Delivery"
+                            },
+                            {
+                                "id": "other",
+                                "label": "Other",
+                                "value": "Other"
+                            }
+                        ],
+                        "defaultValue": "FAQ"
+                    }
+                },
+                {
+                    "id": "question",
+                    "type": "short_text",
+                    "label": "Question",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "answer",
+                    "type": "short_text",
+                    "label": "Answer",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "keywords",
+                    "type": "short_text",
+                    "label": "Keywords",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "related_articles",
+                    "type": "short_text",
+                    "label": "Related Articles",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "author",
+                    "type": "short_text",
+                    "label": "Author",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "last_reviewed",
+                    "type": "short_text",
+                    "label": "Last Reviewed",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "new",
+                                "label": "New",
+                                "value": "New"
+                            },
+                            {
+                                "id": "triaged",
+                                "label": "Triaged",
+                                "value": "Triaged"
+                            },
+                            {
+                                "id": "in_fix",
+                                "label": "In Fix",
+                                "value": "In Fix"
+                            },
+                            {
+                                "id": "verified",
+                                "label": "Verified",
+                                "value": "Verified"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "under_review",
+                                "label": "Under Review",
+                                "value": "Under Review"
+                            },
+                            {
+                                "id": "planned",
+                                "label": "Planned",
+                                "value": "Planned"
+                            },
+                            {
+                                "id": "shipped",
+                                "label": "Shipped",
+                                "value": "Shipped"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "published",
+                                "label": "Published",
+                                "value": "Published"
+                            },
+                            {
+                                "id": "archived",
+                                "label": "Archived",
+                                "value": "Archived"
+                            },
+                            {
+                                "id": "needs_review",
+                                "label": "Needs Review",
+                                "value": "Needs Review"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "in_progress",
+                                "label": "In Progress",
+                                "value": "In Progress"
+                            },
+                            {
+                                "id": "waiting_on_customer",
+                                "label": "Waiting on Customer",
+                                "value": "Waiting on Customer"
+                            },
+                            {
+                                "id": "escalated",
+                                "label": "Escalated",
+                                "value": "Escalated"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "approved",
+                                "label": "Approved",
+                                "value": "Approved"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Published"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total KB Articles",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kb-articles",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "KB Articles by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:kb-articles",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent KB Articles",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:kb-articles",
+                                "titleField": "title",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "customer-service-softn-app",
+            "name": "Service Desk",
+            "description": "Turnkey customer support helpdesk with ticket triage queue, 1-click escalations, bug tracker, upvotable feature board, refunds desk, live NPS calculator, and searchable knowledge base.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "customer-service-softn-forms",
+            "name": "Service Desk Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to Service Desk's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:customer-service-softn-app",
+                "linkedSoftnAppId": "@packApp:customer-service-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "support-tickets",
+                    "displayName": "Support Tickets",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "bug-reports",
+                    "displayName": "Bug Reports",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "feature-requests",
+                    "displayName": "Feature Requests",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "refund-requests",
+                    "displayName": "Refund Requests",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "escalations",
+                    "displayName": "Escalations",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "customer-feedback",
+                    "displayName": "Customer Feedback",
+                    "sortOrder": 5,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "kb-articles",
+                    "displayName": "KB Articles",
+                    "sortOrder": 6,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_support_tickets",
+                    "name": "Total Support Tickets",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:support-tickets",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_support_tickets",
+                    "name": "Support Tickets by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:support-tickets",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_bug_reports",
+                    "name": "Total Bug Reports",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:bug-reports",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_bug_reports",
+                    "name": "Bug Reports by Product",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:bug-reports",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "product",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_feature_requests",
+                    "name": "Total Feature Requests",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:feature-requests",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_refund_requests",
+                    "name": "Total Refund Requests",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:refund-requests",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Support Tickets",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:support-tickets",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Support Tickets by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:support-tickets",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Bug Reports",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:bug-reports",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Bug Reports by Product",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:bug-reports",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "product",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Feature Requests",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:feature-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Refund Requests",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:refund-requests",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

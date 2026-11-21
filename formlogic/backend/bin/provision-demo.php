@@ -213,11 +213,13 @@ foreach ($sources as $s) {
 
     if ($packs->isCatalogPackInstalled($catalogId, $demoId)) {
         // Already installed — just refresh the demo apps' custom screens to the latest pack (e.g. after
-        // re-authoring dashboards) without wiping the seeded response data.
+        // re-authoring dashboards) without wiping the seeded response data. Also heal any form whose
+        // SQLite file was lost or emptied so opening it in the Form Builder always shows its fields.
+        $repaired = repairMissingDemoFormFields($pdo, $sqlite, $forms, $demoId, $catalogId, $s['pack']);
         $updated = refreshDemoScreens($pdo, $packs, $demoId, $s['pack']);
         $updatedForms = refreshDemoFormScreens($pdo, $packs, $demoId, $catalogId, $s['pack']);
         $syncedReq = syncDemoFormFieldRequired($pdo, $sqlite, $demoId, $catalogId, $s['pack']);
-        out("  demo: already installed (refreshed $updated app screen(s), $updatedForms form screen(s), synced $syncedReq field flag(s))");
+        out("  demo: already installed (repaired $repaired form(s), refreshed $updated app screen(s), $updatedForms form screen(s), synced $syncedReq field flag(s))");
         continue;
     }
 
@@ -649,6 +651,51 @@ function refreshDemoFormScreens(PDO $pdo, PackService $packs, string $demoId, st
  * demo without a reinstall (the "already installed" refresh otherwise only touches custom screens).
  * Returns the number of field rows whose required flag was changed.
  */
+/**
+ * Self-heal demo forms whose per-form SQLite file was missing or empty (for example after restoring
+ * a MySQL dump without storage/forms/*.sqlite) so opening them in the builder never shows an empty canvas.
+ */
+function repairMissingDemoFormFields(PDO $pdo, SQLiteConnection $sqlite, FormService $forms, string $demoId, string $catalogId, array $pack): int
+{
+    $byTitle = [];
+    foreach ($pack['forms'] ?? [] as $pf) {
+        $t = (string) ($pf['title'] ?? '');
+        if ($t !== '' && !empty($pf['fields']) && is_array($pf['fields'])) {
+            $byTitle[$t] = $pf['fields'];
+        }
+    }
+    if (!$byTitle) { return 0; }
+    $inst = $pdo->prepare("SELECT form_ids FROM pack_installations WHERE user_id = ? AND catalog_id = ? ORDER BY installed_at DESC LIMIT 1");
+    $inst->execute([$demoId, $catalogId]);
+    $formIds = json_decode((string) ($inst->fetchColumn() ?: '[]'), true) ?: [];
+    if (!$formIds) { return 0; }
+    $in = implode(',', array_fill(0, count($formIds), '?'));
+    $sel = $pdo->prepare("SELECT id, title FROM forms WHERE user_id = ? AND id IN ($in)");
+    $sel->execute(array_merge([$demoId], $formIds));
+    $repaired = 0;
+    foreach ($sel->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $packFields = $byTitle[(string) $row['title']] ?? null;
+        if ($packFields === null) { continue; }
+        $existingCount = 0;
+        if ($sqlite->formDatabaseExists($row['id'])) {
+            try {
+                $existingCount = (int) $sqlite->getFormDatabase($row['id'])->query("SELECT COUNT(*) FROM fields")->fetchColumn();
+            } catch (\Throwable) {
+                $existingCount = 0;
+            }
+        }
+        if ($existingCount === 0) {
+            try {
+                $forms->updateForm((string) $row['id'], ['fields' => $packFields]);
+                $repaired++;
+            } catch (\Throwable) {
+                // Non-fatal; leave untouched on unexpected error
+            }
+        }
+    }
+    return $repaired;
+}
+
 function syncDemoFormFieldRequired(PDO $pdo, SQLiteConnection $sqlite, string $demoId, string $catalogId, array $pack): int
 {
     $byTitle = [];

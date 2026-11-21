@@ -1,0 +1,47 @@
+{
+    "id": "tutortrack-tutoring-softn",
+    "slug": "tutortrack-tutoring-softn",
+    "name": "TutorTrack — SoftN App & Linked Forms",
+    "shortName": "TutorTrack",
+    "description": "Turnkey tutoring studio and music lessons desk: filterable lesson schedule with one-click progress note logging, student and guardian dossiers, homework and copyable parent updates, tutor roster, and printable HTML tuition invoices. Includes the full-stack SoftN application (PHP + SQLite) plus 5 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "GraduationCap",
+    "category": "Business apps",
+    "tags": [
+        "tutoring",
+        "lessons",
+        "education",
+        "students",
+        "billing",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "tutortrack-tutoring-softn.softn",
+    "softnPackAppId": "tutortrack-tutoring-softn-app",
+    "formsPackAppId": "tutortrack-tutoring-softn-forms",
+    "companionPackSlug": "tutortrack-tutoring",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "students",
+        "tutors",
+        "lessons",
+        "progress_notes",
+        "invoices"
+    ],
+    "formCount": 5,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/tutortrack-tutoring.png"
+        }
+    ]
+}

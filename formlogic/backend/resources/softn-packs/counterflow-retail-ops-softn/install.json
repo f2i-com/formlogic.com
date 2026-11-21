@@ -1,0 +1,1950 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "counterflow-retail-ops-softn",
+        "name": "CounterFlow (SoftN + Forms)",
+        "description": "Turnkey retail store operations hub around the till: product catalogue with live margins and quick stock adjustments, audited stock ledger, floor tasks, suppliers, staff roster, and customer returns desk. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "retail",
+            "stock",
+            "store-ops",
+            "suppliers",
+            "tasks",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "suppliers",
+            "title": "Suppliers",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"suppliers\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Suppliers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "suppliers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "supplier_name": "supplier_name",
+                        "contact_person": "contact_person",
+                        "email": "email",
+                        "phone": "phone",
+                        "website": "website",
+                        "lead_time_days": "lead_time_days",
+                        "payment_terms": "payment_terms",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Suppliers",
+                    "description": "Connected live to SQLite table \"suppliers\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "supplier_name",
+                    "type": "short_text",
+                    "label": "Supplier Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "contact_person",
+                    "type": "short_text",
+                    "label": "Contact Person",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "website",
+                    "type": "url",
+                    "label": "Website",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "lead_time_days",
+                    "type": "number",
+                    "label": "Lead Time Days",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "payment_terms",
+                    "type": "dropdown",
+                    "label": "Payment Terms",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "prepaid",
+                                "label": "Prepaid",
+                                "value": "Prepaid"
+                            },
+                            {
+                                "id": "cod",
+                                "label": "COD",
+                                "value": "COD"
+                            },
+                            {
+                                "id": "net_7",
+                                "label": "Net 7",
+                                "value": "Net 7"
+                            },
+                            {
+                                "id": "net_30",
+                                "label": "Net 30",
+                                "value": "Net 30"
+                            },
+                            {
+                                "id": "net_60",
+                                "label": "Net 60",
+                                "value": "Net 60"
+                            }
+                        ],
+                        "defaultValue": "Net 30"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Suppliers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:suppliers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Suppliers by Payment Terms",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:suppliers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "payment_terms",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Suppliers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:suppliers",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "products",
+            "title": "Products",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"products\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Products",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "products",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "sku": "sku",
+                        "product_name": "product_name",
+                        "category": "category",
+                        "supplier_id": "supplier_id",
+                        "supplier_name": "supplier_name",
+                        "cost_cents": "cost_cents",
+                        "retail_cents": "retail_cents",
+                        "current_stock": "current_stock",
+                        "reorder_point": "reorder_point",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Products",
+                    "description": "Connected live to SQLite table \"products\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "sku",
+                    "type": "short_text",
+                    "label": "SKU",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "product_name",
+                    "type": "short_text",
+                    "label": "Product Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "category",
+                    "type": "dropdown",
+                    "label": "Category",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "apparel",
+                                "label": "Apparel",
+                                "value": "Apparel"
+                            },
+                            {
+                                "id": "homewares",
+                                "label": "Homewares",
+                                "value": "Homewares"
+                            },
+                            {
+                                "id": "gifts",
+                                "label": "Gifts",
+                                "value": "Gifts"
+                            },
+                            {
+                                "id": "stationery",
+                                "label": "Stationery",
+                                "value": "Stationery"
+                            },
+                            {
+                                "id": "jewellery",
+                                "label": "Jewellery",
+                                "value": "Jewellery"
+                            },
+                            {
+                                "id": "seasonal",
+                                "label": "Seasonal",
+                                "value": "Seasonal"
+                            }
+                        ],
+                        "defaultValue": "Homewares"
+                    }
+                },
+                {
+                    "id": "supplier_id",
+                    "type": "linked_record",
+                    "label": "Supplier",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:suppliers",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "supplier_name",
+                    "type": "short_text",
+                    "label": "Supplier Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_cents",
+                    "type": "number",
+                    "label": "Cost (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "retail_cents",
+                    "type": "number",
+                    "label": "Retail (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "current_stock",
+                    "type": "number",
+                    "label": "Current Stock",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reorder_point",
+                    "type": "number",
+                    "label": "Reorder Point",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "low_stock",
+                                "label": "Low stock",
+                                "value": "Low stock"
+                            },
+                            {
+                                "id": "discontinued",
+                                "label": "Discontinued",
+                                "value": "Discontinued"
+                            },
+                            {
+                                "id": "to_do",
+                                "label": "To do",
+                                "value": "To do"
+                            },
+                            {
+                                "id": "doing",
+                                "label": "Doing",
+                                "value": "Doing"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "processing",
+                                "label": "Processing",
+                                "value": "Processing"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Products",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:products",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Products by Category",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:products",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Products",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:products",
+                                "titleField": "sku",
+                                "limit": 10,
+                                "subtitleField": "category"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "staff-roster",
+            "title": "Staff Roster",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"staff_roster\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Staff Roster",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "staff_roster",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "role": "role",
+                        "phone": "phone",
+                        "email": "email",
+                        "usual_days_json": "usual_days_json",
+                        "active": "active",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Staff Roster",
+                    "description": "Connected live to SQLite table \"staff_roster\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "store_manager",
+                                "label": "Store manager",
+                                "value": "Store manager"
+                            },
+                            {
+                                "id": "sales_assistant",
+                                "label": "Sales assistant",
+                                "value": "Sales assistant"
+                            },
+                            {
+                                "id": "visual_merchandiser",
+                                "label": "Visual merchandiser",
+                                "value": "Visual merchandiser"
+                            },
+                            {
+                                "id": "online_orders",
+                                "label": "Online orders",
+                                "value": "Online orders"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "sales_assistant",
+                                "label": "sales_assistant",
+                                "value": "sales_assistant"
+                            },
+                            {
+                                "id": "visual_merchandiser",
+                                "label": "visual_merchandiser",
+                                "value": "visual_merchandiser"
+                            },
+                            {
+                                "id": "online_orders",
+                                "label": "online_orders",
+                                "value": "online_orders"
+                            }
+                        ],
+                        "defaultValue": "Sales assistant"
+                    }
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "usual_days_json",
+                    "type": "short_text",
+                    "label": "Usual Days Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Staff Roster",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-roster",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Staff Roster by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:staff-roster",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Staff Roster",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:staff-roster",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "stock-movements",
+            "title": "Stock Movements",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"stock_movements\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Stock Movements",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "stock_movements",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "product_id": "product_id",
+                        "sku": "sku",
+                        "product_name": "product_name",
+                        "movement_type": "movement_type",
+                        "quantity_change": "quantity_change",
+                        "stock_after": "stock_after",
+                        "reason": "reason",
+                        "move_date": "move_date",
+                        "staff_id": "staff_id",
+                        "staff_name": "staff_name",
+                        "reference": "reference"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Stock Movements",
+                    "description": "Connected live to SQLite table \"stock_movements\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "product_id",
+                    "type": "linked_record",
+                    "label": "Product",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:products",
+                        "displayFieldIds": [
+                            "sku"
+                        ]
+                    }
+                },
+                {
+                    "id": "sku",
+                    "type": "short_text",
+                    "label": "SKU",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "product_name",
+                    "type": "short_text",
+                    "label": "Product Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "movement_type",
+                    "type": "dropdown",
+                    "label": "Movement Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "sale_adjustment",
+                                "label": "Sale adjustment",
+                                "value": "Sale adjustment"
+                            },
+                            {
+                                "id": "delivery",
+                                "label": "Delivery",
+                                "value": "Delivery"
+                            },
+                            {
+                                "id": "return",
+                                "label": "Return",
+                                "value": "Return"
+                            },
+                            {
+                                "id": "damage",
+                                "label": "Damage",
+                                "value": "Damage"
+                            },
+                            {
+                                "id": "stock_count",
+                                "label": "Stock count",
+                                "value": "Stock count"
+                            }
+                        ],
+                        "defaultValue": "Sale adjustment"
+                    }
+                },
+                {
+                    "id": "quantity_change",
+                    "type": "number",
+                    "label": "Quantity Change",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "stock_after",
+                    "type": "number",
+                    "label": "Stock After",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reason",
+                    "type": "short_text",
+                    "label": "Reason",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "move_date",
+                    "type": "date",
+                    "label": "Move Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "staff_id",
+                    "type": "number",
+                    "label": "Staff",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "staff_name",
+                    "type": "short_text",
+                    "label": "Staff Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "reference",
+                    "type": "short_text",
+                    "label": "Reference",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Stock Movements",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stock-movements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Stock Movements by Movement Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:stock-movements",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "movement_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Stock Movements",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:stock-movements",
+                                "titleField": "reference",
+                                "limit": 10,
+                                "subtitleField": "sku"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "store-tasks",
+            "title": "Store Tasks",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"store_tasks\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Store Tasks",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "store_tasks",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "task_title": "task_title",
+                        "routine": "routine",
+                        "area": "area",
+                        "priority": "priority",
+                        "assigned_staff_id": "assigned_staff_id",
+                        "assigned_name": "assigned_name",
+                        "due_date": "due_date",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Store Tasks",
+                    "description": "Connected live to SQLite table \"store_tasks\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "task_title",
+                    "type": "short_text",
+                    "label": "Task Title",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "routine",
+                    "type": "dropdown",
+                    "label": "Routine",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "opening",
+                                "label": "Opening",
+                                "value": "Opening"
+                            },
+                            {
+                                "id": "merchandising",
+                                "label": "Merchandising",
+                                "value": "Merchandising"
+                            },
+                            {
+                                "id": "stocktake",
+                                "label": "Stocktake",
+                                "value": "Stocktake"
+                            },
+                            {
+                                "id": "closing",
+                                "label": "Closing",
+                                "value": "Closing"
+                            }
+                        ],
+                        "defaultValue": "Merchandising"
+                    }
+                },
+                {
+                    "id": "area",
+                    "type": "dropdown",
+                    "label": "Area",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "floor",
+                                "label": "Floor",
+                                "value": "Floor"
+                            },
+                            {
+                                "id": "stockroom",
+                                "label": "Stockroom",
+                                "value": "Stockroom"
+                            },
+                            {
+                                "id": "display",
+                                "label": "Display",
+                                "value": "Display"
+                            },
+                            {
+                                "id": "admin",
+                                "label": "Admin",
+                                "value": "Admin"
+                            },
+                            {
+                                "id": "online",
+                                "label": "Online",
+                                "value": "Online"
+                            }
+                        ],
+                        "defaultValue": "Floor"
+                    }
+                },
+                {
+                    "id": "priority",
+                    "type": "dropdown",
+                    "label": "Priority",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "low",
+                                "label": "Low",
+                                "value": "Low"
+                            },
+                            {
+                                "id": "medium",
+                                "label": "Medium",
+                                "value": "Medium"
+                            },
+                            {
+                                "id": "high",
+                                "label": "High",
+                                "value": "High"
+                            }
+                        ],
+                        "defaultValue": "Medium"
+                    }
+                },
+                {
+                    "id": "assigned_staff_id",
+                    "type": "number",
+                    "label": "Assigned Staff",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "assigned_name",
+                    "type": "short_text",
+                    "label": "Assigned Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "due_date",
+                    "type": "date",
+                    "label": "Due Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "low_stock",
+                                "label": "Low stock",
+                                "value": "Low stock"
+                            },
+                            {
+                                "id": "discontinued",
+                                "label": "Discontinued",
+                                "value": "Discontinued"
+                            },
+                            {
+                                "id": "to_do",
+                                "label": "To do",
+                                "value": "To do"
+                            },
+                            {
+                                "id": "doing",
+                                "label": "Doing",
+                                "value": "Doing"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "processing",
+                                "label": "Processing",
+                                "value": "Processing"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "To do"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Store Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:store-tasks",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Store Tasks by Routine",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:store-tasks",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "routine",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Store Tasks",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:store-tasks",
+                                "titleField": "task_title",
+                                "limit": 10,
+                                "subtitleField": "routine"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "returns-issues",
+            "title": "Returns Issues",
+            "icon": "Store",
+            "description": "Live FormLogic form synced directly to SQLite table \"returns_issues\" in CounterFlow.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Returns Issues",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:counterflow-retail-ops-softn-app",
+                    "table": "returns_issues",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "product_id": "product_id",
+                        "sku": "sku",
+                        "product_name": "product_name",
+                        "customer_name": "customer_name",
+                        "issue_type": "issue_type",
+                        "resolution_type": "resolution_type",
+                        "issue_date": "issue_date",
+                        "amount_cents": "amount_cents",
+                        "restocked": "restocked",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Returns Issues",
+                    "description": "Connected live to SQLite table \"returns_issues\" in CounterFlow.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "product_id",
+                    "type": "linked_record",
+                    "label": "Product",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:products",
+                        "displayFieldIds": [
+                            "sku"
+                        ]
+                    }
+                },
+                {
+                    "id": "sku",
+                    "type": "short_text",
+                    "label": "SKU",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "product_name",
+                    "type": "short_text",
+                    "label": "Product Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "customer_name",
+                    "type": "short_text",
+                    "label": "Customer Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "issue_type",
+                    "type": "dropdown",
+                    "label": "Issue Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "return",
+                                "label": "Return",
+                                "value": "Return"
+                            },
+                            {
+                                "id": "exchange",
+                                "label": "Exchange",
+                                "value": "Exchange"
+                            },
+                            {
+                                "id": "fault",
+                                "label": "Fault",
+                                "value": "Fault"
+                            },
+                            {
+                                "id": "complaint",
+                                "label": "Complaint",
+                                "value": "Complaint"
+                            }
+                        ],
+                        "defaultValue": "Return"
+                    }
+                },
+                {
+                    "id": "resolution_type",
+                    "type": "dropdown",
+                    "label": "Resolution Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "refund",
+                                "label": "Refund",
+                                "value": "Refund"
+                            },
+                            {
+                                "id": "exchange",
+                                "label": "Exchange",
+                                "value": "Exchange"
+                            },
+                            {
+                                "id": "store_credit",
+                                "label": "Store credit",
+                                "value": "Store credit"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            }
+                        ],
+                        "defaultValue": "Refund"
+                    }
+                },
+                {
+                    "id": "issue_date",
+                    "type": "date",
+                    "label": "Issue Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "restocked",
+                    "type": "number",
+                    "label": "Restocked",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "low_stock",
+                                "label": "Low stock",
+                                "value": "Low stock"
+                            },
+                            {
+                                "id": "discontinued",
+                                "label": "Discontinued",
+                                "value": "Discontinued"
+                            },
+                            {
+                                "id": "to_do",
+                                "label": "To do",
+                                "value": "To do"
+                            },
+                            {
+                                "id": "doing",
+                                "label": "Doing",
+                                "value": "Doing"
+                            },
+                            {
+                                "id": "done",
+                                "label": "Done",
+                                "value": "Done"
+                            },
+                            {
+                                "id": "blocked",
+                                "label": "Blocked",
+                                "value": "Blocked"
+                            },
+                            {
+                                "id": "open",
+                                "label": "Open",
+                                "value": "Open"
+                            },
+                            {
+                                "id": "processing",
+                                "label": "Processing",
+                                "value": "Processing"
+                            },
+                            {
+                                "id": "resolved",
+                                "label": "Resolved",
+                                "value": "Resolved"
+                            },
+                            {
+                                "id": "declined",
+                                "label": "Declined",
+                                "value": "Declined"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Open"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Returns Issues",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:returns-issues",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Returns Issues by Issue Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:returns-issues",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "issue_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Returns Issues",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:returns-issues",
+                                "titleField": "sku",
+                                "limit": 10,
+                                "subtitleField": "issue_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "counterflow-retail-ops-softn-app",
+            "name": "CounterFlow",
+            "description": "Turnkey retail store operations hub around the till: product catalogue with live margins and quick stock adjustments, audited stock ledger, floor tasks, suppliers, staff roster, and customer returns desk.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "counterflow-retail-ops-softn-forms",
+            "name": "CounterFlow Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to CounterFlow's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:counterflow-retail-ops-softn-app",
+                "linkedSoftnAppId": "@packApp:counterflow-retail-ops-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "suppliers",
+                    "displayName": "Suppliers",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "products",
+                    "displayName": "Products",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "staff-roster",
+                    "displayName": "Staff Roster",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "stock-movements",
+                    "displayName": "Stock Movements",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "store-tasks",
+                    "displayName": "Store Tasks",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "returns-issues",
+                    "displayName": "Returns Issues",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_suppliers",
+                    "name": "Total Suppliers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:suppliers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_suppliers",
+                    "name": "Suppliers by Payment Terms",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:suppliers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "payment_terms",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_products",
+                    "name": "Total Products",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:products",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_products",
+                    "name": "Products by Category",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:products",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "category",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_staff_roster",
+                    "name": "Total Staff Roster",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:staff-roster",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_stock_movements",
+                    "name": "Total Stock Movements",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:stock-movements",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Suppliers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:suppliers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Suppliers by Payment Terms",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:suppliers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "payment_terms",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Products",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:products",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Products by Category",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:products",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "category",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Staff Roster",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:staff-roster",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Stock Movements",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:stock-movements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

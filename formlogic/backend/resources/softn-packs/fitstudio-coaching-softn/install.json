@@ -1,0 +1,1852 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "fitstudio-coaching-softn",
+        "name": "FitStudio (SoftN + Forms)",
+        "description": "Turnkey personal training and gym coaching operations desk: live coach session board, client progress dossiers with automatic body-composition deltas, assessments log, workout program builder, trainer roster, and payments ledger. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "fitness",
+            "training",
+            "coaching",
+            "gym",
+            "clients",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "email": "email",
+                        "phone": "phone",
+                        "goal": "goal",
+                        "medical_notes": "medical_notes",
+                        "emergency_contact": "emergency_contact",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "goal",
+                    "type": "dropdown",
+                    "label": "Goal",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "fat_loss",
+                                "label": "Fat loss",
+                                "value": "Fat loss"
+                            },
+                            {
+                                "id": "strength",
+                                "label": "Strength",
+                                "value": "Strength"
+                            },
+                            {
+                                "id": "muscle_gain",
+                                "label": "Muscle gain",
+                                "value": "Muscle gain"
+                            },
+                            {
+                                "id": "endurance",
+                                "label": "Endurance",
+                                "value": "Endurance"
+                            },
+                            {
+                                "id": "mobility",
+                                "label": "Mobility",
+                                "value": "Mobility"
+                            },
+                            {
+                                "id": "rehab",
+                                "label": "Rehab",
+                                "value": "Rehab"
+                            }
+                        ],
+                        "defaultValue": "Strength"
+                    }
+                },
+                {
+                    "id": "medical_notes",
+                    "type": "long_text",
+                    "label": "Medical Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "emergency_contact",
+                    "type": "short_text",
+                    "label": "Emergency Contact",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "trial",
+                                "label": "Trial",
+                                "value": "Trial"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "abandoned",
+                                "label": "Abandoned",
+                                "value": "Abandoned"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "failed",
+                                "label": "Failed",
+                                "value": "Failed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Clients by Goal",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "goal",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "trainers",
+            "title": "Trainers",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"trainers\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Trainers",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "trainers",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "name": "name",
+                        "role": "role",
+                        "specialties_json": "specialties_json",
+                        "phone": "phone",
+                        "email": "email",
+                        "active": "active"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Trainers",
+                    "description": "Connected live to SQLite table \"trainers\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "name",
+                    "type": "short_text",
+                    "label": "Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "role",
+                    "type": "dropdown",
+                    "label": "Role",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "personal_trainer",
+                                "label": "Personal trainer",
+                                "value": "Personal trainer"
+                            },
+                            {
+                                "id": "group_instructor",
+                                "label": "Group instructor",
+                                "value": "Group instructor"
+                            },
+                            {
+                                "id": "physio",
+                                "label": "Physio",
+                                "value": "Physio"
+                            },
+                            {
+                                "id": "nutrition_coach",
+                                "label": "Nutrition coach",
+                                "value": "Nutrition coach"
+                            },
+                            {
+                                "id": "manager",
+                                "label": "manager",
+                                "value": "manager"
+                            },
+                            {
+                                "id": "coach",
+                                "label": "coach",
+                                "value": "coach"
+                            },
+                            {
+                                "id": "front_desk",
+                                "label": "front_desk",
+                                "value": "front_desk"
+                            }
+                        ],
+                        "defaultValue": "Personal trainer"
+                    }
+                },
+                {
+                    "id": "specialties_json",
+                    "type": "short_text",
+                    "label": "Specialties Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "active",
+                    "type": "dropdown",
+                    "label": "Active",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "inactive",
+                                "label": "Inactive",
+                                "value": "Inactive"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Trainers",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:trainers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Trainers by Role",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:trainers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Trainers",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:trainers",
+                                "titleField": "name",
+                                "limit": 10,
+                                "subtitleField": "email"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "sessions",
+            "title": "Sessions",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"sessions\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Sessions",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "sessions",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "trainer_id": "trainer_id",
+                        "session_date": "session_date",
+                        "session_time": "session_time",
+                        "session_type": "session_type",
+                        "status": "status",
+                        "fee_cents": "fee_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Sessions",
+                    "description": "Connected live to SQLite table \"sessions\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "trainer_id",
+                    "type": "linked_record",
+                    "label": "Trainer",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:trainers",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "session_date",
+                    "type": "date",
+                    "label": "Session Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "session_time",
+                    "type": "time",
+                    "label": "Session Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "session_type",
+                    "type": "dropdown",
+                    "label": "Session Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "1_on_1",
+                                "label": "1-on-1",
+                                "value": "1-on-1"
+                            },
+                            {
+                                "id": "small_group",
+                                "label": "Small Group",
+                                "value": "Small Group"
+                            },
+                            {
+                                "id": "assessment",
+                                "label": "Assessment",
+                                "value": "Assessment"
+                            },
+                            {
+                                "id": "rehab",
+                                "label": "Rehab",
+                                "value": "Rehab"
+                            },
+                            {
+                                "id": "nutrition",
+                                "label": "Nutrition",
+                                "value": "Nutrition"
+                            }
+                        ],
+                        "defaultValue": "1-on-1"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "trial",
+                                "label": "Trial",
+                                "value": "Trial"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "abandoned",
+                                "label": "Abandoned",
+                                "value": "Abandoned"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "failed",
+                                "label": "Failed",
+                                "value": "Failed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Scheduled"
+                    }
+                },
+                {
+                    "id": "fee_cents",
+                    "type": "number",
+                    "label": "Fee (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Sessions",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:sessions",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Sessions by Session Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:sessions",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "session_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Sessions",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:sessions",
+                                "titleField": "session_date",
+                                "limit": 10,
+                                "subtitleField": "session_time"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "assessments",
+            "title": "Assessments",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"assessments\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Assessments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "assessments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "assessment_date": "assessment_date",
+                        "weight_kg": "weight_kg",
+                        "body_fat_pct": "body_fat_pct",
+                        "mobility_score": "mobility_score",
+                        "strength_notes": "strength_notes",
+                        "coach_notes": "coach_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Assessments",
+                    "description": "Connected live to SQLite table \"assessments\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "assessment_date",
+                    "type": "date",
+                    "label": "Assessment Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "weight_kg",
+                    "type": "number",
+                    "label": "Weight Kg",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "body_fat_pct",
+                    "type": "number",
+                    "label": "Body Fat Pct",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "mobility_score",
+                    "type": "number",
+                    "label": "Mobility Score",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "strength_notes",
+                    "type": "long_text",
+                    "label": "Strength Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "coach_notes",
+                    "type": "long_text",
+                    "label": "Coach Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Assessments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:assessments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Assessments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:assessments",
+                                "titleField": "assessment_date",
+                                "limit": 10,
+                                "subtitleField": "weight_kg"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "programs",
+            "title": "Programs",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"programs\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Programs",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "programs",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "program_name": "program_name",
+                        "goal": "goal",
+                        "start_date": "start_date",
+                        "end_date": "end_date",
+                        "status": "status",
+                        "blocks_json": "blocks_json",
+                        "program_notes": "program_notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Programs",
+                    "description": "Connected live to SQLite table \"programs\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "program_name",
+                    "type": "short_text",
+                    "label": "Program Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "goal",
+                    "type": "dropdown",
+                    "label": "Goal",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "fat_loss",
+                                "label": "Fat loss",
+                                "value": "Fat loss"
+                            },
+                            {
+                                "id": "strength",
+                                "label": "Strength",
+                                "value": "Strength"
+                            },
+                            {
+                                "id": "muscle_gain",
+                                "label": "Muscle gain",
+                                "value": "Muscle gain"
+                            },
+                            {
+                                "id": "endurance",
+                                "label": "Endurance",
+                                "value": "Endurance"
+                            },
+                            {
+                                "id": "mobility",
+                                "label": "Mobility",
+                                "value": "Mobility"
+                            },
+                            {
+                                "id": "rehab",
+                                "label": "Rehab",
+                                "value": "Rehab"
+                            }
+                        ],
+                        "defaultValue": "Strength"
+                    }
+                },
+                {
+                    "id": "start_date",
+                    "type": "date",
+                    "label": "Start Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "end_date",
+                    "type": "date",
+                    "label": "End Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "trial",
+                                "label": "Trial",
+                                "value": "Trial"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "abandoned",
+                                "label": "Abandoned",
+                                "value": "Abandoned"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "failed",
+                                "label": "Failed",
+                                "value": "Failed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Active"
+                    }
+                },
+                {
+                    "id": "blocks_json",
+                    "type": "short_text",
+                    "label": "Blocks Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "program_notes",
+                    "type": "long_text",
+                    "label": "Program Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Programs",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:programs",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Programs by Goal",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:programs",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "goal",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Programs",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:programs",
+                                "titleField": "program_name",
+                                "limit": 10,
+                                "subtitleField": "goal"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "payments",
+            "title": "Payments",
+            "icon": "Dumbbell",
+            "description": "Live FormLogic form synced directly to SQLite table \"payments\" in FitStudio.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Payments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:fitstudio-coaching-softn-app",
+                    "table": "payments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_id": "client_id",
+                        "amount_cents": "amount_cents",
+                        "payment_type": "payment_type",
+                        "payment_date": "payment_date",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Payments",
+                    "description": "Connected live to SQLite table \"payments\" in FitStudio.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "name",
+                            "email"
+                        ]
+                    }
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "payment_type",
+                    "type": "dropdown",
+                    "label": "Payment Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "session_pack",
+                                "label": "Session pack",
+                                "value": "Session pack"
+                            },
+                            {
+                                "id": "membership",
+                                "label": "Membership",
+                                "value": "Membership"
+                            },
+                            {
+                                "id": "casual_visit",
+                                "label": "Casual visit",
+                                "value": "Casual visit"
+                            },
+                            {
+                                "id": "program_fee",
+                                "label": "Program fee",
+                                "value": "Program fee"
+                            }
+                        ],
+                        "defaultValue": "Session pack"
+                    }
+                },
+                {
+                    "id": "payment_date",
+                    "type": "date",
+                    "label": "Payment Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "active",
+                                "label": "Active",
+                                "value": "Active"
+                            },
+                            {
+                                "id": "trial",
+                                "label": "Trial",
+                                "value": "Trial"
+                            },
+                            {
+                                "id": "paused",
+                                "label": "Paused",
+                                "value": "Paused"
+                            },
+                            {
+                                "id": "finished",
+                                "label": "Finished",
+                                "value": "Finished"
+                            },
+                            {
+                                "id": "scheduled",
+                                "label": "Scheduled",
+                                "value": "Scheduled"
+                            },
+                            {
+                                "id": "checked_in",
+                                "label": "Checked In",
+                                "value": "Checked In"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "no_show",
+                                "label": "No-Show",
+                                "value": "No-Show"
+                            },
+                            {
+                                "id": "draft",
+                                "label": "Draft",
+                                "value": "Draft"
+                            },
+                            {
+                                "id": "abandoned",
+                                "label": "Abandoned",
+                                "value": "Abandoned"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "failed",
+                                "label": "Failed",
+                                "value": "Failed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Paid"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Payments by Payment Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "payment_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:payments",
+                                "titleField": "amount_cents",
+                                "limit": 10,
+                                "subtitleField": "payment_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "fitstudio-coaching-softn-app",
+            "name": "FitStudio",
+            "description": "Turnkey personal training and gym coaching operations desk: live coach session board, client progress dossiers with automatic body-composition deltas, assessments log, workout program builder, trainer roster, and payments ledger.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "fitstudio-coaching-softn-forms",
+            "name": "FitStudio Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to FitStudio's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:fitstudio-coaching-softn-app",
+                "linkedSoftnAppId": "@packApp:fitstudio-coaching-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "trainers",
+                    "displayName": "Trainers",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "sessions",
+                    "displayName": "Sessions",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "assessments",
+                    "displayName": "Assessments",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "programs",
+                    "displayName": "Programs",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "payments",
+                    "displayName": "Payments",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_clients",
+                    "name": "Clients by Goal",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "goal",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_trainers",
+                    "name": "Total Trainers",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:trainers",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "bar_trainers",
+                    "name": "Trainers by Role",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:trainers",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "role",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "teal",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_sessions",
+                    "name": "Total Sessions",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:sessions",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_assessments",
+                    "name": "Total Assessments",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:assessments",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Clients by Goal",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "goal",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Trainers",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:trainers",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wc_1",
+                            "kind": "report",
+                            "title": "Trainers by Role",
+                            "layout": {
+                                "x": 6,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:trainers",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "role",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "teal",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Sessions",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:sessions",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Assessments",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:assessments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

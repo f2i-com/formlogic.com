@@ -1,0 +1,1974 @@
+{
+    "formatVersion": 1,
+    "packMeta": {
+        "id": "venueops-venue-hire-softn",
+        "name": "VenueOps (SoftN + Forms)",
+        "description": "Turnkey venue hire & booking manager: space schedule with automatic time-overlap conflict detection and hourly fee calculation, spaces catalogue, setup & facilities checklists, hirer clients directory, payments & deposits ledger with HTML booking confirmations, and incidents/damage log. Includes the full-stack SoftN application plus 6 schema-matched FormLogic forms & management charts sharing the same live SQLite database.",
+        "version": "1.0.0",
+        "author": "FormLogic",
+        "tags": [
+            "venues",
+            "bookings",
+            "events",
+            "hire",
+            "facilities",
+            "softn",
+            "sqlite",
+            "shared-database"
+        ]
+    },
+    "forms": [
+        {
+            "packFormId": "spaces",
+            "title": "Spaces",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"spaces\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Spaces",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "spaces",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "space_name": "space_name",
+                        "capacity": "capacity",
+                        "space_type": "space_type",
+                        "hourly_rate_cents": "hourly_rate_cents",
+                        "features_json": "features_json",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Spaces",
+                    "description": "Connected live to SQLite table \"spaces\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_name",
+                    "type": "short_text",
+                    "label": "Space Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "capacity",
+                    "type": "number",
+                    "label": "Capacity",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_type",
+                    "type": "dropdown",
+                    "label": "Space Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "hall",
+                                "label": "Hall",
+                                "value": "Hall"
+                            },
+                            {
+                                "id": "meeting_room",
+                                "label": "Meeting room",
+                                "value": "Meeting room"
+                            },
+                            {
+                                "id": "studio",
+                                "label": "Studio",
+                                "value": "Studio"
+                            },
+                            {
+                                "id": "sports_court",
+                                "label": "Sports court",
+                                "value": "Sports court"
+                            },
+                            {
+                                "id": "outdoor_area",
+                                "label": "Outdoor area",
+                                "value": "Outdoor area"
+                            }
+                        ],
+                        "defaultValue": "Hall"
+                    }
+                },
+                {
+                    "id": "hourly_rate_cents",
+                    "type": "url",
+                    "label": "Hourly Rate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "features_json",
+                    "type": "short_text",
+                    "label": "Features Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "tentative",
+                                "label": "Tentative",
+                                "value": "Tentative"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "deposit",
+                                "label": "Deposit",
+                                "value": "Deposit"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "assessing",
+                                "label": "Assessing",
+                                "value": "Assessing"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Available"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Spaces",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:spaces",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Spaces by Space Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:spaces",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "space_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Spaces",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:spaces",
+                                "titleField": "space_name",
+                                "limit": 10,
+                                "subtitleField": "capacity"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "clients",
+            "title": "Clients",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"clients\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Clients",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "clients",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "client_name": "client_name",
+                        "organisation": "organisation",
+                        "email": "email",
+                        "phone": "phone",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Clients",
+                    "description": "Connected live to SQLite table \"clients\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "organisation",
+                    "type": "short_text",
+                    "label": "Organisation",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Clients",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:clients",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "bookings",
+            "title": "Bookings",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"bookings\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Bookings",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "bookings",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "booking_ref": "booking_ref",
+                        "space_id": "space_id",
+                        "space_name": "space_name",
+                        "client_id": "client_id",
+                        "client_name": "client_name",
+                        "email": "email",
+                        "phone": "phone",
+                        "booking_date": "booking_date",
+                        "start_time": "start_time",
+                        "end_time": "end_time",
+                        "duration_hours": "duration_hours",
+                        "hourly_rate_cents": "hourly_rate_cents",
+                        "purpose": "purpose",
+                        "status": "status",
+                        "amount_cents": "amount_cents",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Bookings",
+                    "description": "Connected live to SQLite table \"bookings\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_ref",
+                    "type": "short_text",
+                    "label": "Booking Ref",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_id",
+                    "type": "linked_record",
+                    "label": "Space",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:spaces",
+                        "displayFieldIds": [
+                            "space_name",
+                            "capacity"
+                        ]
+                    }
+                },
+                {
+                    "id": "space_name",
+                    "type": "short_text",
+                    "label": "Space Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_id",
+                    "type": "linked_record",
+                    "label": "Client",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:clients",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "email",
+                    "type": "email",
+                    "label": "Email",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "phone",
+                    "type": "phone",
+                    "label": "Phone",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_date",
+                    "type": "date",
+                    "label": "Booking Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "end_time",
+                    "type": "time",
+                    "label": "End Time",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "duration_hours",
+                    "type": "number",
+                    "label": "Duration Hours",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "hourly_rate_cents",
+                    "type": "url",
+                    "label": "Hourly Rate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "purpose",
+                    "type": "dropdown",
+                    "label": "Purpose",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "party_or_celebration",
+                                "label": "Party or celebration",
+                                "value": "Party or celebration"
+                            },
+                            {
+                                "id": "meeting",
+                                "label": "Meeting",
+                                "value": "Meeting"
+                            },
+                            {
+                                "id": "class_or_workshop",
+                                "label": "Class or workshop",
+                                "value": "Class or workshop"
+                            },
+                            {
+                                "id": "sport",
+                                "label": "Sport",
+                                "value": "Sport"
+                            },
+                            {
+                                "id": "performance",
+                                "label": "Performance",
+                                "value": "Performance"
+                            },
+                            {
+                                "id": "community_event",
+                                "label": "Community event",
+                                "value": "Community event"
+                            }
+                        ],
+                        "defaultValue": "Meeting"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "tentative",
+                                "label": "Tentative",
+                                "value": "Tentative"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "deposit",
+                                "label": "Deposit",
+                                "value": "Deposit"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "assessing",
+                                "label": "Assessing",
+                                "value": "Assessing"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Confirmed"
+                    }
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Bookings",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Bookings by Purpose",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "purpose",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Bookings",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:bookings",
+                                "titleField": "email",
+                                "limit": 10,
+                                "subtitleField": "phone"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "setup-requirements",
+            "title": "Setup Requirements",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"setup_requirements\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Setup Requirements",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "setup_requirements",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "booking_id": "booking_id",
+                        "booking_ref": "booking_ref",
+                        "space_name": "space_name",
+                        "booking_date": "booking_date",
+                        "start_time": "start_time",
+                        "client_name": "client_name",
+                        "layout": "layout",
+                        "equipment_json": "equipment_json",
+                        "catering_required": "catering_required",
+                        "notes": "notes",
+                        "setup_complete": "setup_complete",
+                        "completed_by": "completed_by"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": null
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Setup Requirements",
+                    "description": "Connected live to SQLite table \"setup_requirements\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_id",
+                    "type": "linked_record",
+                    "label": "Booking",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:bookings",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "booking_ref",
+                    "type": "short_text",
+                    "label": "Booking Ref",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_name",
+                    "type": "short_text",
+                    "label": "Space Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_date",
+                    "type": "date",
+                    "label": "Booking Date",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "start_time",
+                    "type": "time",
+                    "label": "Start Time",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "layout",
+                    "type": "dropdown",
+                    "label": "Layout",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "theatre",
+                                "label": "Theatre",
+                                "value": "Theatre"
+                            },
+                            {
+                                "id": "banquet",
+                                "label": "Banquet",
+                                "value": "Banquet"
+                            },
+                            {
+                                "id": "boardroom",
+                                "label": "Boardroom",
+                                "value": "Boardroom"
+                            },
+                            {
+                                "id": "classroom",
+                                "label": "Classroom",
+                                "value": "Classroom"
+                            },
+                            {
+                                "id": "empty",
+                                "label": "Empty",
+                                "value": "Empty"
+                            },
+                            {
+                                "id": "custom",
+                                "label": "Custom",
+                                "value": "Custom"
+                            }
+                        ],
+                        "defaultValue": "Theatre"
+                    }
+                },
+                {
+                    "id": "equipment_json",
+                    "type": "short_text",
+                    "label": "Equipment Json",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "catering_required",
+                    "type": "dropdown",
+                    "label": "Catering Required",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "no",
+                                "label": "No",
+                                "value": "No"
+                            }
+                        ],
+                        "defaultValue": "No"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "setup_complete",
+                    "type": "dropdown",
+                    "label": "Setup Complete",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "yes",
+                                "label": "Yes",
+                                "value": "Yes"
+                            },
+                            {
+                                "id": "not_yet",
+                                "label": "Not yet",
+                                "value": "Not yet"
+                            }
+                        ],
+                        "defaultValue": "Not yet"
+                    }
+                },
+                {
+                    "id": "completed_by",
+                    "type": "short_text",
+                    "label": "Completed By",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Setup Requirements",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:setup-requirements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Setup Requirements by Layout",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:setup-requirements",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "layout",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Setup Requirements",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:setup-requirements",
+                                "titleField": "booking_ref",
+                                "limit": 10,
+                                "subtitleField": "space_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "payments",
+            "title": "Payments",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"payments\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Payments",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "payments",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "booking_id": "booking_id",
+                        "booking_ref": "booking_ref",
+                        "client_name": "client_name",
+                        "space_name": "space_name",
+                        "amount_cents": "amount_cents",
+                        "payment_date": "payment_date",
+                        "method": "method",
+                        "status": "status",
+                        "notes": "notes"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Payments",
+                    "description": "Connected live to SQLite table \"payments\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_id",
+                    "type": "linked_record",
+                    "label": "Booking",
+                    "required": true,
+                    "properties": {
+                        "targetFormId": "@pack:bookings",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "booking_ref",
+                    "type": "short_text",
+                    "label": "Booking Ref",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_name",
+                    "type": "short_text",
+                    "label": "Space Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "amount_cents",
+                    "type": "number",
+                    "label": "Amount (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "payment_date",
+                    "type": "date",
+                    "label": "Payment Date",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "method",
+                    "type": "dropdown",
+                    "label": "Method",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "card",
+                                "label": "Card",
+                                "value": "Card"
+                            },
+                            {
+                                "id": "bank_transfer",
+                                "label": "Bank transfer",
+                                "value": "Bank transfer"
+                            },
+                            {
+                                "id": "cash",
+                                "label": "Cash",
+                                "value": "Cash"
+                            },
+                            {
+                                "id": "invoice",
+                                "label": "Invoice",
+                                "value": "Invoice"
+                            }
+                        ],
+                        "defaultValue": "Bank transfer"
+                    }
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "tentative",
+                                "label": "Tentative",
+                                "value": "Tentative"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "deposit",
+                                "label": "Deposit",
+                                "value": "Deposit"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "assessing",
+                                "label": "Assessing",
+                                "value": "Assessing"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Paid"
+                    }
+                },
+                {
+                    "id": "notes",
+                    "type": "long_text",
+                    "label": "Notes",
+                    "required": false,
+                    "properties": {}
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Payments by Method",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:payments",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "method",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Payments",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:payments",
+                                "titleField": "booking_ref",
+                                "limit": 10,
+                                "subtitleField": "client_name"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "packFormId": "incidents",
+            "title": "Incidents",
+            "icon": "DoorOpen",
+            "description": "Live FormLogic form synced directly to SQLite table \"incidents\" in VenueOps.",
+            "settings": {
+                "presentationMode": "both",
+                "defaultPresentationMode": "classic",
+                "showProgressBar": true,
+                "allowBackNavigation": true,
+                "submitButtonText": "Save Incidents",
+                "isClosed": false,
+                "nativeTableBinding": {
+                    "appId": "@packApp:venueops-venue-hire-softn-app",
+                    "table": "incidents",
+                    "primaryKey": [
+                        "id"
+                    ],
+                    "columns": {
+                        "booking_id": "booking_id",
+                        "booking_ref": "booking_ref",
+                        "space_name": "space_name",
+                        "client_name": "client_name",
+                        "incident_type": "incident_type",
+                        "description": "description",
+                        "cost_estimate_cents": "cost_estimate_cents",
+                        "status": "status"
+                    },
+                    "createdAtColumn": "created_at",
+                    "statusColumn": "status"
+                }
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "fields": [
+                {
+                    "id": "welcome",
+                    "type": "welcome_screen",
+                    "label": "Incidents",
+                    "description": "Connected live to SQLite table \"incidents\" in VenueOps.",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "booking_id",
+                    "type": "linked_record",
+                    "label": "Booking",
+                    "required": false,
+                    "properties": {
+                        "targetFormId": "@pack:bookings",
+                        "displayFieldIds": [
+                            "email",
+                            "phone"
+                        ]
+                    }
+                },
+                {
+                    "id": "booking_ref",
+                    "type": "short_text",
+                    "label": "Booking Ref",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "space_name",
+                    "type": "short_text",
+                    "label": "Space Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "client_name",
+                    "type": "short_text",
+                    "label": "Client Name",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "incident_type",
+                    "type": "dropdown",
+                    "label": "Incident Type",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "damage",
+                                "label": "Damage",
+                                "value": "Damage"
+                            },
+                            {
+                                "id": "noise_complaint",
+                                "label": "Noise complaint",
+                                "value": "Noise complaint"
+                            },
+                            {
+                                "id": "overstay",
+                                "label": "Overstay",
+                                "value": "Overstay"
+                            },
+                            {
+                                "id": "cleaning_issue",
+                                "label": "Cleaning issue",
+                                "value": "Cleaning issue"
+                            },
+                            {
+                                "id": "safety",
+                                "label": "Safety",
+                                "value": "Safety"
+                            }
+                        ],
+                        "defaultValue": "Damage"
+                    }
+                },
+                {
+                    "id": "description",
+                    "type": "long_text",
+                    "label": "Description",
+                    "required": true,
+                    "properties": {}
+                },
+                {
+                    "id": "cost_estimate_cents",
+                    "type": "number",
+                    "label": "Cost Estimate (Cents)",
+                    "required": false,
+                    "properties": {}
+                },
+                {
+                    "id": "status",
+                    "type": "dropdown",
+                    "label": "Status",
+                    "required": false,
+                    "properties": {
+                        "options": [
+                            {
+                                "id": "available",
+                                "label": "Available",
+                                "value": "Available"
+                            },
+                            {
+                                "id": "maintenance",
+                                "label": "Maintenance",
+                                "value": "Maintenance"
+                            },
+                            {
+                                "id": "retired",
+                                "label": "Retired",
+                                "value": "Retired"
+                            },
+                            {
+                                "id": "enquiry",
+                                "label": "Enquiry",
+                                "value": "Enquiry"
+                            },
+                            {
+                                "id": "tentative",
+                                "label": "Tentative",
+                                "value": "Tentative"
+                            },
+                            {
+                                "id": "confirmed",
+                                "label": "Confirmed",
+                                "value": "Confirmed"
+                            },
+                            {
+                                "id": "paid",
+                                "label": "Paid",
+                                "value": "Paid"
+                            },
+                            {
+                                "id": "completed",
+                                "label": "Completed",
+                                "value": "Completed"
+                            },
+                            {
+                                "id": "cancelled",
+                                "label": "Cancelled",
+                                "value": "Cancelled"
+                            },
+                            {
+                                "id": "deposit",
+                                "label": "Deposit",
+                                "value": "Deposit"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "Pending",
+                                "value": "Pending"
+                            },
+                            {
+                                "id": "refunded",
+                                "label": "Refunded",
+                                "value": "Refunded"
+                            },
+                            {
+                                "id": "reported",
+                                "label": "Reported",
+                                "value": "Reported"
+                            },
+                            {
+                                "id": "assessing",
+                                "label": "Assessing",
+                                "value": "Assessing"
+                            },
+                            {
+                                "id": "invoiced",
+                                "label": "Invoiced",
+                                "value": "Invoiced"
+                            },
+                            {
+                                "id": "closed",
+                                "label": "Closed",
+                                "value": "Closed"
+                            },
+                            {
+                                "id": "active",
+                                "label": "active",
+                                "value": "active"
+                            },
+                            {
+                                "id": "pending",
+                                "label": "pending",
+                                "value": "pending"
+                            }
+                        ],
+                        "defaultValue": "Reported"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "allowNewResponses": true,
+                "kind": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "k1",
+                            "title": "Total Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 4,
+                                "h": 1
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                }
+                            }
+                        },
+                        {
+                            "id": "c1",
+                            "title": "Incidents by Incident Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 1,
+                                "w": 6,
+                                "h": 3
+                            },
+                            "kind": "report",
+                            "spec": {
+                                "formId": "@pack:incidents",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "incident_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "seriesSort": "value",
+                                "sort": "desc",
+                                "limit": 8
+                            }
+                        },
+                        {
+                            "id": "l1",
+                            "title": "Recent Incidents",
+                            "layout": {
+                                "x": 0,
+                                "y": 4,
+                                "w": 12,
+                                "h": 3
+                            },
+                            "kind": "list",
+                            "list": {
+                                "formId": "@pack:incidents",
+                                "titleField": "description",
+                                "limit": 10,
+                                "subtitleField": "incident_type"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "apps": [
+        {
+            "packAppId": "venueops-venue-hire-softn-app",
+            "name": "VenueOps",
+            "description": "Turnkey venue hire & booking manager: space schedule with automatic time-overlap conflict detection and hourly fee calculation, spaces catalogue, setup & facilities checklists, hirer clients directory, payments & deposits ledger with HTML booking confirmations, and incidents/damage log.",
+            "settings": {
+                "softnApp": true,
+                "appKind": "softn"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [],
+            "roles": []
+        },
+        {
+            "packAppId": "venueops-venue-hire-softn-forms",
+            "name": "VenueOps Forms & Charts",
+            "description": "FormLogic CRUD forms, tables, and live charts connected directly to VenueOps's SQLite database.",
+            "settings": {
+                "appKind": "admin",
+                "unifiedSqlite": true,
+                "sharedDatabaseAppId": "@packApp:venueops-venue-hire-softn-app",
+                "linkedSoftnAppId": "@packApp:venueops-venue-hire-softn-app"
+            },
+            "theme": {
+                "primaryColor": "#4f46e5",
+                "backgroundColor": "#ffffff",
+                "textColor": "#1f2937",
+                "fontFamily": "Inter",
+                "borderRadius": "medium"
+            },
+            "forms": [
+                {
+                    "packFormId": "spaces",
+                    "displayName": "Spaces",
+                    "sortOrder": 0,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "clients",
+                    "displayName": "Clients",
+                    "sortOrder": 1,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "bookings",
+                    "displayName": "Bookings",
+                    "sortOrder": 2,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "setup-requirements",
+                    "displayName": "Setup Requirements",
+                    "sortOrder": 3,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "payments",
+                    "displayName": "Payments",
+                    "sortOrder": 4,
+                    "isVisible": true
+                },
+                {
+                    "packFormId": "incidents",
+                    "displayName": "Incidents",
+                    "sortOrder": 5,
+                    "isVisible": true
+                }
+            ],
+            "reports": [
+                {
+                    "id": "kpi_spaces",
+                    "name": "Total Spaces",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:spaces",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "blue"
+                    }
+                },
+                {
+                    "id": "bar_spaces",
+                    "name": "Spaces by Space Type",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:spaces",
+                        "viz": "bar",
+                        "groupBy": {
+                            "field": "space_type",
+                            "bucket": "none"
+                        },
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "indigo",
+                        "showDataLabels": true
+                    }
+                },
+                {
+                    "id": "kpi_clients",
+                    "name": "Total Clients",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:clients",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "emerald"
+                    }
+                },
+                {
+                    "id": "kpi_bookings",
+                    "name": "Total Bookings",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:bookings",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "violet"
+                    }
+                },
+                {
+                    "id": "kpi_setup_requirements",
+                    "name": "Total Setup Requirements",
+                    "type": "builder",
+                    "spec": {
+                        "formId": "@pack:setup-requirements",
+                        "viz": "kpi",
+                        "measure": {
+                            "fn": "count"
+                        },
+                        "color": "amber"
+                    }
+                }
+            ],
+            "customScreen": {
+                "enabled": true,
+                "mode": "dashboard",
+                "dashboard": {
+                    "version": 1,
+                    "cols": 12,
+                    "widgets": [
+                        {
+                            "id": "wk_0",
+                            "kind": "report",
+                            "title": "Total Spaces",
+                            "layout": {
+                                "x": 0,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:spaces",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "blue"
+                            }
+                        },
+                        {
+                            "id": "wc_0",
+                            "kind": "report",
+                            "title": "Spaces by Space Type",
+                            "layout": {
+                                "x": 0,
+                                "y": 2,
+                                "w": 6,
+                                "h": 4
+                            },
+                            "spec": {
+                                "formId": "@pack:spaces",
+                                "viz": "bar",
+                                "groupBy": {
+                                    "field": "space_type",
+                                    "bucket": "none"
+                                },
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "indigo",
+                                "showDataLabels": true
+                            }
+                        },
+                        {
+                            "id": "wk_1",
+                            "kind": "report",
+                            "title": "Total Clients",
+                            "layout": {
+                                "x": 3,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:clients",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "emerald"
+                            }
+                        },
+                        {
+                            "id": "wk_2",
+                            "kind": "report",
+                            "title": "Total Bookings",
+                            "layout": {
+                                "x": 6,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:bookings",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "violet"
+                            }
+                        },
+                        {
+                            "id": "wk_3",
+                            "kind": "report",
+                            "title": "Total Setup Requirements",
+                            "layout": {
+                                "x": 9,
+                                "y": 0,
+                                "w": 3,
+                                "h": 2
+                            },
+                            "spec": {
+                                "formId": "@pack:setup-requirements",
+                                "viz": "kpi",
+                                "measure": {
+                                    "fn": "count"
+                                },
+                                "color": "amber"
+                            }
+                        }
+                    ]
+                }
+            },
+            "roles": []
+        }
+    ]
+}

@@ -32,6 +32,12 @@ class FormController
     private ?AppReportService $reportValidator;
     private ?TrashService $trashService;
     private ?FormEncryptionService $encryptionService;
+    private ?\FormLogic\Services\FormSqliteDatabaseService $formSqliteDb = null;
+
+    public function setFormSqliteDatabase(?\FormLogic\Services\FormSqliteDatabaseService $service): void
+    {
+        $this->formSqliteDb = $service;
+    }
 
     public function __construct(
         FormService $formService,
@@ -451,6 +457,11 @@ class FormController
                     'error' => true,
                     'message' => 'Form not found',
                 ], 404);
+            }
+
+            if ($this->formSqliteDb !== null && isset($data['fields'])) {
+                $this->formSqliteDb->maybeSyncFormOnUpdate($formId);
+                $updatedForm = $this->formService->getForm($formId) ?? $updatedForm;
             }
 
             $action = (isset($data['status']) && $data['status'] === 'published') ? 'form.publish' : 'form.update';

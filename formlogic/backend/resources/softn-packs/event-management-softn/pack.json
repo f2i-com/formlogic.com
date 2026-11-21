@@ -1,0 +1,50 @@
+{
+    "id": "event-management-softn",
+    "slug": "event-management-softn",
+    "name": "Event Hub — SoftN App & Linked Forms",
+    "shortName": "Event Hub",
+    "description": "Turnkey event operations command center with 1-tap attendee check-in desk, dietary & accessibility alerts, speaker program, vendor booths, volunteer roster, live budget variance, incident log, and post-event feedback. Includes the full-stack SoftN application (PHP + SQLite) plus 7 schema-matched FormLogic CRUD forms and charts sharing the exact same live SQLite database.",
+    "icon": "Ticket",
+    "category": "Business apps",
+    "tags": [
+        "events",
+        "registration",
+        "speakers",
+        "vendors",
+        "volunteers",
+        "feedback",
+        "softn",
+        "sqlite",
+        "shared-database"
+    ],
+    "version": "1.0.0",
+    "formatVersion": 1,
+    "itemType": "softn_app",
+    "softnArchive": "event-management-softn.softn",
+    "softnPackAppId": "event-management-softn-app",
+    "formsPackAppId": "event-management-softn-forms",
+    "companionPackSlug": "event-management",
+    "priceCents": 0,
+    "currency": "USD",
+    "billingModel": "free",
+    "sourceVisibility": "open",
+    "demoEnabled": true,
+    "featured": false,
+    "tables": [
+        "attendees",
+        "speakers",
+        "vendors",
+        "volunteers",
+        "budget_items",
+        "incidents",
+        "event_feedback"
+    ],
+    "formCount": 7,
+    "appCount": 2,
+    "screenshots": [
+        {
+            "label": "Reports dashboard",
+            "url": "/api/packs/screenshots/event-management.png"
+        }
+    ]
+}
