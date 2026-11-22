@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Panel } from '../../components/ui/Panel';
 import { api, type AdminOfficialRelease, type AdminUpgradeStatus } from '../../lib/api';
+import { reloadOntoNewRelease } from '../../lib/newRelease';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { toast } from '../../stores/toastStore';
 import { AdminError, AdminSpinner } from './adminUi';
@@ -27,6 +28,7 @@ export function AdminUpgrade() {
   const [rollbackId, setRollbackId] = useState<string | null>(null);
   const [restoreDbId, setRestoreDbId] = useState<string | null>(null);
   const [journal, setJournal] = useState<string[] | null>(null);
+  const [upgradedTo, setUpgradedTo] = useState<string | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -86,7 +88,8 @@ export function AdminUpgrade() {
       toast.error('Upgrade failed', r.error);
     } else {
       setJournal(r.data!.journal);
-      toast.success(`Upgraded to v${r.data!.toVersion}`, 'A database export and code snapshot were saved first.');
+      setUpgradedTo(r.data!.toVersion);
+      toast.success(`Upgraded to v${r.data!.toVersion}`, 'Reload to load the new interface cleanly.');
     }
     load();
   };
@@ -206,6 +209,17 @@ export function AdminUpgrade() {
                 </Button>
                 <Button size="sm" variant="outline" disabled={uploading || applying} onClick={async () => { const result = await api.adminUpgradeDiscard(); if (result.error) toast.error('Could not discard package', result.error); load(); }}>Discard</Button>
               </div>
+            </div>
+          )}
+
+          {upgradedTo && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <span>
+                <strong>v{upgradedTo} installed.</strong> Reload this page to switch to the updated interface and clear the old cached shell.
+              </span>
+              <Button size="sm" onClick={() => void reloadOntoNewRelease()}>
+                Reload now
+              </Button>
             </div>
           )}
 

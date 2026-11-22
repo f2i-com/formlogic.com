@@ -56,6 +56,8 @@ interface BotGuideState {
   position: BotGuidePosition;
   /** User-dragged viewport coordinates (px from top-left); null = use corner preset. */
   customPosition: BotGuideCustomPosition | null;
+  /** Whether the first-visit "Press here for a guided tour" top speech bubble has been dismissed. */
+  tourCalloutDismissed: boolean;
   size: BotGuideSize;
   allowVisitorCustomization: boolean;
   /** Optional override for self-hosted bot.computer embed script (empty = bundled /bot/bot-embed.js). */
@@ -78,6 +80,7 @@ interface BotGuideState {
   setSpeechEnabled: (enabled: boolean) => void;
   setPosition: (position: BotGuidePosition) => void;
   setCustomPosition: (pos: BotGuideCustomPosition | null) => void;
+  dismissTourCallout: () => void;
   setSize: (size: BotGuideSize) => void;
   setAllowVisitorCustomization: (allowed: boolean) => void;
   setScriptUrl: (url: string) => void;
@@ -99,6 +102,7 @@ const DEFAULTS = {
   speechEnabled: true,
   position: 'auto' as BotGuidePosition,
   customPosition: null as BotGuideCustomPosition | null,
+  tourCalloutDismissed: false,
   size: 'compact' as BotGuideSize,
   allowVisitorCustomization: true,
   scriptUrl: '',
@@ -117,6 +121,7 @@ export const useBotGuideStore = create<BotGuideState>()(
       setEnabled: (enabled) =>
         set((state) => ({
           enabled,
+          tourCalloutDismissed: enabled ? true : state.tourCalloutDismissed,
           status: enabled ? state.status : 'idle',
           lastError: enabled ? state.lastError : null,
         })),
@@ -125,6 +130,7 @@ export const useBotGuideStore = create<BotGuideState>()(
           const next = !state.enabled;
           return {
             enabled: next,
+            tourCalloutDismissed: true,
             status: next ? state.status : 'idle',
             lastError: next ? state.lastError : null,
           };
@@ -136,6 +142,7 @@ export const useBotGuideStore = create<BotGuideState>()(
       setSpeechEnabled: (speechEnabled) => set({ speechEnabled }),
       setPosition: (position) => set({ position, customPosition: null }),
       setCustomPosition: (customPosition) => set({ customPosition }),
+      dismissTourCallout: () => set({ tourCalloutDismissed: true }),
       setSize: (size) => set({ size }),
       setAllowVisitorCustomization: (allowVisitorCustomization) => set({ allowVisitorCustomization }),
       setScriptUrl: (scriptUrl) => set({ scriptUrl }),
@@ -145,11 +152,13 @@ export const useBotGuideStore = create<BotGuideState>()(
       requestAsk: (question) =>
         set({
           enabled: true,
+          tourCalloutDismissed: true,
           pendingCommand: { kind: 'ask', question, nonce: Date.now() },
         }),
       requestCustomize: () =>
         set({
           enabled: true,
+          tourCalloutDismissed: true,
           pendingCommand: { kind: 'customize', nonce: Date.now() },
         }),
       clearPendingCommand: () => set({ pendingCommand: null }),
@@ -157,7 +166,7 @@ export const useBotGuideStore = create<BotGuideState>()(
     }),
     {
       name: 'formlogic-bot-guide-storage',
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
         const state = persisted as Partial<BotGuideState> | undefined;
         if (state && version < 2 && state.renderMode === '2d') {
@@ -165,6 +174,9 @@ export const useBotGuideStore = create<BotGuideState>()(
         }
         if (state && version < 3 && !state.framing) {
           state.framing = 'full';
+        }
+        if (state && version < 4 && typeof state.tourCalloutDismissed !== 'boolean') {
+          state.tourCalloutDismissed = Boolean(state.enabled);
         }
         return state as BotGuideState;
       },
@@ -177,6 +189,7 @@ export const useBotGuideStore = create<BotGuideState>()(
         speechEnabled: state.speechEnabled,
         position: state.position,
         customPosition: state.customPosition,
+        tourCalloutDismissed: state.tourCalloutDismissed,
         size: state.size,
         allowVisitorCustomization: state.allowVisitorCustomization,
         scriptUrl: state.scriptUrl,

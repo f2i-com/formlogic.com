@@ -4,6 +4,7 @@ import { isReservedExpressionName } from '../utils';
 import { normalizeTableKey } from './sqlParser';
 import type {
   FieldMapping,
+  ForeignKeySource,
   ImportedColumn,
   ImportedSchema,
   ImportedTable,
@@ -15,6 +16,7 @@ interface MigrationPackField {
   id: string;
   type: FieldType;
   label: string;
+  placeholder?: string;
   required: boolean;
   order: number;
   properties: Record<string, unknown>;
@@ -32,6 +34,33 @@ interface MigrationPackForm {
 
 const ID_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
+const SYSTEM_TABLE_KEYS = new Set([
+  'phinxlog',
+  'sysdiagrams',
+  'efmigrationshistory',
+  'flyway_schema_history',
+  'schema_migrations',
+  'knex_migrations',
+  'knex_migrations_lock',
+  'alembic_version',
+  'django_migrations',
+  'dtproperties',
+  'ar_internal_metadata',
+  'migrations',
+  'typeorm_metadata',
+  'prisma_migrations',
+  'sequelize_meta',
+  'sequelizemeta',
+]);
+
+/** Return true for database migration or engine-internal tables that should default to excluded. */
+export function isSystemOrMigrationTable(tableName: string): boolean {
+  const key = normalizeTableKey(tableName);
+  if (SYSTEM_TABLE_KEYS.has(key)) return true;
+  if (/^(?:sys_|__ef|sqlite_|pg_|msdb_|dbo_sys)/.test(key)) return true;
+  return false;
+}
+
 /** Convert `snake_case`, `camelCase`, or `PascalCase` into a crisp human title. */
 export function humanizeIdentifier(raw: string): string {
   const spaced = raw
@@ -45,7 +74,7 @@ export function humanizeIdentifier(raw: string): string {
     .split(' ')
     .map((word) => {
       const upper = word.toUpperCase();
-      if (['ID', 'SKU', 'URL', 'API', 'IP', 'VIP', 'SSN', 'DOB', 'PO', 'QR', 'USD', 'AUD', 'EUR'].includes(upper)) {
+      if (['ID', 'SKU', 'URL', 'API', 'IP', 'VIP', 'SSN', 'DOB', 'PO', 'QR', 'USD', 'AUD', 'EUR', 'GPS', 'DXF'].includes(upper)) {
         return upper;
       }
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
@@ -87,21 +116,325 @@ function makeChoiceOptions(values: string[]): Array<{ id: string; label: string;
 
 const YES_CHECKBOX_OPTION = [{ id: 'yes', label: 'Yes', value: 'yes' }];
 
+/** Convert a camelCase or PascalCase identifier into snake_case without regex lookbehinds. */
+function toSnakeLower(raw: string): string {
+  return raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+const IRREGULAR_SINGULARS: Record<string, string> = {
+  people: 'person',
+  children: 'child',
+  men: 'man',
+  women: 'woman',
+  geese: 'goose',
+  indices: 'index',
+  statuses: 'status',
+  companies: 'company',
+  categories: 'category',
+  facilities: 'facility',
+  families: 'family',
+  activities: 'activity',
+  entries: 'entry',
+  inventories: 'inventory',
+  priorities: 'priority',
+  histories: 'history',
+};
+
+/** Best-effort singular form of an English snake_case identifier. */
+function singularizeSnake(name: string): string {
+  const parts = name.split('_').filter(Boolean);
+  if (parts.length === 0) return name;
+  const last = parts[parts.length - 1];
+  let singular = last;
+  if (IRREGULAR_SINGULARS[last]) {
+    singular = IRREGULAR_SINGULARS[last];
+  } else if (last.length > 4 && last.endsWith('ies')) {
+    singular = `${last.slice(0, -3)}y`;
+  } else if (last.length > 4 && /(?:ses|xes|zes|ches|shes)$/.test(last)) {
+    singular = last.slice(0, -2);
+  } else if (last.length > 2 && last.endsWith('s') && !/(?:ss|us|is|os)$/.test(last)) {
+    singular = last.slice(0, -1);
+  }
+  parts[parts.length - 1] = singular;
+  return parts.join('_');
+}
+
+type ColumnTypeFamily = 'int' | 'uuid' | 'string' | 'unknown';
+
+function getColumnTypeFamily(col: ImportedColumn): ColumnTypeFamily {
+  const upper = `${col.rawType} ${col.normalizedType}`.toUpperCase();
+  if (/\b(?:UUID|UNIQUEIDENTIFIER|GUID)\b/.test(upper)) return 'uuid';
+  if (/\b(?:INT|INTEGER|BIGINT|SMALLINT|TINYINT|MEDIUMINT|SERIAL|BIGSERIAL|SMALLSERIAL|NUMERIC|DECIMAL|NUMBER)\b/.test(upper)) {
+    return 'int';
+  }
+  if (/\b(?:VARCHAR|NVARCHAR|CHAR|NCHAR|TEXT|CLOB|CHARACTER|STRING)\b/.test(upper)) {
+    return 'string';
+  }
+  return 'unknown';
+}
+
+function areTypeFamiliesCompatible(fkCol: ImportedColumn, pkCol: ImportedColumn | undefined): boolean {
+  if (!pkCol) return true;
+  const a = getColumnTypeFamily(fkCol);
+  const b = getColumnTypeFamily(pkCol);
+  if (a === 'unknown' || b === 'unknown') return true;
+  if (a === b) return true;
+  if ((a === 'uuid' && b === 'string') || (a === 'string' && b === 'uuid')) return true;
+  return false;
+}
+
+const GENERIC_SUFFIX_STOPWORDS = new Set([
+  'id',
+  'key',
+  'code',
+  'type',
+  'status',
+  'name',
+  'record',
+  'item',
+  'data',
+  'value',
+  'number',
+  'num',
+  'ref',
+]);
+
+/** Domain role aliases used ONLY when the target table exists AND PK types are compatible. */
+const ROLE_TARGET_ALIASES: ReadonlyArray<{ stems: readonly string[]; targets: readonly string[] }> = [
+  {
+    stems: [
+      'truck',
+      'haul_truck',
+      'excavator',
+      'shovel',
+      'loader',
+      'dozer',
+      'drill',
+      'grader',
+      'machine',
+      'vehicle',
+      'unit',
+      'rig',
+      'equipment_a',
+      'equipment_b',
+      'source_excavator',
+      'to_equipment',
+    ],
+    targets: ['equipment', 'vehicles', 'vehicle', 'machines', 'machine', 'assets', 'asset'],
+  },
+  {
+    stems: [
+      'origin',
+      'destination',
+      'current_location',
+      'destination_location',
+      'dump_location',
+      'load_location',
+      'shovel_location',
+      'fuel_location',
+      'from_location',
+      'to_location',
+      'source_location',
+      'parent_region',
+    ],
+    targets: ['locations', 'location', 'sites', 'site'],
+  },
+  {
+    stems: [
+      'manager',
+      'owner',
+      'assignee',
+      'assignee_user',
+      'assigned_to',
+      'created_by',
+      'updated_by',
+      'approved_by',
+      'reported_by',
+      'closed_by',
+      'performed_by',
+      'submitted_by',
+      'issued_by',
+      'changed_by',
+      'recorded_by',
+      'from_user',
+    ],
+    targets: ['users', 'user', 'auth_user', 'team_members', 'employees', 'employee', 'person', 'people'],
+  },
+  {
+    stems: ['operator', 'driver', 'employee', 'supervisor', 'issued_to', 'to_person'],
+    targets: ['person', 'people', 'operators', 'operator', 'employees', 'employee', 'users', 'user'],
+  },
+  {
+    stems: ['load_record', 'haul_load'],
+    targets: ['shift_loads', 'haul_load', 'haul_loads', 'loads'],
+  },
+  {
+    stems: ['reason', 'delay_reason', 'reason_code'],
+    targets: ['reason_codes', 'reason_code', 'delay_reason', 'delay_reasons'],
+  },
+  {
+    stems: ['org', 'organization', 'company'],
+    targets: ['organization', 'organizations', 'company', 'companies', 'accounts', 'account'],
+  },
+  {
+    stems: ['route', 'haul_route'],
+    targets: ['haul_route', 'haul_routes', 'routes', 'route'],
+  },
+  {
+    stems: ['component', 'equipment_component'],
+    targets: ['equipment_component', 'equipment_components', 'components', 'component'],
+  },
+  {
+    stems: ['family', 'equipment_family'],
+    targets: ['equipment_family', 'equipment_families', 'families', 'family'],
+  },
+  {
+    stems: ['pile', 'inventory_pile'],
+    targets: ['inventory_pile', 'inventory_piles', 'piles', 'pile'],
+  },
+  {
+    stems: ['rotation', 'crew_rotation'],
+    targets: ['crew_rotation', 'crew_rotations', 'rotations', 'rotation'],
+  },
+];
+
+interface TargetTableIndex {
+  byKey: Map<string, ImportedTable>;
+  bySingular: Map<string, ImportedTable>;
+  pkColByKey: Map<string, ImportedColumn | undefined>;
+}
+
+function buildTargetTableIndex(tables: ImportedTable[]): TargetTableIndex {
+  const byKey = new Map<string, ImportedTable>();
+  const bySingular = new Map<string, ImportedTable>();
+  const pkColByKey = new Map<string, ImportedColumn | undefined>();
+
+  for (const t of tables) {
+    if (isSystemOrMigrationTable(t.name)) continue;
+    byKey.set(t.key, t);
+    const sing = singularizeSnake(t.key);
+    if (!bySingular.has(sing)) {
+      bySingular.set(sing, t);
+    }
+    const pkName =
+      t.primaryKeys[0] ??
+      t.columns.find((c) => c.isPrimaryKey)?.name ??
+      t.columns.find((c) => c.name.toLowerCase() === 'id')?.name;
+    const pkCol = pkName
+      ? t.columns.find((c) => c.name.toLowerCase() === pkName.toLowerCase())
+      : undefined;
+    pkColByKey.set(t.key, pkCol);
+  }
+
+  return { byKey, bySingular, pkColByKey };
+}
+
+/**
+ * Infer an implicit foreign key when a database omits formal FOREIGN KEY constraints
+ * (e.g. `equipment_type_id -> equipment_types.id`, `current_location_id -> locations.id`,
+ * `truck_id -> equipment.id`). Guarded by strict PK data-type compatibility so false
+ * positives are avoided.
+ */
+export function inferImplicitForeignKey(
+  table: ImportedTable,
+  col: ImportedColumn,
+  index: TargetTableIndex,
+): { targetTableKey: string; targetColumn: string } | null {
+  if (col.foreignKey) return null;
+  const snake = toSnakeLower(col.name);
+  if (!snake || snake === 'id' || (col.isPrimaryKey && col.isAutoIncrement)) {
+    return null;
+  }
+
+  // Only consider columns that look like reference keys (`*_id`, `*_fk`, or `*_by` / `assigned_to` / `issued_to`).
+  let stem: string | null = null;
+  if (snake.endsWith('_id') && snake.length > 3) {
+    stem = snake.slice(0, -3);
+  } else if (snake.endsWith('_fk') && snake.length > 3) {
+    stem = snake.slice(0, -3);
+  } else if (
+    /^(?:created_by|updated_by|approved_by|reported_by|closed_by|performed_by|submitted_by|issued_by|changed_by|recorded_by|assigned_to|issued_to)$/.test(
+      snake,
+    )
+  ) {
+    stem = snake;
+  }
+  if (!stem) return null;
+
+  // Never treat `<table>_id` on the same table as a self-FK when it's the table's own primary key.
+  const ownSingular = singularizeSnake(table.key);
+  if (col.isPrimaryKey && (stem === table.key || stem === ownSingular)) {
+    return null;
+  }
+
+  const acceptTarget = (candidate: ImportedTable | undefined): { targetTableKey: string; targetColumn: string } | null => {
+    if (!candidate) return null;
+    if (col.isPrimaryKey && candidate.key === table.key) return null;
+    const targetPk = index.pkColByKey.get(candidate.key);
+    if (!targetPk) return null;
+    if (!areTypeFamiliesCompatible(col, targetPk)) return null;
+    return { targetTableKey: candidate.key, targetColumn: targetPk.name };
+  };
+
+  // 1. Direct match on full stem or its singular form (e.g. `equipment_type` -> `equipment_types`).
+  const stemSing = singularizeSnake(stem);
+  const direct = acceptTarget(index.byKey.get(stem) ?? index.bySingular.get(stemSing));
+  if (direct) return direct;
+
+  // 2. Role alias match (e.g. `truck_id` -> `equipment`, `load_record_id` -> `shift_loads`).
+  for (const rule of ROLE_TARGET_ALIASES) {
+    if (rule.stems.includes(stem) || rule.stems.includes(stemSing)) {
+      for (const targetName of rule.targets) {
+        const hit = acceptTarget(index.byKey.get(targetName) ?? index.bySingular.get(singularizeSnake(targetName)));
+        if (hit) return hit;
+      }
+    }
+  }
+
+  // 3. Progressive suffix match for role-prefixed FKs (e.g. `current_location_id` -> `location` -> `locations`,
+  //    `parent_category_id` -> `category` -> `categories`, `assigned_agent_id` -> `agent` -> `agents`).
+  const parts = stem.split('_').filter(Boolean);
+  for (let start = 1; start < parts.length; start++) {
+    const suffix = parts.slice(start).join('_');
+    const suffixSing = singularizeSnake(suffix);
+    if (parts.length - start === 1 && GENERIC_SUFFIX_STOPWORDS.has(suffixSing)) {
+      continue;
+    }
+    const hit = acceptTarget(index.byKey.get(suffix) ?? index.bySingular.get(suffixSing));
+    if (hit) return hit;
+  }
+
+  // 4. Self-reference pattern like `parent_id` -> own table when own table has a compatible PK.
+  if (stem === 'parent') {
+    const selfHit = acceptTarget(table);
+    if (selfHit) return selfHit;
+  }
+
+  return null;
+}
+
 /** Map a database column + name heuristics + FK info to a FormLogic FieldType & options. */
 export function inferFieldMapping(
   col: ImportedColumn,
   allTableKeys: Set<string>,
   usedFieldIds: Set<string>,
+  inferredFk?: { targetTableKey: string; targetColumn: string } | null,
 ): FieldMapping {
   const lowerName = col.name.toLowerCase();
   const typeUpper = col.rawType.toUpperCase();
   const baseType = col.normalizedType.toLowerCase();
 
-  // Foreign key -> linked_record if target table is in this schema!
+  // Explicit SQL FK or smart inferred FK -> linked_record (related-form select box)!
   if (col.foreignKey) {
     const targetKey = normalizeTableKey(col.foreignKey.targetTable);
     if (allTableKeys.has(targetKey)) {
       const cleanedLabel = col.name.replace(/_?id$/i, '').trim() || col.foreignKey.targetTable;
+      const fkSource: ForeignKeySource = col.foreignKey.source ?? 'explicit';
       return {
         sourceColumn: col.name,
         fieldId: makeSafeFieldId(col.name, usedFieldIds),
@@ -114,9 +447,27 @@ export function inferFieldMapping(
         isAutoIncrement: col.isAutoIncrement,
         targetTableKey: targetKey,
         targetColumn: col.foreignKey.targetColumn,
+        fkSource,
         allowMultiple: false,
       };
     }
+  } else if (inferredFk && allTableKeys.has(inferredFk.targetTableKey)) {
+    const cleanedLabel = col.name.replace(/_?(?:id|fk)$/i, '').trim() || inferredFk.targetTableKey;
+    return {
+      sourceColumn: col.name,
+      fieldId: makeSafeFieldId(col.name, usedFieldIds),
+      label: humanizeIdentifier(cleanedLabel),
+      rawType: col.rawType,
+      fieldType: 'linked_record',
+      include: true,
+      required: !col.nullable,
+      isPrimaryKey: col.isPrimaryKey,
+      isAutoIncrement: col.isAutoIncrement,
+      targetTableKey: inferredFk.targetTableKey,
+      targetColumn: inferredFk.targetColumn,
+      fkSource: 'inferred',
+      allowMultiple: false,
+    };
   }
 
   // Enum / CHECK IN choices -> dropdown
@@ -137,6 +488,7 @@ export function inferFieldMapping(
 
   let fieldType: FieldType = 'short_text';
   let options: Array<{ id: string; label: string; value: string }> | undefined;
+  let isBooleanCheckbox = false;
 
   // Booleans (MySQL TINYINT(1), MSSQL BIT, PostgreSQL BOOLEAN/BOOL)
   if (
@@ -147,6 +499,7 @@ export function inferFieldMapping(
   ) {
     fieldType = 'checkboxes';
     options = YES_CHECKBOX_OPTION;
+    isBooleanCheckbox = true;
   } else if (
     baseType === 'datetime' ||
     baseType === 'datetime2' ||
@@ -193,10 +546,11 @@ export function inferFieldMapping(
   // We always keep `primaryKeyColumn` on the TableMapping so FK remapping works regardless.
   const isSurrogateAutoPk = col.isPrimaryKey && col.isAutoIncrement && /^id$|_id$/i.test(lowerName);
 
-  // Also never mark server-defaulted timestamps (created_at/updated_at) required by default.
+  // Never mark server-defaulted timestamps (created_at/updated_at) or single-option boolean checkboxes
+  // as required — otherwise unchecked `false`/`0` values fail FormLogic's required check!
   const isAuditTimestamp =
     /^(created_at|updated_at|deleted_at|modified_at|createdat|updatedat)$/.test(lowerName) &&
-    !!col.defaultValue;
+    (!!col.defaultValue || col.nullable);
 
   return {
     sourceColumn: col.name,
@@ -205,38 +559,120 @@ export function inferFieldMapping(
     rawType: col.rawType,
     fieldType,
     include: !isSurrogateAutoPk,
-    required: !col.nullable && !col.isAutoIncrement && !isAuditTimestamp,
+    required: !isBooleanCheckbox && !col.nullable && !col.isAutoIncrement && !isAuditTimestamp,
     isPrimaryKey: col.isPrimaryKey,
     isAutoIncrement: col.isAutoIncrement,
     options,
   };
 }
 
-/** Pick the best human-readable display field(s) when another table links to this table. */
-export function pickDefaultDisplayFieldIds(fields: FieldMapping[]): string[] {
+/**
+ * Pick the best human-readable display field(s) (1 or 2) when another form links to this form
+ * via a related-form select box.
+ */
+export function pickDefaultDisplayFieldIds(
+  fields: FieldMapping[],
+  primaryKeyColumn?: string | null,
+): string[] {
   const active = fields.filter((f) => f.include && f.fieldType !== 'linked_record');
   if (active.length === 0) return [];
 
-  const preferred = [
-    /^(full_name|display_name|name|title|company_name|department_name|subject|label)$/,
-    /name|title|subject|number|code|sku/,
-    /email/,
-  ];
-  for (const re of preferred) {
-    const match = active.find((f) => re.test(f.sourceColumn.toLowerCase()));
-    if (match) return [match.fieldId];
+  const nonBool = active.filter((f) => f.fieldType !== 'checkboxes');
+  const pool = nonBool.length > 0 ? nonBool : active;
+
+  // 1. Paired person name (`first_name` + `last_name`) -> "Sarah Chen"
+  const firstName = pool.find((f) => /^(?:first_name|firstname|given_name)$/.test(toSnakeLower(f.sourceColumn)));
+  const lastName = pool.find((f) => /^(?:last_name|lastname|surname|family_name)$/.test(toSnakeLower(f.sourceColumn)));
+  if (firstName && lastName && firstName.fieldId !== lastName.fieldId) {
+    return [firstName.fieldId, lastName.fieldId];
   }
-  const textField = active.find((f) => f.fieldType === 'short_text' || f.fieldType === 'email');
-  return [textField ? textField.fieldId : active[0].fieldId];
+
+  // 2. Primary human title / name column (avoiding secondary attributes like `operator_name` or `reason_name`)
+  const exactNameRe = /^(?:full_name|display_name|name|title|company_name|department_name|site_name|location_name|shift_name|product_name|customer_name|equipment_name|subject|label|username)$/;
+  const exactName = pool.find((f) => exactNameRe.test(toSnakeLower(f.sourceColumn)));
+
+  // Concise code / external ID / date qualifier (paired nicely with a name or model)
+  const codeRe = /^(?:code|sku|external_id|order_number|ticket_number|asset_tag|unit_code|shift_date)$/;
+  const codeField = pool.find((f) => codeRe.test(toSnakeLower(f.sourceColumn)));
+
+  if (codeField && exactName && codeField.fieldId !== exactName.fieldId) {
+    return [codeField.fieldId, exactName.fieldId];
+  }
+  if (exactName) {
+    return [exactName.fieldId];
+  }
+
+  // 3. Code + model (e.g. `pit_software.equipment`: `external_id` + `model` -> "T-412 - Komatsu 830E")
+  const modelField = pool.find((f) => /^(?:model|category|type|slug)$/.test(toSnakeLower(f.sourceColumn)));
+  if (codeField && modelField && codeField.fieldId !== modelField.fieldId) {
+    return [codeField.fieldId, modelField.fieldId];
+  }
+  if (codeField) {
+    return [codeField.fieldId];
+  }
+
+  // 4. Natural non-auto-increment text PK (e.g. `mine_management.equipment.id = 'DT-1042'`)
+  if (primaryKeyColumn) {
+    const pkField = pool.find(
+      (f) =>
+        f.sourceColumn.toLowerCase() === primaryKeyColumn.toLowerCase() &&
+        !f.isAutoIncrement &&
+        f.fieldType === 'short_text',
+    );
+    if (pkField) {
+      return [pkField.fieldId];
+    }
+  }
+
+  // 5. General title / email / first short text fallback
+  const secondaryName = pool.find((f) => /(?:title|subject|number|code|sku|model|email)/.test(toSnakeLower(f.sourceColumn)));
+  if (secondaryName) return [secondaryName.fieldId];
+
+  const textField = pool.find((f) => f.fieldType === 'short_text' || f.fieldType === 'email');
+  return [textField ? textField.fieldId : pool[0].fieldId];
 }
 
-/** Build initial editable TableMapping[] from an ImportedSchema. */
+/**
+ * Transitively expand a set of selected table keys to include all parent/lookup tables
+ * referenced by active `linked_record` fields so zero foreign-key select boxes break.
+ */
+export function expandRelatedTableKeys(
+  tables: TableMapping[],
+  seedKeys: Set<string>,
+  maxCount = 50,
+): Set<string> {
+  const byKey = new Map(tables.map((t) => [t.tableKey, t]));
+  const selected = new Set<string>(seedKeys);
+  const queue = Array.from(seedKeys);
+
+  while (queue.length > 0 && selected.size < maxCount) {
+    const key = queue.shift()!;
+    const tbl = byKey.get(key);
+    if (!tbl) continue;
+    for (const f of tbl.fields) {
+      if (!f.include || f.fieldType !== 'linked_record' || !f.targetTableKey) continue;
+      if (selected.has(f.targetTableKey)) continue;
+      if (!byKey.has(f.targetTableKey)) continue;
+      if (selected.size >= maxCount) break;
+      selected.add(f.targetTableKey);
+      queue.push(f.targetTableKey);
+    }
+  }
+  return selected;
+}
+
+/** Build initial editable TableMapping[] from an ImportedSchema, with explicit + implicit FKs. */
 export function buildInitialTableMappings(schema: ImportedSchema): TableMapping[] {
   const allKeys = new Set(schema.tables.map((t) => t.key));
+  const targetIndex = buildTargetTableIndex(schema.tables);
 
-  return schema.tables.map((tbl: ImportedTable) => {
+  const mappings: TableMapping[] = schema.tables.map((tbl: ImportedTable) => {
     const usedFieldIds = new Set<string>();
-    const fields = tbl.columns.map((col) => inferFieldMapping(col, allKeys, usedFieldIds));
+    const isSystem = isSystemOrMigrationTable(tbl.name);
+    const fields = tbl.columns.map((col) => {
+      const inferred = isSystem ? null : inferImplicitForeignKey(tbl, col, targetIndex);
+      return inferFieldMapping(col, allKeys, usedFieldIds, inferred);
+    });
 
     // Guarantee at least one included field if all columns were surrogate PKs.
     if (!fields.some((f) => f.include) && fields.length > 0) {
@@ -252,16 +688,58 @@ export function buildInitialTableMappings(schema: ImportedSchema): TableMapping[
     return {
       tableKey: tbl.key,
       sourceName: tbl.name,
+      schemaName: tbl.schemaName,
       formTitle: humanizeIdentifier(tbl.name),
       description: `Imported from ${tbl.schemaName ? `${tbl.schemaName}.` : ''}${tbl.name} (${schema.dialect})`,
-      include: true,
+      include: !isSystem,
+      isSystemTable: isSystem,
       primaryKeyColumn: pkCol,
-      displayFieldIds: pickDefaultDisplayFieldIds(fields),
+      displayFieldIds: pickDefaultDisplayFieldIds(fields, pkCol),
       fields,
       initialRows: tbl.rows,
       totalRowCount: tbl.totalRowCount ?? (tbl.rows.length > 0 ? tbl.rows.length : undefined),
     };
   });
+
+  // For large databases (> 50 non-system tables), auto-pick an intelligent starter set <= 50
+  // prioritizing populated operational tables + all of their transitive FK lookup tables!
+  const nonSystem = mappings.filter((m) => !m.isSystemTable);
+  if (nonSystem.length > 50) {
+    const incomingRefCount = new Map<string, number>();
+    for (const m of nonSystem) {
+      for (const f of m.fields) {
+        if (f.include && f.fieldType === 'linked_record' && f.targetTableKey) {
+          incomingRefCount.set(f.targetTableKey, (incomingRefCount.get(f.targetTableKey) ?? 0) + 1);
+        }
+      }
+    }
+
+    const scored = [...nonSystem].sort((a, b) => {
+      const rowsA = a.totalRowCount ?? a.initialRows.length;
+      const rowsB = b.totalRowCount ?? b.initialRows.length;
+      const score = (m: TableMapping, rows: number): number => {
+        let s = 0;
+        if (rows > 0) s += 1000;
+        if (rows > 25_000) s -= 400; // deprioritize giant telemetry archive tables in starter selection
+        s += Math.min(500, (incomingRefCount.get(m.tableKey) ?? 0) * 60);
+        if (m.fields.some((f) => f.include && f.fieldType === 'linked_record')) s += 80;
+        return s;
+      };
+      return score(b, rowsB) - score(a, rowsA);
+    });
+
+    const seeds = new Set(scored.slice(0, 32).map((m) => m.tableKey));
+    const chosen = expandRelatedTableKeys(mappings, seeds, 50);
+    for (const m of scored) {
+      if (chosen.size >= 50) break;
+      chosen.add(m.tableKey);
+    }
+    for (const m of mappings) {
+      m.include = !m.isSystemTable && chosen.has(m.tableKey);
+    }
+  }
+
+  return mappings;
 }
 
 export interface CyclicLinkInfo {
@@ -383,28 +861,78 @@ export function buildMigrationPack(
   }
 
   const includedKeys = new Set(included.map((t) => t.tableKey));
-  const displayFieldsByTable = new Map(included.map((t) => [t.tableKey, t.displayFieldIds]));
+  const tableByKey = new Map(included.map((t) => [t.tableKey, t]));
 
-  const packForms: MigrationPackForm[] = included.map((t) => {
+  // Pre-compute final safe field IDs for each table so displayFieldIds / searchFieldIds / relatedColumnFieldIds match 100%.
+  const resolvedFieldIdsByTable = new Map<string, Map<string, string>>();
+  for (const t of included) {
     const usedIds = new Set<string>();
-    const activeFields = t.fields.filter((f) => f.include).slice(0, 200);
-    const packFields: MigrationPackField[] = activeFields.map((f, idx) => {
+    const map = new Map<string, string>();
+    for (const f of t.fields.filter((x) => x.include).slice(0, 200)) {
       const safeId =
         ID_RE.test(f.fieldId) && !isReservedExpressionName(f.fieldId) && !usedIds.has(f.fieldId)
           ? (usedIds.add(f.fieldId), f.fieldId)
           : makeSafeFieldId(f.fieldId || f.sourceColumn, usedIds);
+      map.set(f.sourceColumn, safeId);
+    }
+    resolvedFieldIdsByTable.set(t.tableKey, map);
+  }
 
+  const getTargetDisplayAndSearch = (targetTableKey: string): { displayIds: string[]; searchIds: string[] } => {
+    const target = tableByKey.get(targetTableKey);
+    const idMap = resolvedFieldIdsByTable.get(targetTableKey);
+    if (!target || !idMap) return { displayIds: [], searchIds: [] };
+    const validIds = new Set(idMap.values());
+    const displayIds = target.displayFieldIds.filter((id) => validIds.has(id));
+    if (displayIds.length === 0) {
+      const fallback = pickDefaultDisplayFieldIds(target.fields, target.primaryKeyColumn).filter((id) => validIds.has(id));
+      displayIds.push(...fallback);
+    }
+    const searchableTypes = new Set<FieldType>(['short_text', 'email', 'phone', 'url', 'number', 'dropdown']);
+    const searchSet = new Set<string>(displayIds);
+    for (const f of target.fields) {
+      if (searchSet.size >= 4) break;
+      if (!f.include || !searchableTypes.has(f.fieldType)) continue;
+      const fid = idMap.get(f.sourceColumn);
+      if (fid) searchSet.add(fid);
+    }
+    return { displayIds, searchIds: Array.from(searchSet) };
+  };
+
+  const packForms: MigrationPackForm[] = included.map((t) => {
+    const idMap = resolvedFieldIdsByTable.get(t.tableKey)!;
+    const activeFields = t.fields.filter((f) => f.include).slice(0, 200);
+    const childRelatedCols = activeFields
+      .filter((f) => f.fieldType !== 'long_text' && f.fieldType !== 'linked_record')
+      .slice(0, 4)
+      .map((f) => idMap.get(f.sourceColumn)!)
+      .filter(Boolean);
+
+    const packFields: MigrationPackField[] = activeFields.map((f, idx) => {
+      const safeId = idMap.get(f.sourceColumn)!;
+      const cleanLabel = f.label.trim() || humanizeIdentifier(f.sourceColumn);
       const properties: Record<string, unknown> = {};
+      let placeholder: string | undefined;
+
       if (f.fieldType === 'linked_record' && f.targetTableKey && includedKeys.has(f.targetTableKey)) {
-        const targetDisplay = displayFieldsByTable.get(f.targetTableKey) ?? [];
+        const target = tableByKey.get(f.targetTableKey);
+        const { displayIds, searchIds } = getTargetDisplayAndSearch(f.targetTableKey);
         properties.targetFormId = `@pack:${f.targetTableKey}`;
-        if (targetDisplay.length > 0) {
-          properties.displayFieldIds = targetDisplay;
-          properties.searchFieldIds = targetDisplay;
+        if (displayIds.length > 0) {
+          properties.displayFieldIds = displayIds;
+        }
+        if (searchIds.length > 0) {
+          properties.searchFieldIds = searchIds;
         }
         if (f.allowMultiple) {
           properties.allowMultiple = true;
         }
+        properties.relatedAllowAdd = true;
+        properties.relatedAllowDelete = true;
+        if (childRelatedCols.length > 0) {
+          properties.relatedColumnFieldIds = childRelatedCols;
+        }
+        placeholder = `Select ${target?.formTitle ?? cleanLabel}...`;
       } else if (f.fieldType === 'dropdown' || f.fieldType === 'multiple_choice' || f.fieldType === 'checkboxes') {
         properties.options = f.options && f.options.length > 0 ? f.options : YES_CHECKBOX_OPTION;
       }
@@ -418,7 +946,8 @@ export function buildMigrationPack(
       return {
         id: safeId,
         type: resolvedType,
-        label: f.label.trim() || humanizeIdentifier(f.sourceColumn),
+        label: cleanLabel,
+        ...(placeholder ? { placeholder } : {}),
         required: f.required,
         order: idx,
         properties,
@@ -441,59 +970,89 @@ export function buildMigrationPack(
     const reports: Array<Record<string, unknown>> = [];
 
     if (options.includeDashboard) {
-      // Top row: KPI record count cards for up to 4 main tables.
-      const kpiTables = included.slice(0, 4);
+      // Top row: KPI record count cards for up to 4 main tables (prefer populated tables first).
+      const rankedTables = [...included].sort((a, b) => {
+        const ra = a.totalRowCount ?? a.initialRows.length;
+        const rb = b.totalRowCount ?? b.initialRows.length;
+        if (rb !== ra) return rb - ra;
+        return 0;
+      });
+      const kpiTables = rankedTables.slice(0, 4);
       const colWidth = kpiTables.length > 0 ? Math.floor(12 / kpiTables.length) : 12;
       kpiTables.forEach((t, idx) => {
-        const spec = {
-          version: 1,
-          formId: `@pack:${t.tableKey}`,
-          measure: { op: 'count' },
-        };
         widgets.push({
           id: `kpi_${t.tableKey}`,
           kind: 'report',
           title: t.formTitle,
           layout: { x: idx * colWidth, y: 0, w: colWidth, h: 2 },
-          spec: spec as never,
-          viz: { kind: 'kpi' },
+          spec: {
+            formId: `@pack:${t.tableKey}`,
+            viz: 'kpi',
+            measure: { fn: 'count' },
+          },
         });
       });
 
-      // Second row: categorical breakdown chart if any table has a dropdown field, plus recent records list.
+      // Second row: categorical breakdown chart (dropdown field, or linked_record FK fallback) + recent records list.
       let chartTable: { table: TableMapping; field: FieldMapping } | null = null;
-      for (const t of included) {
+      for (const t of rankedTables) {
         const drop = t.fields.find((f) => f.include && f.fieldType === 'dropdown');
         if (drop) {
           chartTable = { table: t, field: drop };
           break;
         }
       }
+      if (!chartTable) {
+        for (const t of rankedTables) {
+          const fk = t.fields.find(
+            (f) => f.include && f.fieldType === 'linked_record' && f.targetTableKey && includedKeys.has(f.targetTableKey),
+          );
+          if (fk) {
+            chartTable = { table: t, field: fk };
+            break;
+          }
+        }
+      }
 
       if (chartTable) {
+        const chartFieldId =
+          resolvedFieldIdsByTable.get(chartTable.table.tableKey)?.get(chartTable.field.sourceColumn) ??
+          chartTable.field.fieldId;
         const reportSpec = {
-          version: 1,
           formId: `@pack:${chartTable.table.tableKey}`,
-          groupBy: { field: chartTable.field.fieldId },
-          measure: { op: 'count' },
+          viz: 'bar',
+          groupBy: { field: chartFieldId },
+          measure: { fn: 'count' },
+          seriesSort: 'value',
+          sort: 'desc',
+          limit: 10,
         };
         reports.push({
-          id: `rep_${chartTable.table.tableKey}_${chartTable.field.fieldId}`,
+          reportId: `rep_${chartTable.table.tableKey}_${chartFieldId}`,
+          kind: 'chart',
           name: `${chartTable.table.formTitle} by ${chartTable.field.label}`,
           spec: reportSpec,
-          viz: { kind: 'bar' },
         });
         widgets.push({
           id: `chart_${chartTable.table.tableKey}`,
           kind: 'report',
           title: `${chartTable.table.formTitle} by ${chartTable.field.label}`,
           layout: { x: 0, y: 2, w: 6, h: 4 },
-          spec: reportSpec as never,
-          viz: { kind: 'bar' },
+          spec: reportSpec,
         });
       }
 
-      const listTable = included[included.length - 1];
+      const listTable = rankedTables[0] ?? included[included.length - 1];
+      const listIdMap = resolvedFieldIdsByTable.get(listTable.tableKey);
+      const nonFkListFields = listTable.fields.filter(
+        (f) => f.include && f.fieldType !== 'long_text' && f.fieldType !== 'linked_record',
+      );
+      const listSourceFields = nonFkListFields.length > 0
+        ? nonFkListFields
+        : listTable.fields.filter((f) => f.include && f.fieldType !== 'long_text');
+      const listCols = listSourceFields
+        .slice(0, 3)
+        .map((f) => listIdMap?.get(f.sourceColumn) ?? f.fieldId);
       widgets.push({
         id: `list_${listTable.tableKey}`,
         kind: 'list',
@@ -501,11 +1060,10 @@ export function buildMigrationPack(
         layout: { x: chartTable ? 6 : 0, y: 2, w: chartTable ? 6 : 12, h: 4 },
         list: {
           formId: `@pack:${listTable.tableKey}`,
+          ...(listCols[0] ? { titleField: listCols[0] } : {}),
+          ...(listCols[1] ? { subtitleField: listCols[1] } : {}),
+          ...(listCols[2] ? { metaField: listCols[2] } : {}),
           limit: 8,
-          columns: listTable.fields
-            .filter((f) => f.include && f.fieldType !== 'long_text')
-            .slice(0, 4)
-            .map((f) => f.fieldId),
         },
       });
     }
@@ -530,6 +1088,7 @@ export function buildMigrationPack(
       ...(options.includeDashboard && widgets.length > 0
         ? {
             customScreen: {
+              enabled: true,
               kind: 'dashboard',
               dashboard: {
                 version: 1,
@@ -563,6 +1122,20 @@ export function normalizePkKey(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const s = String(value).trim();
   return s === '' ? null : s;
+}
+
+/** Coerce a serialized Node Buffer (`{ type: 'Buffer', data: [1] }`) if received from a local bridge. */
+function unwrapBufferLike(val: unknown): unknown {
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const rec = val as { type?: unknown; data?: unknown };
+    if (rec.type === 'Buffer' && Array.isArray(rec.data)) {
+      if (rec.data.length === 1 && typeof rec.data[0] === 'number') {
+        return rec.data[0];
+      }
+      return rec.data.map((b) => Number(b).toString(16).padStart(2, '0')).join('');
+    }
+  }
+  return val;
 }
 
 /**
@@ -603,7 +1176,7 @@ export function prepareBatchImportRow(
     const field = fieldsById.get(fieldId);
     if (!field) continue;
 
-    const rawVal = readVal(sourceCol);
+    const rawVal = unwrapBufferLike(readVal(sourceCol));
     if (rawVal === null || rawVal === undefined || rawVal === '') continue;
 
     if (field.fieldType === 'linked_record') {
@@ -645,6 +1218,20 @@ export function prepareBatchImportRow(
       const s = String(rawVal).trim();
       const isoDate = s.match(/^(\d{4}-\d{2}-\d{2})/);
       answers[fieldId] = isoDate ? isoDate[1] : s;
+      continue;
+    }
+
+    if (field.fieldType === 'datetime') {
+      const s = String(rawVal).trim();
+      const isoDt = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+      answers[fieldId] = isoDt ? `${isoDt[1]}T${isoDt[2]}` : s;
+      continue;
+    }
+
+    if (field.fieldType === 'time') {
+      const s = String(rawVal).trim();
+      const timeMatch = s.match(/^(\d{2}:\d{2})/);
+      answers[fieldId] = timeMatch ? timeMatch[1] : s;
       continue;
     }
 

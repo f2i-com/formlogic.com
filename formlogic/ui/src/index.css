@@ -95,6 +95,13 @@
     }
   }
 
+  /* Prevent single-line native <select> elements from wrapping option text or
+     pushing the dropdown arrow onto a second line in Chromium/WebView2. */
+  select:not([multiple]):not([size]) {
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   /* A native select's list of choices is drawn by the browser, not by the page. In the dark
      theme it kept the browser's light list while the choices kept the select's light text, and
      a select with a see-through background (dark:bg-white/[0.04]) gave the list no colour of

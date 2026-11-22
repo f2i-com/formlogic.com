@@ -13,11 +13,14 @@ export type SqlDialect =
 
 export type ResolvedDialect = Exclude<SqlDialect, 'auto'>;
 
+export type ForeignKeySource = 'explicit' | 'inferred' | 'manual';
+
 export interface ImportedForeignKey {
   column: string;
   targetTable: string;
   targetColumn: string;
   onDelete?: string;
+  source?: ForeignKeySource;
 }
 
 export interface ImportedColumn {
@@ -85,6 +88,8 @@ export interface FieldMapping {
   targetTableKey?: string;
   /** Target primary key column name when fieldType === 'linked_record'. */
   targetColumn?: string;
+  /** How this foreign-key relationship was discovered ('explicit' SQL FK, 'inferred' naming match, or 'manual'). */
+  fkSource?: ForeignKeySource;
   /** Whether linked_record allows multiple selections. */
   allowMultiple?: boolean;
 }
@@ -92,9 +97,12 @@ export interface FieldMapping {
 export interface TableMapping {
   tableKey: string;
   sourceName: string;
+  schemaName?: string;
   formTitle: string;
   description: string;
   include: boolean;
+  /** True for migration/internal tables (e.g. _phinxlog, sysdiagrams, __EFMigrationsHistory). */
+  isSystemTable?: boolean;
   /** Source column acting as legacy PK for FK remapping during data import. */
   primaryKeyColumn: string | null;
   /** FormLogic field IDs used as display labels when another form links here. */
@@ -139,6 +147,8 @@ export interface LocalBridgeConnection {
   password: string;
   filePath: string;
   ssl: boolean;
+  /** MSSQL Windows Integrated Authentication (optional). */
+  trustedConnection?: boolean;
 }
 
 export interface LocalBridgeSession {

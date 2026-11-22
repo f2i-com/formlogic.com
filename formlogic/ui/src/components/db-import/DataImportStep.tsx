@@ -33,6 +33,7 @@ import type {
 } from '../../lib/db-import/types';
 
 interface TableDataState {
+  enabled: boolean;
   sourceLabel: string | null;
   headers: string[];
   rows: Array<Record<string, unknown>>;
@@ -90,12 +91,16 @@ function buildInitialDataStates(
         ? Array.from(new Set(initialRows.slice(0, 100).flatMap((r) => Object.keys(r))))
         : tbl.fields.map((f) => f.sourceColumn);
     const useBridge = !!schema.localBridge && initialRows.length === 0;
+    const knownRows = initialRows.length > 0 ? initialRows.length : (mapInfo?.totalRowCount ?? 0);
     out[tbl.tableKey] = {
+      enabled: initialRows.length > 0 || (useBridge && (mapInfo?.totalRowCount === undefined || knownRows > 0)),
       sourceLabel:
         initialRows.length > 0
           ? `${initialRows.length.toLocaleString()} rows preloaded from ${schema.sourceLabel}`
           : useBridge
-            ? `Streaming from ${schema.sourceLabel} (local bridge)`
+            ? knownRows > 0
+              ? `${knownRows.toLocaleString()} rows ready via ${schema.sourceLabel} (local bridge)`
+              : `0 rows detected in ${schema.sourceLabel} (local bridge)`
             : null,
       headers,
       rows: initialRows,
@@ -146,9 +151,22 @@ export function DataImportStep({
   const [progressByTable, setProgressByTable] = useState<Record<string, TableRunProgress>>({});
   const [expandedTable, setExpandedTable] = useState<string | null>(null);
   const [batchSize, setBatchSize] = useState<number>(250);
+  const [largeTableRowCap, setLargeTableRowCap] = useState<number>(0);
   const [running, setRunning] = useState(false);
   const [paused, setPaused] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+
+  // Tables targeted by at least one foreign-key select box — always import 100% of their rows
+  // even when a row cap is set on large fact/telemetry tables so select boxes stay complete!
+  const referencedParentKeys = useMemo(() => {
+    const parents = new Set<string>();
+    for (const t of orderedTables) {
+      for (const info of Object.values(t.linkedFieldTargets)) {
+        parents.add(info.targetTableKey);
+      }
+    }
+    return parents;
+  }, [orderedTables]);
 
   const pauseRef = useRef(false);
   const cancelRef = useRef(false);
@@ -195,6 +213,7 @@ export function DataImportStep({
         table.primaryKeyColumn;
 
       updateTableData(table.tableKey, () => ({
+        enabled: true,
         sourceLabel: `${file.name} (${rows.length.toLocaleString()} rows)`,
         headers,
         rows,
@@ -225,6 +244,7 @@ export function DataImportStep({
           if (!target) continue;
           const headers = Array.from(new Set(pt.rows.slice(0, 100).flatMap((r) => Object.keys(r))));
           updateTableData(target.tableKey, () => ({
+            enabled: true,
             sourceLabel: `${filename} (${pt.rows.length.toLocaleString()} rows)`,
             headers,
             rows: pt.rows,
@@ -255,6 +275,7 @@ export function DataImportStep({
         target.primaryKeyColumn;
 
       updateTableData(target.tableKey, () => ({
+        enabled: true,
         sourceLabel: `${filename} (${parsed.rows.length.toLocaleString()} rows)`,
         headers: parsed.headers,
         rows: parsed.rows,
@@ -289,25 +310,34 @@ export function DataImportStep({
     }
   };
 
+  const effectiveCapForTable = (tableKey: string): number | null => {
+    if (largeTableRowCap <= 0) return null;
+    if (referencedParentKeys.has(tableKey)) return null;
+    return largeTableRowCap;
+  };
+
   const totalReadyRows = useMemo(() => {
     let sum = 0;
     for (const t of orderedTables) {
       const st = dataByTable[t.tableKey];
-      if (!st) continue;
-      if (st.rows.length > 0) sum += st.rows.length;
-      else if (st.useLocalBridge) {
+      if (!st || !st.enabled) continue;
+      const cap = largeTableRowCap > 0 && !referencedParentKeys.has(t.tableKey) ? largeTableRowCap : null;
+      if (st.rows.length > 0) {
+        sum += cap ? Math.min(st.rows.length, cap) : st.rows.length;
+      } else if (st.useLocalBridge) {
         const mapInfo = mappings.find((m) => m.tableKey === t.tableKey);
-        sum += mapInfo?.totalRowCount ?? 0;
+        const count = mapInfo?.totalRowCount ?? 0;
+        sum += cap ? Math.min(count, cap) : count;
       }
     }
     return sum;
-  }, [orderedTables, dataByTable, mappings]);
+  }, [orderedTables, dataByTable, mappings, largeTableRowCap, referencedParentKeys]);
 
   const hasAnyDataSource = useMemo(
     () =>
       orderedTables.some((t) => {
         const st = dataByTable[t.tableKey];
-        return st && (st.rows.length > 0 || st.useLocalBridge);
+        return st && st.enabled && (st.rows.length > 0 || st.useLocalBridge);
       }),
     [orderedTables, dataByTable],
   );
@@ -328,10 +358,12 @@ export function DataImportStep({
     for (const t of orderedTables) {
       const st = dataByTable[t.tableKey];
       const mapInfo = mappings.find((m) => m.tableKey === t.tableKey);
+      const rawTotal = st?.rows.length || mapInfo?.totalRowCount || 0;
+      const cap = effectiveCapForTable(t.tableKey);
       initProgress[t.tableKey] = {
         status: 'idle',
         processed: 0,
-        total: st?.rows.length || mapInfo?.totalRowCount || 0,
+        total: st?.enabled ? (cap ? Math.min(rawTotal, cap) : rawTotal) : 0,
         created: 0,
         failed: 0,
         linksPatched: 0,
@@ -347,7 +379,8 @@ export function DataImportStep({
       for (const table of orderedTables) {
         if (cancelRef.current) break;
         const st = dataByTable[table.tableKey];
-        if (!st || (st.rows.length === 0 && !st.useLocalBridge)) continue;
+        if (!st || !st.enabled || (st.rows.length === 0 && !st.useLocalBridge)) continue;
+        const rowCap = effectiveCapForTable(table.tableKey);
 
         const deferredFieldIds = cyclicByTable.get(table.tableKey) ?? new Set<string>();
         const deferList = Array.from(deferredFieldIds);
@@ -441,15 +474,18 @@ export function DataImportStep({
           let offset = 0;
           let hasMore = true;
           while (hasMore && !cancelRef.current) {
+            if (rowCap !== null && offset >= rowCap) break;
             await waitWhilePaused();
             if (cancelRef.current) break;
+            const remaining = rowCap !== null ? Math.min(batchSize, rowCap - offset) : batchSize;
             try {
               const batch = await fetchLocalTableBatch(
                 schema.localBridge,
                 table.sourceName,
                 mapSchemaTbl?.schemaName,
                 offset,
-                batchSize,
+                remaining,
+                st.pkColumn,
               );
               if (batch.rows.length === 0) break;
               await processChunk(batch.rows, offset);
@@ -467,8 +503,9 @@ export function DataImportStep({
           }
         } else {
           // Chunk in-memory rows into batches of `batchSize`.
-          for (let offset = 0; offset < st.rows.length; offset += batchSize) {
-            const ok = await processChunk(st.rows.slice(offset, offset + batchSize), offset);
+          const sourceRows = rowCap !== null ? st.rows.slice(0, rowCap) : st.rows;
+          for (let offset = 0; offset < sourceRows.length; offset += batchSize) {
+            const ok = await processChunk(sourceRows.slice(offset, offset + batchSize), offset);
             if (!ok) break;
           }
         }
@@ -676,11 +713,29 @@ export function DataImportStep({
               value={batchSize}
               disabled={running}
               onChange={(e) => setBatchSize(Number(e.target.value))}
-              className="h-9 cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              className="cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             >
               <option value={100}>100 rows / batch</option>
               <option value={250}>250 rows / batch</option>
               <option value={500}>500 rows / batch</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <label htmlFor="row-cap-select" className="text-xs font-semibold text-gray-700 dark:text-slate-300">
+              Row limit
+            </label>
+            <select
+              id="row-cap-select"
+              value={largeTableRowCap}
+              disabled={running}
+              onChange={(e) => setLargeTableRowCap(Number(e.target.value))}
+              title="Referenced lookup/parent tables always import 100% so foreign-key select boxes stay complete."
+              className="cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+            >
+              <option value={0}>All rows</option>
+              <option value={250}>Up to 250 / large table (all parents)</option>
+              <option value={1000}>Up to 1,000 / large table (all parents)</option>
+              <option value={5000}>Up to 5,000 / large table (all parents)</option>
             </select>
           </div>
           <span className="text-xs text-gray-500 dark:text-slate-400 tabular-nums">
@@ -733,29 +788,34 @@ export function DataImportStep({
       </div>
 
       {/* Overall progress bar when active or finished */}
-      {overall.processed > 0 && (
-        <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="font-semibold text-gray-900 dark:text-white">
-              {running ? (paused ? 'Import paused' : 'Importing batches…') : 'Import summary'}
-            </span>
-            <span className="tabular-nums text-gray-600 dark:text-slate-300">
-              {overall.created.toLocaleString()} created · {overall.failed.toLocaleString()} failed · {overall.processed.toLocaleString()} / {Math.max(overall.total, overall.processed).toLocaleString()} processed
-            </span>
+      {(running || overall.processed > 0) && (() => {
+        const anyCancelled = Object.values(progressByTable).some((p) => p.status === 'cancelled');
+        const denom = Math.max(1, overall.total, overall.processed);
+        const pct = !running && !anyCancelled && overall.processed >= overall.total && overall.processed > 0
+          ? 100
+          : Math.min(100, Math.round((overall.processed / denom) * 100));
+        return (
+          <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-gray-900 dark:text-white">
+                {running ? (paused ? 'Import paused' : 'Importing batches…') : anyCancelled ? 'Import stopped' : 'Import complete'}
+              </span>
+              <span className="tabular-nums text-gray-600 dark:text-slate-300">
+                {overall.created.toLocaleString()} created · {overall.failed.toLocaleString()} failed · {overall.processed.toLocaleString()} / {Math.max(overall.total, overall.processed).toLocaleString()} processed
+              </span>
+            </div>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
+              <div
+                className={cn(
+                  'h-full rounded-full transition-[width] duration-150',
+                  overall.failed > 0 ? 'bg-amber-500' : 'bg-emerald-500',
+                )}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
           </div>
-          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-slate-800">
-            <div
-              className={cn(
-                'h-full rounded-full transition-all duration-300',
-                overall.failed > 0 ? 'bg-amber-500' : 'bg-emerald-500',
-              )}
-              style={{
-                width: `${Math.min(100, Math.round((overall.processed / Math.max(1, overall.total, overall.processed)) * 100))}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Per-table queue in topological order */}
       <div className="space-y-3">
@@ -772,13 +832,36 @@ export function DataImportStep({
             >
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                 <div className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(st?.enabled)}
+                    disabled={running || (!st?.rows.length && !st?.useLocalBridge)}
+                    aria-label={`Import data for ${table.formTitle}`}
+                    onChange={(e) =>
+                      updateTableData(table.tableKey, (prev) => ({
+                        ...prev,
+                        enabled: e.target.checked,
+                      }))
+                    }
+                    className="h-4 w-4 shrink-0 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40"
+                  />
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-xs font-bold text-primary-700 dark:bg-primary-500/15 dark:text-primary-300">
                     {idx + 1}
                   </span>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-sm font-semibold text-gray-900 dark:text-white">{table.formTitle}</span>
+                      <span className={cn('text-sm font-semibold', st?.enabled ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400')}>
+                        {table.formTitle}
+                      </span>
                       <span className="font-mono text-[11px] text-gray-500 dark:text-slate-400">({table.sourceName})</span>
+                      {referencedParentKeys.has(table.tableKey) && (
+                        <Badge variant="default" size="sm">Lookup parent</Badge>
+                      )}
+                      {Object.keys(table.linkedFieldTargets).length > 0 && (
+                        <Badge variant="primary" size="sm">
+                          {Object.keys(table.linkedFieldTargets).length} FK {Object.keys(table.linkedFieldTargets).length === 1 ? 'select' : 'selects'}
+                        </Badge>
+                      )}
                       {cyclicCount > 0 && (
                         <Badge variant="info" size="sm">
                           <RefreshCw className="mr-1 inline h-3 w-3" aria-hidden="true" />
@@ -845,6 +928,7 @@ export function DataImportStep({
                       onClick={() =>
                         updateTableData(table.tableKey, (prev) => ({
                           ...prev,
+                          enabled: false,
                           sourceLabel: null,
                           rows: [],
                           useLocalBridge: false,
@@ -903,7 +987,7 @@ export function DataImportStep({
                             pkColumn: e.target.value || null,
                           }))
                         }
-                        className="h-9 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        className="w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                       >
                         <option value="">None</option>
                         {st.headers.map((h) => (
@@ -911,7 +995,26 @@ export function DataImportStep({
                         ))}
                       </select>
                     </div>
-                    <div className="flex items-end justify-end">
+                    <div className="flex flex-wrap items-end justify-end gap-3">
+                      {materialized.appSlug ? (
+                        <a
+                          href={`/app/${materialized.appSlug}/form/${table.formId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-9 items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-400"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                          Open CRUD form
+                        </a>
+                      ) : (
+                        <Link
+                          to={`/form/${table.formId}`}
+                          className="inline-flex h-9 items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline dark:text-emerald-400"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                          Open form
+                        </Link>
+                      )}
                       <Link
                         to={`/responses/${table.formId}`}
                         className="inline-flex h-9 items-center gap-1.5 text-xs font-semibold text-primary-600 hover:underline dark:text-primary-400"
@@ -939,7 +1042,7 @@ export function DataImportStep({
                               columnToFieldId: { ...prev.columnToFieldId, [col]: e.target.value },
                             }))
                           }
-                          className="h-7 max-w-[140px] cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 text-[11px] text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          className="max-w-[140px] cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 py-1 text-[11px] text-gray-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                         >
                           <option value="__skip__">Skip column</option>
                           {table.fields

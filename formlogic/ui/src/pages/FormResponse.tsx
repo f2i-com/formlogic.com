@@ -713,6 +713,7 @@ export function FieldResponse({
                 value={value}
                 onChange={onChange}
                 primaryColor={primaryColor}
+                placeholder={field.placeholder || `Select ${field.label}...`}
                 lookup={ownedLookup}
               />
             </div>

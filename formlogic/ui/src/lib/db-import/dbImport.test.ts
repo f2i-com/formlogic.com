@@ -4,7 +4,14 @@ import { readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseSqlSchema, detectSchemaDialect } from './sqlParser';
-import { buildInitialTableMappings, buildMigrationPack, prepareBatchImportRow, topologicalSortTables } from './mapper';
+import {
+  buildInitialTableMappings,
+  buildMigrationPack,
+  expandRelatedTableKeys,
+  isSystemOrMigrationTable,
+  prepareBatchImportRow,
+  topologicalSortTables,
+} from './mapper';
 import { parseDelimitedText, parseJsonDataText } from './dataParser';
 import { isSqliteBinary, readSqliteFile } from './sqliteReader';
 import { assertLoopbackBridgeUrl } from './localBridge';
@@ -220,5 +227,202 @@ describe('Database Import — Multi-dialect SQL, Prisma, CSV/JSON & SQLite parse
     expect(assertLoopbackBridgeUrl('http://localhost:17985')).toBe('http://localhost:17985');
     expect(() => assertLoopbackBridgeUrl('https://evil.example.com:17985')).toThrow(/local-only/i);
     expect(() => assertLoopbackBridgeUrl('http://192.168.1.50:17985')).toThrow(/local-only/i);
+  });
+
+  it('auto-matches implicit foreign keys with PK type compatibility, picks rich select labels, and keeps boolean checkboxes optional', () => {
+    const miningSql = `
+      CREATE TABLE _phinxlog (version BIGINT PRIMARY KEY, migration_name VARCHAR(100));
+      CREATE TABLE equipment_types (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(64) NOT NULL,
+        category ENUM('truck','excavator','auxiliary') NOT NULL
+      );
+      CREATE TABLE locations (
+        id VARCHAR(32) PRIMARY KEY,
+        name VARCHAR(64) NOT NULL
+      );
+      CREATE TABLE reason_codes (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        code VARCHAR(32) NOT NULL,
+        name VARCHAR(128) NOT NULL
+      );
+      CREATE TABLE users (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        username VARCHAR(64) NOT NULL,
+        display_name VARCHAR(128) NOT NULL
+      );
+      CREATE TABLE shifts (
+        id INT PRIMARY KEY,
+        shift_date DATE NOT NULL,
+        shift_name VARCHAR(16) NOT NULL,
+        is_live TINYINT(1) NOT NULL DEFAULT 0
+      );
+      CREATE TABLE equipment (
+        id VARCHAR(32) PRIMARY KEY,
+        equipment_type_id INT NOT NULL,
+        reason_code_id INT NULL,
+        current_location_id VARCHAR(32) NULL,
+        destination_location_id VARCHAR(32) NULL,
+        operator_id VARCHAR(32) NULL,
+        operator_name VARCHAR(64) NULL
+      );
+      CREATE TABLE shift_loads (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        shift_id INT NOT NULL,
+        truck_id VARCHAR(32) NOT NULL,
+        excavator_id VARCHAR(32) NOT NULL,
+        tonnes FLOAT NOT NULL
+      );
+    `;
+
+    const schema = parseSqlSchema(miningSql, 'mysql', 'mine_management.sql');
+    const mappings = buildInitialTableMappings(schema);
+
+    // System/migration table auto-excluded
+    expect(isSystemOrMigrationTable('_phinxlog')).toBe(true);
+    expect(mappings.find((m) => m.sourceName === '_phinxlog')?.include).toBe(false);
+
+    // Boolean TINYINT(1) NOT NULL defaults to required: false so unchecked `false`/`0` saves cleanly
+    const shifts = mappings.find((m) => m.tableKey === 'shifts')!;
+    const isLiveField = shifts.fields.find((f) => f.sourceColumn === 'is_live')!;
+    expect(isLiveField.fieldType).toBe('checkboxes');
+    expect(isLiveField.required).toBe(false);
+    expect(shifts.displayFieldIds).toEqual(['shift_date', 'shift_name']);
+
+    // Smart code + name label pair on reason_codes
+    const reasonCodes = mappings.find((m) => m.tableKey === 'reason_codes')!;
+    expect(reasonCodes.displayFieldIds).toEqual(['code', 'name']);
+
+    // Equipment has natural string PK `id` and NO dedicated `name` -> uses `id`, NOT `operator_name`!
+    const equipment = mappings.find((m) => m.tableKey === 'equipment')!;
+    expect(equipment.displayFieldIds).toEqual(['id']);
+    expect(equipment.fields.find((f) => f.sourceColumn === 'equipment_type_id')?.targetTableKey).toBe('equipment_types');
+    expect(equipment.fields.find((f) => f.sourceColumn === 'reason_code_id')?.targetTableKey).toBe('reason_codes');
+    expect(equipment.fields.find((f) => f.sourceColumn === 'current_location_id')?.targetTableKey).toBe('locations');
+    expect(equipment.fields.find((f) => f.sourceColumn === 'destination_location_id')?.targetTableKey).toBe('locations');
+    expect(equipment.fields.find((f) => f.sourceColumn === 'equipment_type_id')?.fkSource).toBe('inferred');
+
+    // Type-safety guard: equipment.operator_id (VARCHAR) must NOT falsely link to users.id (INT)!
+    const opField = equipment.fields.find((f) => f.sourceColumn === 'operator_id')!;
+    expect(opField.fieldType).toBe('short_text');
+    expect(opField.targetTableKey).toBeUndefined();
+
+    // Role aliases: truck_id and excavator_id (VARCHAR) match equipment (VARCHAR PK)!
+    const shiftLoads = mappings.find((m) => m.tableKey === 'shift_loads')!;
+    expect(shiftLoads.fields.find((f) => f.sourceColumn === 'shift_id')?.targetTableKey).toBe('shifts');
+    expect(shiftLoads.fields.find((f) => f.sourceColumn === 'truck_id')?.targetTableKey).toBe('equipment');
+    expect(shiftLoads.fields.find((f) => f.sourceColumn === 'excavator_id')?.targetTableKey).toBe('equipment');
+
+    // Dependency closure pulls in shifts, equipment, equipment_types, reason_codes, locations from shift_loads alone
+    const closure = expandRelatedTableKeys(mappings, new Set(['shift_loads']));
+    expect(Array.from(closure).sort()).toEqual([
+      'equipment',
+      'equipment_types',
+      'locations',
+      'reason_codes',
+      'shift_loads',
+      'shifts',
+    ]);
+
+    // Generated pack wires displayFieldIds, searchFieldIds, placeholder, and relatedAllowAdd
+    const pack = buildMigrationPack(mappings, {
+      mode: 'new_app',
+      appName: 'Mine Management CRUD',
+      appDescription: '',
+      includeDashboard: true,
+      dialectLabel: 'MySQL',
+    });
+    const shiftLoadsForm = pack.forms.find((f) => f.packFormId === 'shift_loads')!;
+    const shiftLoadsFields = shiftLoadsForm.fields as Array<{ id: string; type: string; placeholder?: string; properties?: Record<string, unknown> }>;
+    const truckField = shiftLoadsFields.find((f) => f.id === 'truck_id')!;
+    expect(truckField.type).toBe('linked_record');
+    expect(truckField.placeholder).toBe('Select Equipment...');
+    expect(truckField.properties?.targetFormId).toBe('@pack:equipment');
+    expect(truckField.properties?.displayFieldIds).toEqual(['id']);
+    expect(truckField.properties?.relatedAllowAdd).toBe(true);
+
+    // Generated dashboard widgets and reports match PackReportSpec / PackDashboardWidget contract
+    const app = (pack.apps?.[0] ?? {}) as {
+      customScreen?: { enabled?: boolean; kind?: string; dashboard?: { widgets: Array<Record<string, unknown>> } };
+      reports?: Array<Record<string, unknown>>;
+    };
+    expect(app.customScreen?.enabled).toBe(true);
+    expect(app.customScreen?.kind).toBe('dashboard');
+    const widgets = app.customScreen?.dashboard?.widgets ?? [];
+    const kpiWidget = widgets.find((w) => String(w.id).startsWith('kpi_'))!;
+    expect((kpiWidget.spec as Record<string, unknown>)?.viz).toBe('kpi');
+    expect((kpiWidget.spec as Record<string, unknown>)?.measure).toEqual({ fn: 'count' });
+    const chartWidget = widgets.find((w) => String(w.id).startsWith('chart_'))!;
+    expect((chartWidget.spec as Record<string, unknown>)?.viz).toBe('bar');
+    expect((chartWidget.spec as Record<string, unknown>)?.measure).toEqual({ fn: 'count' });
+    const listWidget = widgets.find((w) => String(w.id).startsWith('list_'))!;
+    expect((listWidget.list as Record<string, unknown>)?.titleField).toBeTruthy();
+    expect(app.reports?.[0]?.kind).toBe('chart');
+    expect(app.reports?.[0]?.reportId).toBeTruthy();
+  });
+
+  it('parses SSMS bracketed MSSQL types, PRIMARY KEY NONCLUSTERED WITH (...), and ALTER TABLE CHECK', () => {
+    const ssmsSql = `
+      USE [ITCOperational]
+      GO
+      SET ANSI_NULLS ON
+      GO
+      CREATE TABLE [ApplicationConfiguration].[Configuration](
+        [Id] [numeric](10, 0) IDENTITY(1,1) NOT NULL,
+        [Scope] [nvarchar](128) NOT NULL,
+        [Status] [nvarchar](32) NOT NULL,
+        [Value] [ntext] NULL,
+        [Timestamp] [datetime] NOT NULL,
+        CONSTRAINT [PK_CONFIGURATION] PRIMARY KEY NONCLUSTERED ([Id] ASC)
+        WITH (PAD_INDEX = OFF, ALLOW_ROW_LOCKS = ON) ON [PRIMARY]
+      ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+      GO
+      ALTER TABLE [ApplicationConfiguration].[Configuration] WITH CHECK ADD CONSTRAINT [CK_Status]
+        CHECK ([Status] IN ('Active', 'Disabled', 'Pending'))
+      GO
+    `;
+    expect(detectSchemaDialect(ssmsSql)).toBe('mssql');
+    const schema = parseSqlSchema(ssmsSql, 'auto', 'itc.sql');
+    expect(schema.dialect).toBe('mssql');
+    expect(schema.tables).toHaveLength(1);
+    const tbl = schema.tables[0];
+    expect(tbl.schemaName).toBe('ApplicationConfiguration');
+    expect(tbl.primaryKeys).toEqual(['Id']);
+    expect(tbl.columns.find((c) => c.name === 'Id')?.isAutoIncrement).toBe(true);
+    expect(tbl.columns.find((c) => c.name === 'Status')?.enumValues).toEqual(['Active', 'Disabled', 'Pending']);
+    expect(tbl.columns.find((c) => c.name === 'Value')?.normalizedType).toBe('ntext');
+  });
+
+  it('normalizes datetime, time, and Buffer-encoded booleans during batch row preparation', () => {
+    const tbl: MaterializedTable = {
+      tableKey: 'events',
+      sourceName: 'events',
+      formId: 'f1',
+      formTitle: 'Events',
+      primaryKeyColumn: 'id',
+      fields: [
+        { sourceColumn: 'occurred_at', fieldId: 'occurred_at', label: 'Occurred At', rawType: 'datetime', fieldType: 'datetime', include: true, required: false, isPrimaryKey: false, isAutoIncrement: false },
+        { sourceColumn: 'start_time', fieldId: 'start_time', label: 'Start Time', rawType: 'time', fieldType: 'time', include: true, required: false, isPrimaryKey: false, isAutoIncrement: false },
+        { sourceColumn: 'is_active', fieldId: 'is_active', label: 'Is Active', rawType: 'bit', fieldType: 'checkboxes', include: true, required: false, isPrimaryKey: false, isAutoIncrement: false },
+      ],
+      linkedFieldTargets: {},
+    };
+    const res = prepareBatchImportRow(
+      {
+        id: 7,
+        occurred_at: '2026-04-19T12:35:00.000Z',
+        start_time: '06:30:00',
+        is_active: { type: 'Buffer', data: [1] },
+      },
+      tbl,
+      { occurred_at: 'occurred_at', start_time: 'start_time', is_active: 'is_active' },
+      'id',
+      new Map(),
+      new Set(),
+    );
+    expect(res.clientKey).toBe('7');
+    expect(res.answers.occurred_at).toBe('2026-04-19T12:35');
+    expect(res.answers.start_time).toBe('06:30');
+    expect(res.answers.is_active).toBe('1');
   });
 });

@@ -16,6 +16,10 @@ interface LinkedRecordInputProps {
   value: unknown;
   onChange: (val: unknown) => void;
   primaryColor: string;
+  /** Optional custom placeholder text (defaults to "Select or search records..."). */
+  placeholder?: string;
+  /** Compact sizing for modals and inline edit tables. */
+  compact?: boolean;
   /**
    * Optional lookup override. In the app runtime this defaults to the app-scoped store lookup;
    * standalone/pack forms pass an owner-scoped lookup so linked records work without an app.
@@ -32,6 +36,8 @@ export function LinkedRecordInput({
   value,
   onChange,
   primaryColor,
+  placeholder,
+  compact = false,
   lookup: lookupProp,
 }: LinkedRecordInputProps) {
   const storeLookup = useAppRuntimeStore((s) => s.lookupRecords);
@@ -91,8 +97,8 @@ export function LinkedRecordInput({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds.join(',')]);
 
-  // Debounced search with stale-result protection
-  const doSearch = useCallback((q: string) => {
+  // Debounced search (0ms when opening the dropdown, 200ms while typing)
+  const doSearch = useCallback((q: string, delayMs = 200) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(async () => {
       const thisSearchId = ++searchIdRef.current;
@@ -103,7 +109,7 @@ export function LinkedRecordInput({
           displayFieldIds,
           searchFieldIds,
           q: q || undefined,
-          limit: 20,
+          limit: 50,
         });
         // Only apply results if this is still the latest search
         if (thisSearchId === searchIdRef.current) {
@@ -118,13 +124,13 @@ export function LinkedRecordInput({
       if (thisSearchId === searchIdRef.current) {
         setLoading(false);
       }
-    }, 300);
+    }, delayMs);
   }, [lookup, formId, targetFormId, displayFieldIds, searchFieldIds]);
 
-  // Load initial results when opening
+  // Load initial options immediately when the select box opens (0ms macrotask)
   useEffect(() => {
     if (isOpen) {
-      doSearch(query);
+      doSearch(query, 0);
     }
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -230,29 +236,44 @@ export function LinkedRecordInput({
         <div
           role="button"
           tabIndex={0}
-          className="w-full flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-2 app-ring-primary"
-          style={{ borderColor: primaryColor, backgroundColor: `${primaryColor}08` }}
+          className={cn(
+            'w-full flex items-center justify-between gap-2 rounded-lg border-2 cursor-pointer transition-colors text-left focus-visible:outline-none focus-visible:ring-2 app-ring-primary',
+            compact ? 'px-3 py-2 text-sm' : 'p-3',
+          )}
+          style={{
+            borderColor: primaryColor,
+            backgroundColor: primaryColor.startsWith('#') ? `${primaryColor}08` : undefined,
+          }}
           onClick={() => { setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); }}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen(true); setTimeout(() => inputRef.current?.focus(), 0); } }}
         >
-          <span className="text-base sm:text-lg text-gray-900 dark:text-white">
+          <span className={cn('min-w-0 flex-1 truncate text-gray-900 dark:text-white', compact ? 'text-sm font-medium' : 'text-base sm:text-lg')}>
             {resolvedLabels[selectedIds[0]] || selectedIds[0].substring(0, 8) + '...'}
           </span>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); handleRemove(selectedIds[0]); }}
-            aria-label="Clear selection"
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-slate-300 cursor-pointer"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleRemove(selectedIds[0]); }}
+              aria-label="Clear selection"
+              className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-slate-700 dark:hover:text-slate-200 cursor-pointer"
+            >
+              <X className={compact ? 'h-4 w-4' : 'h-5 w-5'} />
+            </button>
+            <ChevronDown className={cn('text-gray-400 dark:text-slate-500', compact ? 'h-4 w-4' : 'h-5 w-5')} aria-hidden="true" />
+          </span>
         </div>
       )}
 
-      {/* Search input */}
+      {/* Search / select input */}
       {(allowMultiple || selectedIds.length === 0 || isOpen) && (
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 dark:text-slate-500" />
+          <Search
+            className={cn(
+              'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500',
+              compact ? 'h-4 w-4' : 'h-5 w-5',
+            )}
+            aria-hidden="true"
+          />
           <input
             ref={inputRef}
             type="text"
@@ -269,19 +290,40 @@ export function LinkedRecordInput({
             }}
             onFocus={() => setIsOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder="Search records..."
-            className="w-full pl-10 pr-10 py-3 bg-white dark:bg-slate-800 border-2 border-gray-300 dark:border-slate-600 rounded-lg text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none transition-colors"
-            style={{ borderColor: query ? primaryColor : undefined }}
+            placeholder={placeholder || 'Select or search records...'}
+            className={cn(
+              'w-full bg-white dark:bg-slate-800 border-gray-300 dark:border-slate-600 rounded-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 outline-none transition-colors focus:ring-2 focus:ring-primary-500/20',
+              compact ? 'border pl-9 pr-9 py-2 text-sm' : 'border-2 pl-10 pr-10 py-3 text-base sm:text-lg',
+            )}
+            style={{ borderColor: query || isOpen ? primaryColor : undefined }}
           />
           {loading ? (
-            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 animate-spin" />
+            <Loader2 className={cn('pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 animate-spin', compact ? 'h-4 w-4' : 'h-5 w-5')} aria-hidden="true" />
           ) : (
-            <ChevronDown
-              className={cn(
-                'absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 transition-transform',
-                isOpen && 'rotate-180'
-              )}
-            />
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label={isOpen ? 'Close options' : 'Open options'}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                if (isOpen) {
+                  setIsOpen(false);
+                } else {
+                  setIsOpen(true);
+                  inputRef.current?.focus();
+                }
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 cursor-pointer items-center justify-center rounded text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300"
+            >
+              <ChevronDown
+                className={cn(
+                  'transition-transform',
+                  compact ? 'h-4 w-4' : 'h-5 w-5',
+                  isOpen && 'rotate-180',
+                )}
+                aria-hidden="true"
+              />
+            </button>
           )}
         </div>
       )}
@@ -296,12 +338,13 @@ export function LinkedRecordInput({
           className="z-[200] bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 overflow-y-auto scrollbar-thin"
         >
           {loading && results.length === 0 ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
+            <div className="flex items-center justify-center gap-2 py-6 text-xs text-gray-500 dark:text-slate-400">
+              <Loader2 className="h-4 w-4 text-gray-400 animate-spin" aria-hidden="true" />
+              <span>Loading related records…</span>
             </div>
           ) : filteredResults.length === 0 ? (
-            <div className="py-8 text-center text-sm text-gray-500 dark:text-slate-400">
-              No records found
+            <div className="py-6 px-4 text-center text-sm text-gray-500 dark:text-slate-400">
+              {query.trim() ? `No records matching "${query.trim()}"` : 'No related records found yet'}
             </div>
           ) : (
             filteredResults.map((record, index) => {
@@ -316,7 +359,7 @@ export function LinkedRecordInput({
                   onClick={() => handleSelect(record)}
                   onMouseEnter={() => setHighlightIndex(index)}
                   className={cn(
-                    'flex w-full items-center gap-2 text-left px-4 py-3 text-sm transition-colors cursor-pointer',
+                    'flex w-full items-center gap-2 text-left px-3.5 py-2.5 text-sm transition-colors cursor-pointer',
                     index === highlightIndex
                       ? 'app-bg-primary-light app-text-primary'
                       : isSelected
@@ -325,7 +368,7 @@ export function LinkedRecordInput({
                   )}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className={cn('font-medium', isSelected && 'font-semibold')}>{record.display}</span>
+                    <span className={cn('block truncate font-medium', isSelected && 'font-semibold')}>{record.display}</span>
                     {record.submittedAt && (
                       <span className="block text-xs text-gray-400 dark:text-slate-500 mt-0.5">
                         {formatDateInZone(record.submittedAt, tz)}

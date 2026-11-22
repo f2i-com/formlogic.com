@@ -9,8 +9,10 @@ import {
   Download,
   FileUp,
   Laptop,
+  ListFilter,
   Loader2,
   Plug,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -25,6 +27,7 @@ import {
   DEFAULT_LOCAL_BRIDGE_URL,
   DEFAULT_PORTS,
   introspectLocalDatabase,
+  listLocalDatabases,
   pingLocalBridge,
   SCHEMA_EXPORT_CHEATSHEET,
   type LocalBridgeHealth,
@@ -51,11 +54,59 @@ const DIALECT_OPTIONS: Array<{ value: SqlDialect; label: string }> = [
 ];
 
 const DRIVER_OPTIONS: Array<{ value: LocalBridgeDriver; label: string; hint: string }> = [
-  { value: 'mysql', label: 'MySQL / MariaDB', hint: 'Requires npm i mysql2' },
-  { value: 'postgresql', label: 'PostgreSQL', hint: 'Requires npm i pg' },
-  { value: 'mssql', label: 'SQL Server (MSSQL)', hint: 'Requires npm i mssql' },
-  { value: 'sqlite', label: 'SQLite file', hint: 'Node 22+ built-in or better-sqlite3' },
+  { value: 'mysql', label: 'MySQL / MariaDB', hint: 'npm i mysql2' },
+  { value: 'postgresql', label: 'PostgreSQL', hint: 'npm i pg' },
+  { value: 'mssql', label: 'SQL Server (MSSQL)', hint: 'npm i mssql' },
+  { value: 'sqlite', label: 'SQLite file', hint: 'Built-in Node 22+' },
 ];
+
+const SESSION_PREFS_KEY = 'formlogic_local_bridge_prefs_v1';
+
+function loadSavedBridgePrefs(): Partial<LocalBridgeConnection> {
+  try {
+    const raw = window.sessionStorage.getItem(SESSION_PREFS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const driver: LocalBridgeDriver =
+      parsed.driver === 'mysql' ||
+      parsed.driver === 'postgresql' ||
+      parsed.driver === 'mssql' ||
+      parsed.driver === 'sqlite'
+        ? parsed.driver
+        : 'mysql';
+    return {
+      bridgeUrl: typeof parsed.bridgeUrl === 'string' && parsed.bridgeUrl ? parsed.bridgeUrl : DEFAULT_LOCAL_BRIDGE_URL,
+      driver,
+      host: typeof parsed.host === 'string' && parsed.host ? parsed.host : '127.0.0.1',
+      port: typeof parsed.port === 'string' ? parsed.port : DEFAULT_PORTS[driver],
+      user: typeof parsed.user === 'string' ? parsed.user : '',
+      ssl: Boolean(parsed.ssl),
+      trustedConnection: Boolean(parsed.trustedConnection),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function saveBridgePrefs(next: LocalBridgeConnection): void {
+  try {
+    // Only persist non-sensitive connection coordinates in sessionStorage — NEVER token or password.
+    window.sessionStorage.setItem(
+      SESSION_PREFS_KEY,
+      JSON.stringify({
+        bridgeUrl: next.bridgeUrl,
+        driver: next.driver,
+        host: next.host,
+        port: next.port,
+        user: next.user,
+        ssl: next.ssl,
+        trustedConnection: Boolean(next.trustedConnection),
+      }),
+    );
+  } catch {
+    // Ignore storage quota or privacy-mode errors.
+  }
+}
 
 export function SchemaSourceStep({
   onSchemaReady,
@@ -73,22 +124,37 @@ export function SchemaSourceStep({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Strictly local loopback bridge state (never sent to FormLogic server).
-  const [conn, setConn] = useState<LocalBridgeConnection>({
-    bridgeUrl: DEFAULT_LOCAL_BRIDGE_URL,
-    token: '',
-    driver: 'mysql',
-    host: '127.0.0.1',
-    port: DEFAULT_PORTS.mysql,
-    database: '',
-    user: '',
-    password: '',
-    filePath: '',
-    ssl: false,
+  const [conn, setConn] = useState<LocalBridgeConnection>(() => {
+    const saved = loadSavedBridgePrefs();
+    const driver = saved.driver ?? 'mysql';
+    return {
+      bridgeUrl: saved.bridgeUrl ?? DEFAULT_LOCAL_BRIDGE_URL,
+      token: '',
+      driver,
+      host: saved.host ?? '127.0.0.1',
+      port: saved.port ?? DEFAULT_PORTS[driver],
+      database: '',
+      user: saved.user ?? '',
+      password: '',
+      filePath: '',
+      ssl: saved.ssl ?? false,
+      trustedConnection: saved.trustedConnection ?? false,
+    };
   });
   const [bridgeHealth, setBridgeHealth] = useState<LocalBridgeHealth | null>(null);
   const [testingBridge, setTestingBridge] = useState(false);
+  const [availableDbs, setAvailableDbs] = useState<string[]>([]);
+  const [loadingDbs, setLoadingDbs] = useState(false);
   const [introspecting, setIntrospecting] = useState(false);
   const [bridgeError, setBridgeError] = useState<string | null>(null);
+
+  const updateConn = (updater: (prev: LocalBridgeConnection) => LocalBridgeConnection) => {
+    setConn((prev) => {
+      const next = updater(prev);
+      saveBridgePrefs(next);
+      return next;
+    });
+  };
 
   const handleParseText = (textOverride?: string, dialectOverride?: SqlDialect, label?: string) => {
     const raw = textOverride ?? schemaText;
@@ -172,6 +238,31 @@ export function SchemaSourceStep({
     }
   };
 
+  const handleLoadDatabases = async () => {
+    if (conn.driver === 'sqlite') return;
+    setLoadingDbs(true);
+    setBridgeError(null);
+    try {
+      const dbs = await listLocalDatabases(conn);
+      setAvailableDbs(dbs);
+      if (dbs.length === 0) {
+        toast.info('No user databases returned', 'Check your local DB user permissions or type the database name directly.');
+      } else {
+        if (!conn.database.trim() || !dbs.includes(conn.database.trim())) {
+          updateConn((c) => ({ ...c, database: dbs[0] }));
+        }
+        toast.success(
+          `Found ${dbs.length} ${dbs.length === 1 ? 'database' : 'databases'}`,
+          'Pick a database from the dropdown and click Inspect local schema.',
+        );
+      }
+    } catch (err) {
+      setBridgeError(err instanceof Error ? err.message : 'Could not list databases from local bridge.');
+    } finally {
+      setLoadingDbs(false);
+    }
+  };
+
   const handleIntrospectLocal = async () => {
     setIntrospecting(true);
     setBridgeError(null);
@@ -183,7 +274,7 @@ export function SchemaSourceStep({
       }
       toast.success(
         `Introspected ${schema.tables.length} ${schema.tables.length === 1 ? 'table' : 'tables'}`,
-        'Schema loaded directly from your local machine.',
+        'Schema and foreign keys loaded directly from your local machine.',
       );
       onSchemaReady(schema);
     } catch (err) {
@@ -262,7 +353,7 @@ export function SchemaSourceStep({
               <Badge variant="primary" size="sm">Local only</Badge>
             </span>
             <span className="mt-0.5 block text-xs leading-relaxed text-gray-600 dark:text-slate-400">
-              Introspect a live local MySQL, PostgreSQL, MSSQL, or SQLite database via a tiny loopback script and stream batches straight into FormLogic.
+              Browse local MySQL, PostgreSQL, MSSQL, or SQLite databases via a tiny loopback script, auto-wire FK select boxes, and stream batches into FormLogic.
             </span>
           </span>
         </button>
@@ -335,7 +426,7 @@ export function SchemaSourceStep({
                   id="db-dialect-select"
                   value={dialect}
                   onChange={(e) => setDialect(e.target.value as SqlDialect)}
-                  className="h-9 cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 text-xs font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:h-11 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  className="cursor-pointer rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 >
                   {DIALECT_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -384,7 +475,7 @@ export function SchemaSourceStep({
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Try a sample database</h3>
             </div>
             <p className="mt-1 text-xs text-gray-600 dark:text-slate-400">
-              Load a complete multi-table schema with foreign keys and sample rows to preview how FormLogic builds linked CRUD forms.
+              Load a complete multi-table schema with foreign keys and sample rows to preview how FormLogic builds linked CRUD forms with select boxes.
             </p>
             <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
               {SAMPLE_SCHEMAS.map((sample) => (
@@ -464,9 +555,17 @@ export function SchemaSourceStep({
         /* Strictly Local 127.0.0.1 Bridge Tab */
         <div className="space-y-4">
           <div className="rounded-2xl border border-gray-200/90 bg-white p-4 shadow-sm sm:p-5 dark:border-slate-800 dark:bg-slate-900/60">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
-              1. Start the local loopback bridge on your computer
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
+                1. Start the local loopback bridge on your computer
+              </h2>
+              {bridgeHealth?.ok && (
+                <Badge variant="success" size="sm">
+                  <CheckCircle2 className="mr-1 inline h-3 w-3" aria-hidden="true" />
+                  Bridge online (v{bridgeHealth.version})
+                </Badge>
+              )}
+            </div>
             <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-slate-400">
               Download our tiny, inspectable Node.js bridge script and run it locally. It listens exclusively on <code className="font-mono">127.0.0.1</code>, requires a random pairing token, and accepts requests only from <code className="font-mono">{window.location.origin}</code>.
             </p>
@@ -497,7 +596,7 @@ export function SchemaSourceStep({
                 <Input
                   id="bridge-url"
                   value={conn.bridgeUrl}
-                  onChange={(e) => setConn((c) => ({ ...c, bridgeUrl: e.target.value }))}
+                  onChange={(e) => updateConn((c) => ({ ...c, bridgeUrl: e.target.value }))}
                   placeholder="http://127.0.0.1:17985"
                 />
               </div>
@@ -509,7 +608,7 @@ export function SchemaSourceStep({
                   id="bridge-token"
                   type="password"
                   value={conn.token}
-                  onChange={(e) => setConn((c) => ({ ...c, token: e.target.value }))}
+                  onChange={(e) => updateConn((c) => ({ ...c, token: e.target.value }))}
                   placeholder="Paste pairing token from bridge output"
                 />
               </div>
@@ -525,18 +624,15 @@ export function SchemaSourceStep({
               >
                 Test local bridge
               </Button>
-              {bridgeHealth?.ok && (
-                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                  Bridge online (v{bridgeHealth.version})
-                </span>
-              )}
+              <span className="text-[11px] text-gray-500 dark:text-slate-400">
+                Pairing token is kept in memory only for this session.
+              </span>
             </div>
           </div>
 
           <div className="rounded-2xl border border-gray-200/90 bg-white p-4 shadow-sm sm:p-5 dark:border-slate-800 dark:bg-slate-900/60">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
-              2. Local database credentials (sent only to 127.0.0.1)
+              2. Connect &amp; pick your local database (sent only to 127.0.0.1)
             </h2>
 
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -544,13 +640,14 @@ export function SchemaSourceStep({
                 <button
                   key={opt.value}
                   type="button"
-                  onClick={() =>
-                    setConn((c) => ({
+                  onClick={() => {
+                    setAvailableDbs([]);
+                    updateConn((c) => ({
                       ...c,
                       driver: opt.value,
                       port: DEFAULT_PORTS[opt.value],
-                    }))
-                  }
+                    }));
+                  }}
                   className={cn(
                     'rounded-xl border p-2.5 text-left transition cursor-pointer focus-visible:outline-2 focus-visible:outline-primary-500',
                     conn.driver === opt.value
@@ -572,7 +669,7 @@ export function SchemaSourceStep({
                 <Input
                   id="local-sqlite-path"
                   value={conn.filePath}
-                  onChange={(e) => setConn((c) => ({ ...c, filePath: e.target.value }))}
+                  onChange={(e) => updateConn((c) => ({ ...c, filePath: e.target.value }))}
                   placeholder="/path/to/your/database.sqlite"
                 />
                 <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
@@ -580,73 +677,132 @@ export function SchemaSourceStep({
                 </p>
               </div>
             ) : (
-              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label htmlFor="db-host" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
-                    Host
-                  </label>
-                  <Input
-                    id="db-host"
-                    value={conn.host}
-                    onChange={(e) => setConn((c) => ({ ...c, host: e.target.value }))}
-                    placeholder="127.0.0.1"
-                  />
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="db-host" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
+                      Host {conn.driver === 'mssql' && <span className="font-normal text-gray-500 dark:text-slate-400">(or host\SQLEXPRESS)</span>}
+                    </label>
+                    <Input
+                      id="db-host"
+                      value={conn.host}
+                      onChange={(e) => updateConn((c) => ({ ...c, host: e.target.value }))}
+                      placeholder={conn.driver === 'mssql' ? '127.0.0.1 or localhost\\SQLEXPRESS' : '127.0.0.1'}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="db-port" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
+                      Port
+                    </label>
+                    <Input
+                      id="db-port"
+                      value={conn.port}
+                      onChange={(e) => updateConn((c) => ({ ...c, port: e.target.value }))}
+                      placeholder={DEFAULT_PORTS[conn.driver]}
+                    />
+                  </div>
+                  {!(conn.driver === 'mssql' && conn.trustedConnection) && (
+                    <>
+                      <div>
+                        <label htmlFor="db-user" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
+                          Username
+                        </label>
+                        <Input
+                          id="db-user"
+                          value={conn.user}
+                          onChange={(e) => updateConn((c) => ({ ...c, user: e.target.value }))}
+                          placeholder={conn.driver === 'postgresql' ? 'postgres' : conn.driver === 'mssql' ? 'sa' : 'root'}
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="db-pass" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
+                          Password
+                        </label>
+                        <Input
+                          id="db-pass"
+                          type="password"
+                          value={conn.password}
+                          onChange={(e) => updateConn((c) => ({ ...c, password: e.target.value }))}
+                          placeholder="Leave blank if none"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
-                <div>
-                  <label htmlFor="db-port" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
-                    Port
-                  </label>
-                  <Input
-                    id="db-port"
-                    value={conn.port}
-                    onChange={(e) => setConn((c) => ({ ...c, port: e.target.value }))}
-                    placeholder={DEFAULT_PORTS[conn.driver]}
-                  />
+
+                {/* Database selector with 1-click live database listing */}
+                <div className="rounded-xl border border-gray-200/90 bg-gray-50/70 p-3 dark:border-slate-700/80 dark:bg-slate-800/40">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label htmlFor="db-name" className="text-xs font-semibold text-gray-700 dark:text-slate-300">
+                      Database
+                    </label>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      isLoading={loadingDbs}
+                      disabled={!conn.token.trim()}
+                      onClick={() => void handleLoadDatabases()}
+                      leftIcon={availableDbs.length > 0 ? <RefreshCw className="h-3.5 w-3.5" /> : <ListFilter className="h-3.5 w-3.5" />}
+                    >
+                      {availableDbs.length > 0 ? `Refresh list (${availableDbs.length})` : 'Browse databases'}
+                    </Button>
+                  </div>
+
+                  {availableDbs.length > 0 ? (
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)]">
+                      <select
+                        id="db-name"
+                        value={availableDbs.includes(conn.database) ? conn.database : ''}
+                        onChange={(e) => updateConn((c) => ({ ...c, database: e.target.value }))}
+                        aria-label="Choose local database"
+                        className="w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      >
+                        <option value="">Select a database…</option>
+                        {availableDbs.map((db) => (
+                          <option key={db} value={db}>{db}</option>
+                        ))}
+                      </select>
+                      <Input
+                        value={conn.database}
+                        aria-label="Or type database name"
+                        onChange={(e) => updateConn((c) => ({ ...c, database: e.target.value }))}
+                        placeholder="Or type name…"
+                      />
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <Input
+                        id="db-name"
+                        value={conn.database}
+                        onChange={(e) => updateConn((c) => ({ ...c, database: e.target.value }))}
+                        placeholder="Click 'Browse databases' or type a database name"
+                      />
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label htmlFor="db-name" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
-                    Database name
-                  </label>
-                  <Input
-                    id="db-name"
-                    value={conn.database}
-                    onChange={(e) => setConn((c) => ({ ...c, database: e.target.value }))}
-                    placeholder="my_app_db"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="db-user" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
-                    Username
-                  </label>
-                  <Input
-                    id="db-user"
-                    value={conn.user}
-                    onChange={(e) => setConn((c) => ({ ...c, user: e.target.value }))}
-                    placeholder={conn.driver === 'postgresql' ? 'postgres' : conn.driver === 'mssql' ? 'sa' : 'root'}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="db-pass" className="mb-1 block text-xs font-semibold text-gray-700 dark:text-slate-300">
-                    Password
-                  </label>
-                  <Input
-                    id="db-pass"
-                    type="password"
-                    value={conn.password}
-                    onChange={(e) => setConn((c) => ({ ...c, password: e.target.value }))}
-                    placeholder="Local database password"
-                  />
-                </div>
-                <div className="flex items-end pb-2">
+
+                <div className="flex flex-wrap items-center gap-4 pt-0.5">
                   <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
                     <input
                       type="checkbox"
                       checked={conn.ssl}
-                      onChange={(e) => setConn((c) => ({ ...c, ssl: e.target.checked }))}
+                      onChange={(e) => updateConn((c) => ({ ...c, ssl: e.target.checked }))}
                       className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     />
                     Use TLS / SSL for local DB socket
                   </label>
+                  {conn.driver === 'mssql' && (
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-gray-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(conn.trustedConnection)}
+                        onChange={(e) => updateConn((c) => ({ ...c, trustedConnection: e.target.checked }))}
+                        className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      Windows Integrated Auth (Trusted Connection)
+                    </label>
+                  )}
                 </div>
               </div>
             )}

@@ -1372,8 +1372,12 @@ function FormResponses() {
                     <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">
                       {field.label}
                     </label>
-                    {renderEditField(field, editedAnswers[field.id], (value) =>
-                      setEditedAnswers((prev) => ({ ...prev, [field.id]: value }))
+                    {renderEditField(
+                      field,
+                      editedAnswers[field.id],
+                      (value) =>
+                        setEditedAnswers((prev) => ({ ...prev, [field.id]: value })),
+                      { formId: form.id },
                     )}
                   </div>
                 ))}

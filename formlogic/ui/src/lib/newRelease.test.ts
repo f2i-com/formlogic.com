@@ -8,11 +8,19 @@ const realLocation = window.location;
 
 class FakeWorkers extends EventTarget {
   controller: object | null;
-  registration: { update: typeof update; installing?: object | null } = { update };
+  unregister = vi.fn(async () => true);
+  registration: {
+    update: typeof update;
+    unregister: () => Promise<boolean>;
+    installing?: object | null;
+    waiting?: { postMessage?: (msg: unknown) => void } | null;
+  };
   getRegistration = vi.fn(async () => this.registration);
+  getRegistrations = vi.fn(async () => [this.registration]);
   constructor(controlled: boolean) {
     super();
     this.controller = controlled ? {} : null;
+    this.registration = { update, unregister: this.unregister };
   }
 }
 
@@ -121,6 +129,52 @@ describe('a reply from another release', () => {
     noteServerRelease('0.1.21');
     notices()[0].action?.onClick();
     await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+  });
+
+  it('evicts stale workbox precaches and unregisters a stuck worker when controllerchange never fires', async () => {
+    const deleteCache = vi.fn(async () => true);
+    const fakeCaches = {
+      keys: vi.fn(async () => ['workbox-precache-v2-https://app.example/', 'app-images-cache']),
+      delete: deleteCache,
+    };
+    const fetchSpy = vi.fn(async () => new Response('<html></html>', { status: 200 }));
+    const workers = new FakeWorkers(true);
+    const { noteServerRelease } = await page('0.1.20', workers);
+    vi.stubGlobal('caches', fakeCaches);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    noteServerRelease('0.1.21');
+    notices()[0].action?.onClick();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+
+    expect(deleteCache).toHaveBeenCalledWith('workbox-precache-v2-https://app.example/');
+    expect(deleteCache).not.toHaveBeenCalledWith('app-images-cache');
+    expect(workers.unregister).toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ cache: 'reload', credentials: 'same-origin' }),
+    );
+  });
+
+  it('keeps caches intact when the new worker takes over cleanly', async () => {
+    const deleteCache = vi.fn(async () => true);
+    const fakeCaches = {
+      keys: vi.fn(async () => ['workbox-precache-v2-https://app.example/']),
+      delete: deleteCache,
+    };
+    const workers = new FakeWorkers(true);
+    workers.registration.installing = {};
+    const { noteServerRelease } = await page('0.1.20', workers);
+    vi.stubGlobal('caches', fakeCaches);
+
+    noteServerRelease('0.1.21');
+    notices()[0].action?.onClick();
+    await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    workers.dispatchEvent(new Event('controllerchange'));
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+
+    expect(deleteCache).not.toHaveBeenCalled();
+    expect(workers.unregister).not.toHaveBeenCalled();
   });
 
   // The embed code's sandbox has no allow-modals, so beforeunload can't ask, and Reload took a

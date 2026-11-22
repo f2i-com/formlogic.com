@@ -66,7 +66,31 @@ export function buildConnectionPayload(conn: LocalBridgeConnection): Record<stri
     user: conn.user.trim(),
     password: conn.password,
     ssl: conn.ssl,
+    ...(conn.driver === 'mssql' && conn.trustedConnection ? { trustedConnection: true } : {}),
   };
+}
+
+/** Fetch the list of user databases from the local DB server via the 127.0.0.1 loopback bridge. */
+export async function listLocalDatabases(conn: LocalBridgeConnection): Promise<string[]> {
+  if (conn.driver === 'sqlite') return [];
+  const origin = assertLoopbackBridgeUrl(conn.bridgeUrl);
+  const payload = buildConnectionPayload(conn);
+  const res = await fetch(`${origin}/databases`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(conn.token.trim() ? { 'X-Bridge-Token': conn.token.trim() } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    databases?: string[];
+  };
+  if (!res.ok || json.error) {
+    throw new Error(json.error || `Could not list databases (HTTP ${res.status})`);
+  }
+  return Array.isArray(json.databases) ? json.databases.map(String) : [];
 }
 
 /** Introspect tables, columns, PKs, FKs, and row counts directly from the user's local loopback bridge. */
@@ -133,6 +157,7 @@ export async function fetchLocalTableBatch(
   schemaName: string | undefined,
   offset: number,
   limit: number,
+  orderByColumn?: string | null,
 ): Promise<{ rows: Array<Record<string, unknown>>; hasMore: boolean }> {
   const origin = assertLoopbackBridgeUrl(session.bridgeUrl);
   const res = await fetch(`${origin}/rows`, {
@@ -145,6 +170,7 @@ export async function fetchLocalTableBatch(
       ...session.connectionPayload,
       table: tableName,
       schemaName,
+      orderBy: orderByColumn || undefined,
       offset,
       limit,
     }),
@@ -204,27 +230,42 @@ export function buildLocalBridgeScript(allowedOrigin: string, port = 17985): str
   const safeOrigin = allowedOrigin.replace(/['"\\]/g, '');
   return `#!/usr/bin/env node
 /**
- * FormLogic Local Database Bridge (Strictly Local 127.0.0.1)
+ * FormLogic Local Database Bridge v1.1 (Strictly Local 127.0.0.1)
  *
- * Runs on YOUR computer so the FormLogic browser tab can inspect your local
- * MySQL, PostgreSQL, SQL Server (MSSQL), or SQLite database and stream batches
- * into FormLogic forms — your DB host & password NEVER touch FormLogic's server.
+ * Runs on YOUR computer so the FormLogic browser tab can browse databases,
+ * inspect tables/PKs/FKs, and stream batches from your local MySQL, PostgreSQL,
+ * SQL Server (MSSQL), or SQLite database into FormLogic forms — your DB host
+ * and password NEVER touch FormLogic's server.
  *
  * Usage:
  *   node formlogic-local-db-bridge.mjs
  *
- * Install whichever driver you need in the same folder:
- *   npm install mysql2        # MySQL / MariaDB
- *   npm install pg            # PostgreSQL
- *   npm install mssql         # Microsoft SQL Server
+ * Install whichever driver you need in the same folder (or set NODE_PATH):
+ *   npm install mysql2         # MySQL / MariaDB
+ *   npm install pg             # PostgreSQL
+ *   npm install mssql          # Microsoft SQL Server
  *   npm install better-sqlite3 # SQLite (or use Node 22+ built-in node:sqlite)
  */
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
 
 const PORT = Number(process.env.PORT || ${port});
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || '${safeOrigin}';
 const TOKEN = process.env.BRIDGE_TOKEN || crypto.randomBytes(16).toString('hex');
+const require = createRequire(import.meta.url);
+
+async function loadDriver(pkgName, installHint) {
+  try {
+    return await import(pkgName);
+  } catch {
+    try {
+      return require(pkgName);
+    } catch {
+      throw new Error('Driver "' + pkgName + '" is not installed. Run: ' + installHint);
+    }
+  }
+}
 
 function send(res, status, body) {
   res.writeHead(status, {
@@ -249,14 +290,102 @@ async function readJson(req) {
 }
 
 function safeIdent(name) {
-  if (!/^[A-Za-z0-9_$.-]+$/.test(String(name || ''))) {
+  if (!/^[A-Za-z0-9_$.\\- ]+$/.test(String(name || ''))) {
     throw new Error('Unsafe identifier: ' + name);
   }
   return String(name);
 }
 
+/** Normalize Date, Buffer/Uint8Array, and BigInt values into JSON-safe scalars. */
+function cleanValue(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'bigint') {
+    const n = Number(v);
+    return Number.isSafeInteger(n) ? n : v.toString();
+  }
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    return v.toISOString();
+  }
+  if (Buffer.isBuffer(v) || v instanceof Uint8Array) {
+    if (v.length === 1) return v[0];
+    return Buffer.from(v).toString('hex');
+  }
+  return v;
+}
+
+function cleanRow(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row || {})) {
+    out[k] = cleanValue(v);
+  }
+  return out;
+}
+
+function parseCheckChoices(expr) {
+  const str = String(expr || '');
+  const inMatch = /\\bIN\\s*\\(([^)]+)\\)/i.exec(str);
+  if (inMatch) {
+    const vals = [];
+    const re = /'((?:''|[^'])*)'/g;
+    let m;
+    while ((m = re.exec(inMatch[1])) !== null) {
+      vals.push(m[1].replace(/''/g, "'"));
+    }
+    if (vals.length >= 2) return vals;
+  }
+  return undefined;
+}
+
+function parseMssqlServer(cfg) {
+  const rawHost = String(cfg.host || '127.0.0.1').trim();
+  let server = rawHost;
+  let instanceName;
+  const slashIdx = rawHost.indexOf('\\\\');
+  if (slashIdx > 0) {
+    server = rawHost.slice(0, slashIdx) || '127.0.0.1';
+    instanceName = rawHost.slice(slashIdx + 1) || undefined;
+  }
+  const options = {
+    encrypt: Boolean(cfg.ssl),
+    trustServerCertificate: true,
+    ...(instanceName ? { instanceName } : {}),
+    ...(cfg.trustedConnection ? { trustedConnection: true } : {}),
+  };
+  return {
+    server,
+    ...(instanceName ? {} : { port: Number(cfg.port || 1433) }),
+    ...(cfg.trustedConnection ? {} : { user: cfg.user, password: cfg.password }),
+    ...(cfg.database ? { database: cfg.database } : {}),
+    options,
+  };
+}
+
+async function listDatabasesMysql(cfg) {
+  const mysqlMod = await loadDriver('mysql2/promise', 'npm install mysql2');
+  const mysql = mysqlMod.default ?? mysqlMod;
+  const conn = await mysql.createConnection({
+    host: cfg.host || '127.0.0.1',
+    port: Number(cfg.port || 3306),
+    user: cfg.user,
+    password: cfg.password,
+    ssl: cfg.ssl ? { rejectUnauthorized: false } : undefined,
+  });
+  try {
+    const [rows] = await conn.query('SHOW DATABASES');
+    const hidden = new Set(['information_schema', 'mysql', 'performance_schema', 'sys']);
+    return rows
+      .map((r) => String(Object.values(r)[0] || ''))
+      .filter((d) => d && !hidden.has(d.toLowerCase()))
+      .sort((a, b) => a.localeCompare(b));
+  } finally {
+    await conn.end();
+  }
+}
+
 async function introspectMysql(cfg) {
-  const mysql = await import('mysql2/promise');
+  const mysqlMod = await loadDriver('mysql2/promise', 'npm install mysql2');
+  const mysql = mysqlMod.default ?? mysqlMod;
   const conn = await mysql.createConnection({
     host: cfg.host || '127.0.0.1',
     port: Number(cfg.port || 3306),
@@ -281,9 +410,32 @@ async function introspectMysql(cfg) {
     const fkMap = new Map();
     for (const fk of fks) {
       const list = fkMap.get(fk.TABLE_NAME) || [];
-      list.push({ column: fk.COLUMN_NAME, targetTable: fk.REFERENCED_TABLE_NAME, targetColumn: fk.REFERENCED_COLUMN_NAME });
+      list.push({
+        column: fk.COLUMN_NAME,
+        targetTable: fk.REFERENCED_TABLE_NAME,
+        targetColumn: fk.REFERENCED_COLUMN_NAME,
+        source: 'explicit',
+      });
       fkMap.set(fk.TABLE_NAME, list);
     }
+
+    // InnoDB TABLE_ROWS is an estimate and often reports 0 for small lookup tables (1-20 rows).
+    // Compute exact COUNT(*) for small tables when the schema has <= 120 tables.
+    const exactCounts = new Map();
+    if (tables.length <= 120) {
+      for (const t of tables) {
+        const est = Number(t.TABLE_ROWS || 0);
+        if (est < 1000) {
+          try {
+            const [cntRows] = await conn.query('SELECT COUNT(*) AS cnt FROM \`' + safeIdent(t.TABLE_NAME) + '\`');
+            exactCounts.set(t.TABLE_NAME, Number(cntRows[0]?.cnt || 0));
+          } catch {
+            exactCounts.set(t.TABLE_NAME, est);
+          }
+        }
+      }
+    }
+
     return tables.map((t) => {
       const tFks = fkMap.get(t.TABLE_NAME) || [];
       const tCols = cols.filter((c) => c.TABLE_NAME === t.TABLE_NAME).map((c) => {
@@ -305,7 +457,7 @@ async function introspectMysql(cfg) {
       });
       return {
         name: t.TABLE_NAME,
-        rowCount: Number(t.TABLE_ROWS || 0),
+        rowCount: exactCounts.has(t.TABLE_NAME) ? exactCounts.get(t.TABLE_NAME) : Number(t.TABLE_ROWS || 0),
         columns: tCols,
         primaryKeys: tCols.filter((c) => c.isPrimaryKey).map((c) => c.name),
         foreignKeys: tFks,
@@ -317,7 +469,8 @@ async function introspectMysql(cfg) {
 }
 
 async function rowsMysql(cfg) {
-  const mysql = await import('mysql2/promise');
+  const mysqlMod = await loadDriver('mysql2/promise', 'npm install mysql2');
+  const mysql = mysqlMod.default ?? mysqlMod;
   const conn = await mysql.createConnection({
     host: cfg.host || '127.0.0.1',
     port: Number(cfg.port || 3306),
@@ -325,20 +478,43 @@ async function rowsMysql(cfg) {
     password: cfg.password,
     database: cfg.database,
     ssl: cfg.ssl ? { rejectUnauthorized: false } : undefined,
+    dateStrings: true,
   });
   try {
     const tbl = safeIdent(cfg.table);
     const limit = Math.min(1000, Math.max(1, Number(cfg.limit || 250)));
     const offset = Math.max(0, Number(cfg.offset || 0));
-    const [rows] = await conn.query('SELECT * FROM \`' + tbl + '\` LIMIT ? OFFSET ?', [limit + 1, offset]);
-    return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
+    const orderClause = cfg.orderBy ? ' ORDER BY \`' + safeIdent(cfg.orderBy) + '\`' : '';
+    const [rows] = await conn.query('SELECT * FROM \`' + tbl + '\`' + orderClause + ' LIMIT ? OFFSET ?', [limit + 1, offset]);
+    return { rows: rows.slice(0, limit).map(cleanRow), hasMore: rows.length > limit };
   } finally {
     await conn.end();
   }
 }
 
+async function listDatabasesPostgres(cfg) {
+  const pgMod = await loadDriver('pg', 'npm install pg');
+  const Client = pgMod.Client ?? pgMod.default?.Client;
+  const client = new Client({
+    host: cfg.host || '127.0.0.1',
+    port: Number(cfg.port || 5432),
+    user: cfg.user,
+    password: cfg.password,
+    database: cfg.database || 'postgres',
+    ssl: cfg.ssl ? { rejectUnauthorized: false } : false,
+  });
+  await client.connect();
+  try {
+    const res = await client.query("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname");
+    return res.rows.map((r) => String(r.datname));
+  } finally {
+    await client.end();
+  }
+}
+
 async function introspectPostgres(cfg) {
-  const { Client } = await import('pg');
+  const pgMod = await loadDriver('pg', 'npm install pg');
+  const Client = pgMod.Client ?? pgMod.default?.Client;
   const client = new Client({
     host: cfg.host || '127.0.0.1',
     port: Number(cfg.port || 5432),
@@ -350,7 +526,7 @@ async function introspectPostgres(cfg) {
   await client.connect();
   try {
     const tablesRes = await client.query(
-      "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_schema, table_name"
+      "SELECT t.table_schema, t.table_name, COALESCE(s.n_live_tup, 0) AS row_count FROM information_schema.tables t LEFT JOIN pg_stat_user_tables s ON s.schemaname = t.table_schema AND s.relname = t.table_name WHERE t.table_type = 'BASE TABLE' AND t.table_schema NOT IN ('pg_catalog','information_schema') ORDER BY t.table_schema, t.table_name"
     );
     const colsRes = await client.query(
       "SELECT table_schema, table_name, column_name, data_type, udt_name, is_nullable, column_default FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema') ORDER BY table_name, ordinal_position"
@@ -361,10 +537,19 @@ async function introspectPostgres(cfg) {
     const fkRes = await client.query(
       "SELECT tc.table_schema, tc.table_name, kcu.column_name, ccu.table_name AS target_table, ccu.column_name AS target_column FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema WHERE tc.constraint_type = 'FOREIGN KEY'"
     );
+    const enumRes = await client.query(
+      "SELECT t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid ORDER BY t.typname, e.enumsortorder"
+    );
+    const enumMap = new Map();
+    for (const r of enumRes.rows) {
+      const list = enumMap.get(r.typname) || [];
+      list.push(r.enumlabel);
+      enumMap.set(r.typname, list);
+    }
     return tablesRes.rows.map((t) => {
       const pks = new Set(pkRes.rows.filter((p) => p.table_name === t.table_name && p.table_schema === t.table_schema).map((p) => p.column_name));
       const fks = fkRes.rows.filter((f) => f.table_name === t.table_name && f.table_schema === t.table_schema).map((f) => ({
-        column: f.column_name, targetTable: f.target_table, targetColumn: f.target_column,
+        column: f.column_name, targetTable: f.target_table, targetColumn: f.target_column, source: 'explicit',
       }));
       const tCols = colsRes.rows.filter((c) => c.table_name === t.table_name && c.table_schema === t.table_schema).map((c) => ({
         name: c.column_name,
@@ -375,9 +560,17 @@ async function introspectPostgres(cfg) {
         isAutoIncrement: String(c.column_default || '').includes('nextval('),
         isUnique: pks.has(c.column_name),
         defaultValue: c.column_default || undefined,
+        enumValues: c.data_type === 'USER-DEFINED' ? enumMap.get(c.udt_name) : undefined,
         foreignKey: fks.find((f) => f.column === c.column_name),
       }));
-      return { name: t.table_name, schemaName: t.table_schema, columns: tCols, primaryKeys: Array.from(pks), foreignKeys: fks };
+      return {
+        name: t.table_name,
+        schemaName: t.table_schema,
+        rowCount: Number(t.row_count || 0),
+        columns: tCols,
+        primaryKeys: Array.from(pks),
+        foreignKeys: fks,
+      };
     });
   } finally {
     await client.end();
@@ -385,7 +578,8 @@ async function introspectPostgres(cfg) {
 }
 
 async function rowsPostgres(cfg) {
-  const { Client } = await import('pg');
+  const pgMod = await loadDriver('pg', 'npm install pg');
+  const Client = pgMod.Client ?? pgMod.default?.Client;
   const client = new Client({
     host: cfg.host || '127.0.0.1',
     port: Number(cfg.port || 5432),
@@ -398,47 +592,111 @@ async function rowsPostgres(cfg) {
   try {
     const schema = cfg.schemaName ? '"' + safeIdent(cfg.schemaName) + '".' : '';
     const tbl = '"' + safeIdent(cfg.table) + '"';
+    const orderClause = cfg.orderBy ? ' ORDER BY "' + safeIdent(cfg.orderBy) + '"' : '';
     const limit = Math.min(1000, Math.max(1, Number(cfg.limit || 250)));
     const offset = Math.max(0, Number(cfg.offset || 0));
-    const res = await client.query('SELECT * FROM ' + schema + tbl + ' LIMIT $1 OFFSET $2', [limit + 1, offset]);
-    return { rows: res.rows.slice(0, limit), hasMore: res.rows.length > limit };
+    const res = await client.query('SELECT * FROM ' + schema + tbl + orderClause + ' LIMIT $1 OFFSET $2', [limit + 1, offset]);
+    return { rows: res.rows.slice(0, limit).map(cleanRow), hasMore: res.rows.length > limit };
   } finally {
     await client.end();
   }
 }
 
-async function introspectMssql(cfg) {
-  const mssql = (await import('mssql')).default;
-  const pool = await mssql.connect({
-    server: cfg.host || '127.0.0.1',
-    port: Number(cfg.port || 1433),
-    user: cfg.user,
-    password: cfg.password,
-    database: cfg.database,
-    options: { encrypt: Boolean(cfg.ssl), trustServerCertificate: true },
-  });
+async function listDatabasesMssql(cfg) {
+  const mssqlMod = await loadDriver('mssql', 'npm install mssql');
+  const mssql = mssqlMod.default ?? mssqlMod;
+  const pool = await mssql.connect(parseMssqlServer({ ...cfg, database: 'master' }));
   try {
-    const tablesRes = await pool.request().query("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_SCHEMA, TABLE_NAME");
-    const colsRes = await pool.request().query("SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME, ORDINAL_POSITION");
-    const pkRes = await pool.request().query("SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'");
-    const fkRes = await pool.request().query("SELECT OBJECT_NAME(fkc.parent_object_id) AS table_name, COL_NAME(fkc.parent_object_id, fkc.parent_column_id) AS column_name, OBJECT_NAME(fkc.referenced_object_id) AS target_table, COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id) AS target_column FROM sys.foreign_key_columns fkc");
+    const res = await pool.request().query("SELECT name FROM sys.databases WHERE database_id > 4 AND state = 0 ORDER BY name");
+    return res.recordset.map((r) => String(r.name));
+  } finally {
+    await pool.close();
+  }
+}
+
+async function introspectMssql(cfg) {
+  const mssqlMod = await loadDriver('mssql', 'npm install mssql');
+  const mssql = mssqlMod.default ?? mssqlMod;
+  const pool = await mssql.connect(parseMssqlServer(cfg));
+  try {
+    const tablesRes = await pool.request().query(
+      "SELECT s.name AS TABLE_SCHEMA, t.name AS TABLE_NAME, COALESCE(SUM(p.row_count), 0) AS ROW_COUNT " +
+      "FROM sys.tables t JOIN sys.schemas s ON t.schema_id = s.schema_id " +
+      "LEFT JOIN sys.dm_db_partition_stats p ON p.object_id = t.object_id AND p.index_id IN (0, 1) " +
+      "WHERE t.is_ms_shipped = 0 GROUP BY s.name, t.name ORDER BY s.name, t.name"
+    );
+    const colsRes = await pool.request().query(
+      "SELECT s.name AS TABLE_SCHEMA, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, ty.name AS DATA_TYPE, " +
+      "c.max_length, c.is_nullable, c.is_identity, dc.definition AS COLUMN_DEFAULT " +
+      "FROM sys.columns c JOIN sys.tables t ON c.object_id = t.object_id " +
+      "JOIN sys.schemas s ON t.schema_id = s.schema_id " +
+      "JOIN sys.types ty ON c.user_type_id = ty.user_type_id " +
+      "LEFT JOIN sys.default_constraints dc ON c.default_object_id = dc.object_id " +
+      "WHERE t.is_ms_shipped = 0 ORDER BY s.name, t.name, c.column_id"
+    );
+    const pkRes = await pool.request().query(
+      "SELECT s.name AS TABLE_SCHEMA, t.name AS TABLE_NAME, c.name AS COLUMN_NAME " +
+      "FROM sys.indexes i JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id " +
+      "JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id " +
+      "JOIN sys.tables t ON i.object_id = t.object_id JOIN sys.schemas s ON t.schema_id = s.schema_id " +
+      "WHERE i.is_primary_key = 1"
+    );
+    const fkRes = await pool.request().query(
+      "SELECT ps.name AS parent_schema, pt.name AS table_name, pc.name AS column_name, " +
+      "rt.name AS target_table, rc.name AS target_column " +
+      "FROM sys.foreign_key_columns fkc " +
+      "JOIN sys.tables pt ON fkc.parent_object_id = pt.object_id " +
+      "JOIN sys.schemas ps ON pt.schema_id = ps.schema_id " +
+      "JOIN sys.columns pc ON fkc.parent_object_id = pc.object_id AND fkc.parent_column_id = pc.column_id " +
+      "JOIN sys.tables rt ON fkc.referenced_object_id = rt.object_id " +
+      "JOIN sys.columns rc ON fkc.referenced_object_id = rc.object_id AND fkc.referenced_column_id = rc.column_id"
+    );
+    const chkRes = await pool.request().query(
+      "SELECT s.name AS TABLE_SCHEMA, t.name AS TABLE_NAME, c.name AS COLUMN_NAME, cc.definition " +
+      "FROM sys.check_constraints cc JOIN sys.tables t ON cc.parent_object_id = t.object_id " +
+      "JOIN sys.schemas s ON t.schema_id = s.schema_id " +
+      "LEFT JOIN sys.columns c ON cc.parent_object_id = c.object_id AND cc.parent_column_id = c.column_id"
+    );
+
+    const chkMap = new Map();
+    for (const r of chkRes.recordset) {
+      if (!r.COLUMN_NAME) continue;
+      const choices = parseCheckChoices(r.definition);
+      if (choices) {
+        chkMap.set(r.TABLE_SCHEMA + '.' + r.TABLE_NAME + '.' + r.COLUMN_NAME, choices);
+      }
+    }
+
     return tablesRes.recordset.map((t) => {
       const pks = new Set(pkRes.recordset.filter((p) => p.TABLE_NAME === t.TABLE_NAME && p.TABLE_SCHEMA === t.TABLE_SCHEMA).map((p) => p.COLUMN_NAME));
-      const fks = fkRes.recordset.filter((f) => f.table_name === t.TABLE_NAME).map((f) => ({
-        column: f.column_name, targetTable: f.target_table, targetColumn: f.target_column,
+      const fks = fkRes.recordset.filter((f) => f.table_name === t.TABLE_NAME && f.parent_schema === t.TABLE_SCHEMA).map((f) => ({
+        column: f.column_name, targetTable: f.target_table, targetColumn: f.target_column, source: 'explicit',
       }));
-      const tCols = colsRes.recordset.filter((c) => c.TABLE_NAME === t.TABLE_NAME && c.TABLE_SCHEMA === t.TABLE_SCHEMA).map((c) => ({
-        name: c.COLUMN_NAME,
-        rawType: c.DATA_TYPE,
-        normalizedType: String(c.DATA_TYPE || '').toLowerCase(),
-        nullable: c.IS_NULLABLE === 'YES',
-        isPrimaryKey: pks.has(c.COLUMN_NAME),
-        isAutoIncrement: false,
-        isUnique: pks.has(c.COLUMN_NAME),
-        defaultValue: c.COLUMN_DEFAULT || undefined,
-        foreignKey: fks.find((f) => f.column === c.COLUMN_NAME),
-      }));
-      return { name: t.TABLE_NAME, schemaName: t.TABLE_SCHEMA, columns: tCols, primaryKeys: Array.from(pks), foreignKeys: fks };
+      const tCols = colsRes.recordset.filter((c) => c.TABLE_NAME === t.TABLE_NAME && c.TABLE_SCHEMA === t.TABLE_SCHEMA).map((c) => {
+        const dt = String(c.DATA_TYPE || '').toLowerCase();
+        const isMax = (dt === 'nvarchar' || dt === 'varchar') && Number(c.max_length) === -1;
+        const rawType = isMax ? dt + '(MAX)' : dt;
+        return {
+          name: c.COLUMN_NAME,
+          rawType,
+          normalizedType: dt,
+          nullable: Boolean(c.is_nullable),
+          isPrimaryKey: pks.has(c.COLUMN_NAME),
+          isAutoIncrement: Boolean(c.is_identity),
+          isUnique: pks.has(c.COLUMN_NAME),
+          defaultValue: c.COLUMN_DEFAULT || undefined,
+          enumValues: chkMap.get(t.TABLE_SCHEMA + '.' + t.TABLE_NAME + '.' + c.COLUMN_NAME),
+          foreignKey: fks.find((f) => f.column === c.COLUMN_NAME),
+        };
+      });
+      return {
+        name: t.TABLE_NAME,
+        schemaName: t.TABLE_SCHEMA,
+        rowCount: Number(t.ROW_COUNT || 0),
+        columns: tCols,
+        primaryKeys: Array.from(pks),
+        foreignKeys: fks,
+      };
     });
   } finally {
     await pool.close();
@@ -446,22 +704,17 @@ async function introspectMssql(cfg) {
 }
 
 async function rowsMssql(cfg) {
-  const mssql = (await import('mssql')).default;
-  const pool = await mssql.connect({
-    server: cfg.host || '127.0.0.1',
-    port: Number(cfg.port || 1433),
-    user: cfg.user,
-    password: cfg.password,
-    database: cfg.database,
-    options: { encrypt: Boolean(cfg.ssl), trustServerCertificate: true },
-  });
+  const mssqlMod = await loadDriver('mssql', 'npm install mssql');
+  const mssql = mssqlMod.default ?? mssqlMod;
+  const pool = await mssql.connect(parseMssqlServer(cfg));
   try {
     const schema = cfg.schemaName ? '[' + safeIdent(cfg.schemaName) + '].' : '';
     const tbl = '[' + safeIdent(cfg.table) + ']';
+    const orderExpr = cfg.orderBy ? '[' + safeIdent(cfg.orderBy) + ']' : '(SELECT NULL)';
     const limit = Math.min(1000, Math.max(1, Number(cfg.limit || 250)));
     const offset = Math.max(0, Number(cfg.offset || 0));
-    const res = await pool.request().query('SELECT * FROM ' + schema + tbl + ' ORDER BY (SELECT NULL) OFFSET ' + offset + ' ROWS FETCH NEXT ' + (limit + 1) + ' ROWS ONLY');
-    return { rows: res.recordset.slice(0, limit), hasMore: res.recordset.length > limit };
+    const res = await pool.request().query('SELECT * FROM ' + schema + tbl + ' ORDER BY ' + orderExpr + ' OFFSET ' + offset + ' ROWS FETCH NEXT ' + (limit + 1) + ' ROWS ONLY');
+    return { rows: res.recordset.slice(0, limit).map(cleanRow), hasMore: res.recordset.length > limit };
   } finally {
     await pool.close();
   }
@@ -473,7 +726,8 @@ async function openSqlite(filePath) {
     const db = new DatabaseSync(filePath, { readOnly: true });
     return { all: (sql, ...args) => db.prepare(sql).all(...args), close: () => db.close() };
   } catch {
-    const Database = (await import('better-sqlite3')).default;
+    const mod = await loadDriver('better-sqlite3', 'npm install better-sqlite3');
+    const Database = mod.default ?? mod;
     const db = new Database(filePath, { readonly: true });
     return { all: (sql, ...args) => db.prepare(sql).all(...args), close: () => db.close() };
   }
@@ -487,7 +741,7 @@ async function introspectSqlite(cfg) {
       const tbl = safeIdent(t.name);
       const cols = db.all('PRAGMA table_info("' + tbl + '")');
       const fks = db.all('PRAGMA foreign_key_list("' + tbl + '")').map((f) => ({
-        column: f.from, targetTable: f.table, targetColumn: f.to || 'id',
+        column: f.from, targetTable: f.table, targetColumn: f.to || 'id', source: 'explicit',
       }));
       const countRow = db.all('SELECT COUNT(*) AS cnt FROM "' + tbl + '"')[0];
       return {
@@ -519,8 +773,9 @@ async function rowsSqlite(cfg) {
     const tbl = safeIdent(cfg.table);
     const limit = Math.min(1000, Math.max(1, Number(cfg.limit || 250)));
     const offset = Math.max(0, Number(cfg.offset || 0));
-    const rows = db.all('SELECT * FROM "' + tbl + '" LIMIT ? OFFSET ?', limit + 1, offset);
-    return { rows: rows.slice(0, limit), hasMore: rows.length > limit };
+    const orderClause = cfg.orderBy ? ' ORDER BY "' + safeIdent(cfg.orderBy) + '"' : '';
+    const rows = db.all('SELECT * FROM "' + tbl + '"' + orderClause + ' LIMIT ? OFFSET ?', limit + 1, offset);
+    return { rows: rows.slice(0, limit).map(cleanRow), hasMore: rows.length > limit };
   } finally {
     db.close();
   }
@@ -537,7 +792,17 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.url === '/health' && req.method === 'GET') {
-      return send(res, 200, { ok: true, version: '1.0.0', drivers: ['mysql', 'postgresql', 'mssql', 'sqlite'] });
+      return send(res, 200, { ok: true, version: '1.1.0', drivers: ['mysql', 'postgresql', 'mssql', 'sqlite'] });
+    }
+    if (req.url === '/databases' && req.method === 'POST') {
+      const cfg = await readJson(req);
+      const databases =
+        cfg.driver === 'mysql' ? await listDatabasesMysql(cfg)
+        : cfg.driver === 'postgresql' ? await listDatabasesPostgres(cfg)
+        : cfg.driver === 'mssql' ? await listDatabasesMssql(cfg)
+        : null;
+      if (!databases) return send(res, 400, { error: 'Database listing not supported for driver: ' + cfg.driver });
+      return send(res, 200, { databases });
     }
     if (req.url === '/introspect' && req.method === 'POST') {
       const cfg = await readJson(req);
@@ -569,7 +834,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log('');
-  console.log('FormLogic Local DB Bridge listening on http://127.0.0.1:' + PORT);
+  console.log('FormLogic Local DB Bridge v1.1 listening on http://127.0.0.1:' + PORT);
   console.log('Allowed Origin : ' + ALLOWED_ORIGIN);
   console.log('Pairing Token  : ' + TOKEN);
   console.log('');

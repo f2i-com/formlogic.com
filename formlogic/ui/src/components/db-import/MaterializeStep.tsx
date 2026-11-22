@@ -68,13 +68,16 @@ export function MaterializeStep({
   const activeApps = useMemo(() => apps.filter((a) => a.status !== 'archived'), [apps]);
 
   const summary = useMemo(() => {
+    const includedKeySet = new Set(includedTables.map((t) => t.tableKey));
     let fields = 0;
     let relations = 0;
     for (const t of includedTables) {
       for (const f of t.fields) {
         if (!f.include) continue;
         fields++;
-        if (f.fieldType === 'linked_record' && f.targetTableKey) relations++;
+        if (f.fieldType === 'linked_record' && f.targetTableKey && includedKeySet.has(f.targetTableKey)) {
+          relations++;
+        }
       }
     }
     return { forms: includedTables.length, fields, relations };
@@ -397,7 +400,7 @@ export function MaterializeStep({
           </div>
           <div className="flex items-center gap-2 text-gray-800 dark:text-slate-200">
             <Database className="h-4 w-4 text-indigo-500 shrink-0" aria-hidden="true" />
-            <span><strong>{summary.relations}</strong> linked-record relations</span>
+            <span><strong>{summary.relations}</strong> related-form select {summary.relations === 1 ? 'box' : 'boxes'}</span>
           </div>
         </div>
 

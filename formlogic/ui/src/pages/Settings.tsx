@@ -179,7 +179,7 @@ const EXPIRY_OPTIONS = [
 
 // A line of help under a control, and a native select drawn as the text fields are.
 const HELP = 'text-xs leading-5 text-gray-500 dark:text-slate-400';
-const SELECT = 'block w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm leading-5 text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900/60 dark:text-white max-sm:min-h-11';
+const SELECT = 'w-full max-w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm leading-5 text-gray-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-900/60 dark:text-white max-sm:h-11 max-sm:py-2';
 const TEXT_LINK = 'cursor-pointer font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300';
 // A section's address is its first panel's hash, and when a page loads the browser brings the
 // element its hash names into view by itself. For those five panels that has to be the top of
@@ -204,7 +204,7 @@ function Section({ section, open, links, requested, children }: {
         <nav aria-label={`${section.label} on this page`}
           className="mb-3 min-w-0 @5xl/settings:sticky @5xl/settings:top-[calc(var(--fl-workspace-header-h,4rem)+var(--fl-nav-top,0px)+var(--fl-system-top,0px)+var(--fl-demo-banner-h,0px)+.75rem)] @5xl/settings:col-start-2 @5xl/settings:row-start-1">
           <select aria-label={`Jump to a setting in ${section.label}`} value=""
-            className="min-h-11 w-full max-w-xs cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 @5xl/settings:hidden"
+            className="h-11 w-full max-w-xs cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 @5xl/settings:hidden"
             onChange={event => navigate({ hash: '#' + event.target.value }, { replace: true })}>
             <option disabled value="">Jump to a setting…</option>
             {links.map(id => <option key={id} value={id}>{PANEL_LABELS[id]}</option>)}
@@ -728,7 +728,7 @@ export function Settings() {
                     value={timezone}
                     onChange={setTimezone}
                     disabled={isSavingProfile}
-                    emptyLabel="Use each app's timezone"
+                    emptyLabel="Use app timezone"
                     className={SELECT}
                   />
                   <p className={cn('mt-1', HELP)}>Record times (call logs, submissions) show in this zone across every app you use. Leave unset to follow each app's own timezone.</p>

@@ -582,6 +582,7 @@ function ResponseVisit() {
                           value={editedAnswers[field.id]}
                           onChange={(val) => setEditedAnswers({ ...editedAnswers, [field.id]: val })}
                           primaryColor="var(--app-primary, #6366f1)"
+                          placeholder={`Select ${field.label}...`}
                         />
                       );
                     })()

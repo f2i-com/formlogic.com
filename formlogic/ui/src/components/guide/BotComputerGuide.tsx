@@ -202,9 +202,39 @@ function syncShadowOverrides(hostEl: HTMLElement | undefined, params: ShadowStyl
   bottom: auto !important;
 }
 .bc-root.fl-dragging,
-.bc-root.fl-dragging .bc-stage-card {
+.bc-root.fl-dragging .bc-stage-card,
+.bc-root.fl-dragging .bc-chat,
+.bc-root.fl-dragging .bc-chat-head {
   cursor: grabbing !important;
   user-select: none !important;
+}
+.bc-chat-head {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.bc-chat {
+  cursor: grab;
+}
+.bc-chat input,
+.bc-chat textarea,
+.bc-chat select {
+  cursor: auto;
+}
+.bc-chat button,
+.bc-chat a {
+  cursor: pointer;
+}
+.fl-chat-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(203, 213, 225, 0.72);
+  flex: none;
+  margin-right: 2px;
+}
+.bc-chat-head:hover .fl-chat-grip {
+  color: #ffffff;
 }
 
 /* Transparent, unconstrained stage with full-body height & generous wingspan */
@@ -344,10 +374,28 @@ function attachDragAndHideControls(
   const stageCard = shadow.querySelector<HTMLElement>('.bc-stage-card');
   const pill = shadow.querySelector<HTMLElement>('.bc-minimized-pill');
   const controls = shadow.querySelector<HTMLElement>('.bc-controls');
+  const chatPanels = Array.from(shadow.querySelectorAll<HTMLElement>('.bc-chat'));
   if (!rootEl) return () => {};
 
   if (stageCard) {
     stageCard.title = 'Click to speak · Drag to move anywhere';
+  }
+
+  // Add subtle drag grip indicators to chat & customizer headers so moving via the chat box is obvious
+  const addedGrips: HTMLElement[] = [];
+  for (const panel of chatPanels) {
+    const head = panel.querySelector<HTMLElement>('.bc-chat-head');
+    if (head && !head.querySelector('[data-fl-chat-grip]')) {
+      head.title = 'Drag chat box to move avatar anywhere';
+      const grip = document.createElement('span');
+      grip.className = 'fl-chat-grip';
+      grip.dataset.flChatGrip = '1';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>';
+      head.insertBefore(grip, head.firstChild);
+      addedGrips.push(grip);
+    }
   }
 
   // Inject quick Hide (×) button into the widget's control bar so users can dismiss anytime
@@ -368,9 +416,9 @@ function attachDragAndHideControls(
     controls.appendChild(hideBtn);
   }
 
-  // Drag handler shared between the avatar stage and the minimized pill
+  // Drag handler shared between the avatar stage, minimized pill, AND the chat/customizer boxes
   const cleanups: Array<() => void> = [];
-  const attachDragTo = (handle: HTMLElement | null) => {
+  const attachDragTo = (handle: HTMLElement | null, options?: { ignoreInteractive?: boolean }) => {
     if (!handle) return;
     let pointerId: number | null = null;
     let startX = 0;
@@ -383,6 +431,18 @@ function attachDragAndHideControls(
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0 && e.pointerType === 'mouse') return;
       if (rootEl.classList.contains('is-guiding') || rootEl.classList.contains('is-touring')) return;
+      if (options?.ignoreInteractive) {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest('button, a, input, textarea, select, option, label, [role="button"], .bc-chip')) {
+          return;
+        }
+        // Leave vertical scrollbar thumb clicks untouched so scrolling messages works naturally
+        const scrollBox = target?.closest('.bc-messages, .bc-look-body') as HTMLElement | null;
+        if (scrollBox && scrollBox.scrollHeight > scrollBox.clientHeight) {
+          const boxRect = scrollBox.getBoundingClientRect();
+          if (e.clientX >= boxRect.right - 16) return;
+        }
+      }
       const rect = rootEl.getBoundingClientRect();
       pointerId = e.pointerId;
       startX = e.clientX;
@@ -441,9 +501,12 @@ function attachDragAndHideControls(
 
   attachDragTo(stageCard);
   attachDragTo(pill);
+  for (const panel of chatPanels) {
+    attachDragTo(panel, { ignoreInteractive: true });
+  }
 
-  // Re-clamp dragged avatar inside viewport whenever window resizes
-  const onResize = () => {
+  // Re-clamp dragged avatar + chat box inside viewport on window resize or when chat/customizer toggles open
+  const clampCustomPos = () => {
     const pos = useBotGuideStore.getState().customPosition;
     if (!pos || rootEl.classList.contains('is-guiding')) return;
     const rect = rootEl.getBoundingClientRect();
@@ -451,11 +514,17 @@ function attachDragAndHideControls(
     rootEl.style.setProperty('--fl-bot-x', `${clamped.x}px`);
     rootEl.style.setProperty('--fl-bot-y', `${clamped.y}px`);
   };
-  window.addEventListener('resize', onResize);
+  window.addEventListener('resize', clampCustomPos);
+  const classObserver = new MutationObserver(() => {
+    window.requestAnimationFrame(clampCustomPos);
+  });
+  classObserver.observe(rootEl, { attributes: true, attributeFilter: ['class'] });
 
   return () => {
     cleanups.forEach((fn) => fn());
-    window.removeEventListener('resize', onResize);
+    window.removeEventListener('resize', clampCustomPos);
+    classObserver.disconnect();
+    addedGrips.forEach((g) => g.remove());
     hideBtn?.remove();
   };
 }

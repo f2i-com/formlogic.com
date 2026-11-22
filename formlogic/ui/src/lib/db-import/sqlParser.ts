@@ -55,7 +55,9 @@ export function detectSchemaDialect(raw: string): ResolvedDialect {
     /\[[A-Za-z_][A-Za-z0-9_ ]*\]\.\[[A-Za-z_][A-Za-z0-9_ ]*\]/.test(sample) ||
     /\bIDENTITY\s*\(\s*\d+\s*,\s*\d+\s*\)/i.test(sample) ||
     /\bUNIQUEIDENTIFIER\b/i.test(sample) ||
-    /\bDATETIME2\b/i.test(sample)
+    /\bDATETIME2\b/i.test(sample) ||
+    /\bSET\s+ANSI_NULLS\s+ON\b/i.test(sample) ||
+    /\[(?:nvarchar|varchar|numeric|int|bigint|datetime|tinyint|bit|uniqueidentifier)\]/i.test(sample)
   ) {
     return 'mssql';
   }
@@ -287,15 +289,19 @@ function tokenizeSql(sql: string): Token[] {
     if (ch === '[') {
       i++;
       let val = '';
-      while (i < len && sql[i] !== ']') {
-        if (sql[i] === ']' && sql[i + 1] === ']') {
-          val += ']';
-          i += 2;
+      while (i < len) {
+        if (sql[i] === ']') {
+          if (sql[i + 1] === ']') {
+            val += ']';
+            i += 2;
+          } else {
+            i++;
+            break;
+          }
         } else {
           val += sql[i++];
         }
       }
-      if (sql[i] === ']') i++;
       tokens.push({ type: 'ident', value: val, upper: val.toUpperCase(), quoted: true });
       continue;
     }
@@ -1101,6 +1107,20 @@ export function parseSqlSchema(
               if (col) {
                 col.isPrimaryKey = true;
                 col.nullable = false;
+              }
+            }
+          }
+        } else if (kind === 'CHECK') {
+          const chkOpen = clause.findIndex((t, k) => k > pos && t.value === '(');
+          if (chkOpen > 0) {
+            const chkClose = findMatchingParen(clause, chkOpen);
+            if (chkClose > chkOpen) {
+              const check = extractCheckChoices(clause.slice(chkOpen + 1, chkClose));
+              if (check?.column && check.choices.length >= 2) {
+                const targetCol = table.columns.find((c) => c.name.toLowerCase() === check.column!.toLowerCase());
+                if (targetCol && !targetCol.enumValues) {
+                  targetCol.enumValues = check.choices;
+                }
               }
             }
           }

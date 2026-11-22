@@ -453,7 +453,12 @@ function FormResponseView() {
                       <p className={cn(ROW_NAME, editing && '@lg/answers:pt-2.5')}>{field.label}</p>
                       {editing ? (
                         <div className="min-w-0 max-w-3xl">
-                          {renderEditField(field, draft[field.id], (value) => setDraft((prev) => ({ ...prev, [field.id]: value })))}
+                          {renderEditField(
+                            field,
+                            draft[field.id],
+                            (value) => setDraft((prev) => ({ ...prev, [field.id]: value })),
+                            { formId: form?.id ?? formId },
+                          )}
                         </div>
                       ) : (
                         <div className="min-w-0 max-w-[80ch] whitespace-pre-line text-sm leading-5 text-gray-900 break-words dark:text-white">

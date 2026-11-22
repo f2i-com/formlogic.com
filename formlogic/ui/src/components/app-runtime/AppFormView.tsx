@@ -610,6 +610,7 @@ function FieldInput({
         value={value}
         onChange={onChange}
         primaryColor={primaryColor}
+        placeholder={field.placeholder || `Select ${field.label}...`}
       />
     );
   }
@@ -1336,6 +1337,7 @@ function FormVisit() {
           <div className="flex flex-wrap gap-3 justify-center">
             {showFormView && (
               <button
+                type="button"
                 onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); setShowFormView(false); }}
                 className="px-5 py-2.5 rounded-lg text-sm font-medium transition-colors app-btn-primary cursor-pointer"
               >
@@ -1343,6 +1345,7 @@ function FormVisit() {
               </button>
             )}
             <button
+              type="button"
               onClick={() => { setSubmitted(false); setAnswers({}); setCalculatedValues({}); setCurrentStep(0); setError(null); }}
               className="px-5 py-2.5 rounded-lg text-sm font-medium border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
             >
@@ -1350,6 +1353,7 @@ function FormVisit() {
             </button>
             {(canViewOwn(formId) || canViewAll(formId)) && (
               <button
+                type="button"
                 onClick={() => navigate(`/app/${appSlug}/form/${formId}/responses`)}
                 className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${showFormView ? 'border border-gray-200 dark:border-slate-600 text-gray-600 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800' : 'app-btn-primary'}`}
               >
@@ -1358,6 +1362,7 @@ function FormVisit() {
             )}
             {config?.app?.settings?.linkedSoftnAppSlug && (
               <button
+                type="button"
                 onClick={() => navigate(`/app/${encodeURIComponent(config.app.settings!.linkedSoftnAppSlug!)}`)}
                 className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-sm font-medium border border-primary-300 dark:border-primary-500/40 bg-primary-50/70 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 transition-colors cursor-pointer"
               >
@@ -1376,7 +1381,7 @@ function FormVisit() {
       <div className="flex-1 flex items-center justify-center py-12">
         <div className="text-center">
           <p className="text-gray-500 dark:text-slate-400">This form has no fields.</p>
-          <button onClick={() => navigate(`/app/${appSlug}`)} className="mt-4 text-sm app-text-primary hover:underline cursor-pointer">
+          <button type="button" onClick={() => navigate(`/app/${appSlug}`)} className="mt-4 text-sm app-text-primary hover:underline cursor-pointer">
             Back to Dashboard
           </button>
         </div>

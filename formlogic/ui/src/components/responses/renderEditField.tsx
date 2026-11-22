@@ -1,13 +1,29 @@
 // Edit-input renderer for a single field value, by type — used by the responses table's
 // edit modal and the full-page record view's edit mode.
 import type { FormField } from '../../types/form';
+import { api, type LinkedRecord } from '../../lib/api';
+import { LinkedRecordInput } from '../app-runtime/LinkedRecordInput';
+
+export interface EditFieldContext {
+  formId?: string;
+  primaryColor?: string;
+}
+
+const ownerLinkedLookup = async (
+  formId: string,
+  options: { targetFormId: string; displayFieldIds?: string[]; searchFieldIds?: string[]; q?: string; limit?: number; offset?: number; ids?: string[] },
+): Promise<LinkedRecord[]> => {
+  const res = await api.lookupOwnedRecords(formId, options);
+  return res.data?.records ?? [];
+};
 
 // Render an edit input for a field value, by type. Used by the responses table's edit
 // modal and the full-page record view's edit mode.
 export function renderEditField(
   field: FormField,
   value: unknown,
-  onChange: (value: unknown) => void
+  onChange: (value: unknown) => void,
+  context?: EditFieldContext,
 ) {
   const currentValue = value ?? '';
   const inputClasses = "w-full px-3 py-2.5 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-gray-900 dark:text-white";
@@ -184,15 +200,33 @@ export function renderEditField(
       }
       return <p className="text-sm text-gray-400 dark:text-slate-500 italic">No signature captured</p>;
 
-    case 'linked_record':
-      // Linked records reference other responses and are only editable in the
-      // app runtime. Preserve the value rather than clobbering it as text.
+    case 'linked_record': {
+      const targetFormId = field.properties?.targetFormId;
+      if (context?.formId && targetFormId) {
+        return (
+          <LinkedRecordInput
+            formId={context.formId}
+            targetFormId={targetFormId}
+            displayFieldIds={field.properties?.displayFieldIds}
+            searchFieldIds={field.properties?.searchFieldIds}
+            allowMultiple={field.properties?.allowMultiple}
+            value={value ?? (field.properties?.allowMultiple ? [] : null)}
+            onChange={onChange}
+            primaryColor={context.primaryColor ?? '#6366f1'}
+            placeholder={field.placeholder || `Select ${field.label}...`}
+            compact
+            lookup={ownerLinkedLookup}
+          />
+        );
+      }
+      // Fallback when editing without a form context or unconfigured target form.
       return (
         <p className="text-sm text-gray-500 dark:text-slate-400">
           {currentValue ? String(Array.isArray(currentValue) ? currentValue.join(', ') : currentValue) : '—'}
-          <span className="block text-xs text-gray-400 dark:text-slate-500 italic mt-0.5">Linked records can't be edited here — value preserved.</span>
+          <span className="block text-xs text-gray-400 dark:text-slate-500 italic mt-0.5">Linked record target form is not configured — value preserved.</span>
         </p>
       );
+    }
 
     default:
       return (

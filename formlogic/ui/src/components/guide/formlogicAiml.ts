@@ -600,7 +600,7 @@ ${tourStops}
   <category>
     <pattern># IMPORT DATABASE # | # IMPORT AN EXISTING DATABASE # | # MIGRATE DATABASE # | # MYSQL # | # POSTGRES # | # POSTGRESQL # | # MSSQL # | # SQL SERVER # | # PRISMA # | # LOCAL BRIDGE # | # BATCH IMPORT # | # BRING DATA #</pattern>
     <template>
-      <showcase target="db-import-workspace"/>[thumbsup] Open Import database under More tools in the sidebar to bring existing MySQL, PostgreSQL, SQL Server (MSSQL), SQLite, Oracle, or Prisma schemas into FormLogic CRUD forms! You can paste or drop SQL dumps, .sqlite/.db files, CSVs, or ZIPs parsed 100 percent in your browser — or run our tiny 127.0.0.1 local bridge so your database credentials stay strictly on your own computer. Foreign keys become linked_record relations, and rows upload in pauseable batches with automatic parent-first ID remapping!
+      <showcase target="db-import-workspace"/>[thumbsup] Open Import database under More tools in the sidebar to bring existing MySQL, PostgreSQL, SQL Server (MSSQL), SQLite, Oracle, or Prisma schemas into FormLogic CRUD forms! Paste or drop SQL dumps, .sqlite/.db files, CSVs, or ZIPs parsed 100 percent in your browser — or run our tiny 127.0.0.1 local bridge to browse local databases right on your computer without sending credentials to FormLogic. Both explicit and auto-matched foreign keys become searchable linked_record select boxes, and rows upload in pauseable batches with automatic parent-first ID remapping!
       <reply>How do linked records work?</reply>
       <reply>Take me on a tour</reply>
     </template>
@@ -610,7 +610,7 @@ ${tourStops}
   <category>
     <pattern># MOVE YOU # | # DRAG YOU # | # HIDE YOU # | # TURN OFF # | # DISMISS # | # IN THE WAY # | # CLOSE YOU #</pattern>
     <template>
-      [smile] You're always in charge! Drag me anywhere on the screen with your mouse or finger to move me out of your way — I'll remember where you put me. To hide me completely, click the X button right below me or the bot icon in the top header. You can drag the round AI Chat icon anywhere on screen too!
+      [smile] You're always in charge! Drag me — or drag my chat box — anywhere on the screen with your mouse or finger to move us out of your way, and I'll remember where you put me. To hide me completely, click the X button right below me or the bot icon in the top header. You can drag the round AI Chat icon anywhere on screen too!
       <reply>How do I customize you?</reply>
       <reply>Take me on a tour</reply>
     </template>
