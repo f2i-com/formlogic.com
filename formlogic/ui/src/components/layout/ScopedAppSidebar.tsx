@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronsUpDown } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { AppTile } from '../apps/AppTile';
 import { listedStatus } from '../../lib/appStatus';
@@ -62,12 +62,12 @@ export function ScopedAppSidebar({ navigation: { app, items, leave }, section, c
           </div>}
         </div>
         {!collapsed && switchableApps.length > 1 && (
-          <div className="relative mt-2.5">
+          <div className="mt-2.5">
             <select
               aria-label="Switch app"
               value={app.id}
               onChange={(e) => switchToApp(e.target.value)}
-              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-slate-200 bg-slate-50 pl-2.5 pr-8 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
+              className="h-9 w-full cursor-pointer rounded-lg border border-slate-200 bg-slate-50 px-2.5 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-white focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800 dark:hover:text-white"
             >
               {switchableApps.map((candidate) => (
                 <option
@@ -79,7 +79,6 @@ export function ScopedAppSidebar({ navigation: { app, items, leave }, section, c
                 </option>
               ))}
             </select>
-            <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           </div>
         )}
       </div>

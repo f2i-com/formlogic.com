@@ -33,7 +33,11 @@ const SECTIONS = [
 
 export function AdminLayout() {
   const { pathname } = useLocation();
-  const section = SECTIONS.find(tab => tab.end ? pathname === tab.to : pathname.startsWith(tab.to)) ?? SECTIONS[0];
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
+  const section = SECTIONS.find(tab => tab.end
+    ? normalizedPath === tab.to
+    : normalizedPath === tab.to || normalizedPath.startsWith(`${tab.to}/`)
+  ) ?? SECTIONS[0];
   useDocumentTitle(`${section.label} · Admin`);
   const isAdmin = useAuthStore((s) => !!s.user?.isAdmin);
   const needsMfa = useAuthStore((s) => !!s.user?.adminNeedsMfa && !s.user?.mfaEnabled);

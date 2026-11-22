@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Activity, Archive, ChevronRight, LogOut, Megaphone, RefreshCw, Wrench } from 'lucide-react';
 import { Badge } from '../../components/ui/Badge';
@@ -34,8 +34,8 @@ function PlatformPane({ id, active, children }: { id: string; active: string; ch
   if (!open && !visited) return null;
   return <div hidden={!open} id={id} tabIndex={-1} className="min-w-0 scroll-mt-24 rounded-xl focus-visible:outline-2 focus-visible:outline-primary-500">{children}</div>;
 }
-const TEXT_FIELD = 'block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
-const SELECT_FIELD = 'min-h-9 max-w-full rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 max-sm:min-h-11';
+const TEXT_FIELD = 'block w-full rounded-lg border border-gray-300 bg-white p-2.5 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100';
+const SELECT_FIELD = 'min-h-9 max-w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-2 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 max-sm:min-h-11';
 
 /**
  * /admin/platform — maintenance mode (close the site), global session boot,
@@ -52,12 +52,20 @@ export function AdminPlatform() {
   const [status, setStatus] = useState<MaintenanceStatus | null>(null);
   const [online, setOnline] = useState<number>(0);
   const [message, setMessage] = useState('');
+  const messageDirtyRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [confirmBoot, setConfirmBoot] = useState(false);
-  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceAction, setMaintenanceAction] = useState<'open' | 'update' | 'close' | null>(null);
+  const maintenanceBusy = maintenanceAction !== null;
   const [confirmMaintenance, setConfirmMaintenance] = useState(false);
   const [bootBusy, setBootBusy] = useState(false);
   const [noticeBusy, setNoticeBusy] = useState(false);
   const [retracting, setRetracting] = useState<string | null>(null);
+  const [showAllNotices, setShowAllNotices] = useState(false);
   const fetchNotices = useCallback(() => api.adminListNotices(), []);
   const { data: noticeData, error: noticeError, loading: noticesLoading, refresh: reloadNotices } = useAdminQuery(fetchNotices);
   const notices = noticeData?.notices ?? [];
@@ -73,6 +81,7 @@ export function AdminPlatform() {
 
   const loadBackups = useCallback(() => {
     api.adminListScheduledBackups().then((r) => {
+      if (!mountedRef.current) return;
       // A failed read used to leave lastRun null, which renders as "Never run" plus
       // setup instructions — telling an admin their nightly backups have never happened
       // when in fact we just could not ask.
@@ -91,6 +100,7 @@ export function AdminPlatform() {
     setRunningBackup(true);
     try {
       const r = await api.adminRunScheduledBackup();
+      if (!mountedRef.current) return;
       if (r.error || !r.data) {
         toast.error('Backup failed', typeof r.error === 'string' ? r.error : undefined);
         return;
@@ -100,17 +110,20 @@ export function AdminPlatform() {
       else toast.success('Backup complete', `${s.ok} account${s.ok === 1 ? '' : 's'} backed up for ${s.date}.`);
       loadBackups();
     } finally {
-      setRunningBackup(false);
+      if (mountedRef.current) setRunningBackup(false);
     }
   };
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
     api.adminGetMaintenance().then((r) => {
+      if (!mountedRef.current) return;
       if (r.data) {
         setStatus(r.data.maintenance);
         setOnline(r.data.onlineUsers);
-        setMessage((m) => m || r.data!.maintenance.message);
+        if (!messageDirtyRef.current) {
+          setMessage(r.data.maintenance.message);
+        }
         setLoadError(null);
       } else {
         setLoadError(r.error || 'Could not load the maintenance status');
@@ -119,18 +132,22 @@ export function AdminPlatform() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (enabled: boolean) => {
-    setMaintenanceBusy(true);
+  const toggle = async (enabled: boolean, action: 'open' | 'update' | 'close') => {
+    setMaintenanceAction(action);
     try {
       const r = await api.adminSetMaintenance(enabled, message);
+      if (!mountedRef.current) return;
       if (r.error || !r.data) toast.error('Could not update maintenance mode', r.error);
       else {
         setStatus(r.data.maintenance);
+        messageDirtyRef.current = false;
         setMessage(r.data.maintenance.message);
         setConfirmMaintenance(false);
         toast.success(enabled ? 'Maintenance settings saved' : 'Site reopened');
       }
-    } finally { setMaintenanceBusy(false); }
+    } finally {
+      if (mountedRef.current) setMaintenanceAction(null);
+    }
   };
 
   const boot = async () => {
@@ -219,7 +236,7 @@ export function AdminPlatform() {
                 id="maintenance-message"
                 disabled={maintenanceBusy}
                 value={message}
-                onChange={(e) => setMessage(e.target.value)}
+                onChange={(e) => { messageDirtyRef.current = true; setMessage(e.target.value); }}
                 rows={2}
                 maxLength={500}
                 className={TEXT_FIELD}
@@ -229,8 +246,8 @@ export function AdminPlatform() {
             <div className="flex flex-wrap gap-2">
               {status?.enabled ? (
                 <>
-                  <Button size="sm" disabled={maintenanceBusy} onClick={() => toggle(false)} leftIcon={<RefreshCw className="h-4 w-4" />}>Reopen the site</Button>
-                  <Button size="sm" variant="outline" isLoading={maintenanceBusy} onClick={() => toggle(true)}>Update message</Button>
+                  <Button size="sm" isLoading={maintenanceAction === 'open'} disabled={maintenanceBusy} onClick={() => void toggle(false, 'open')} leftIcon={<RefreshCw className="h-4 w-4" />}>Reopen the site</Button>
+                  <Button size="sm" variant="outline" isLoading={maintenanceAction === 'update'} disabled={maintenanceBusy} onClick={() => void toggle(true, 'update')}>Update message</Button>
                 </>
               ) : (
                 <Button size="sm" variant="danger" disabled={maintenanceBusy} onClick={() => setConfirmMaintenance(true)} leftIcon={<Wrench className="h-4 w-4" />}>Close site for maintenance</Button>
@@ -279,21 +296,33 @@ export function AdminPlatform() {
             {noticesLoading && <p role="status" className={HELP}>Loading notices…</p>}
             {!noticesLoading && !noticeError && notices.length === 0 && <p className={HELP}>No notices yet.</p>}
             {notices.length > 0 && (
-              <div className={ROW_BOX}>
-                {notices.slice(0, 8).map((n) => (
-                  <div key={n.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                    <div className="min-w-0 text-sm">
-                      <p className="text-gray-900 dark:text-white break-words">{n.message}</p>
-                      <p className="text-xs text-gray-500 dark:text-slate-400">
-                        {n.level} · {n.audience === 'online' ? 'signed-in users' : 'all users'} · {formatDateTimeInZone(n.createdAt, tz)}
-                        {!n.active && ' · ended'}
-                      </p>
+              <div className="space-y-2">
+                <div className={ROW_BOX}>
+                  {(showAllNotices ? notices : notices.slice(0, 8)).map((n) => (
+                    <div key={n.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                      <div className="min-w-0 text-sm">
+                        <p className="text-gray-900 dark:text-white break-words">{n.message}</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400">
+                          {n.level} · {n.audience === 'online' ? 'signed-in users' : 'all users'} · {formatDateTimeInZone(n.createdAt, tz)}
+                          {!n.active && ' · ended'}
+                        </p>
+                      </div>
+                      {n.active && (
+                        <Button size="sm" variant="outline" disabled={retracting !== null || noticesLoading} isLoading={retracting === n.id} onClick={() => void retractNotice(n.id)}>Retract</Button>
+                      )}
                     </div>
-                    {n.active && (
-                      <Button size="sm" variant="outline" disabled={retracting !== null || noticesLoading} isLoading={retracting === n.id} onClick={() => void retractNotice(n.id)}>Retract</Button>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
+                {notices.length > 8 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllNotices((v) => !v)}
+                    aria-expanded={showAllNotices}
+                    className="cursor-pointer rounded text-xs font-semibold text-primary-600 hover:underline focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-primary-400"
+                  >
+                    {showAllNotices ? 'Show fewer notices' : `Show all ${notices.length} notices`}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -315,7 +344,7 @@ export function AdminPlatform() {
                     ? <>Loading backup history…</>
                   : backupLastRun
                     ? <>Last run {formatDateTimeInZone(backupLastRun, tz)}</>
-                    : <>Never run — schedule <code className="fl-mono">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
+                    : <>Never run — schedule <code className="font-mono text-gray-700 dark:text-slate-300">bin/backup-accounts.php</code> daily (cron or Task Scheduler), or run one now.</>}
               </p>
               <Button variant="outline" size="sm" onClick={runBackupNow} isLoading={runningBackup} leftIcon={<Archive className="h-4 w-4" />}>
                 {runningBackup ? 'Backing up…' : 'Run backup now'}
@@ -352,12 +381,12 @@ export function AdminPlatform() {
       <ConfirmDialog
         isOpen={confirmMaintenance}
         onClose={() => { if (!maintenanceBusy) setConfirmMaintenance(false); }}
-        onConfirm={() => void toggle(true)}
+        onConfirm={() => void toggle(true, 'close')}
         title="Close the site for maintenance?"
         message="Users will temporarily lose access to dashboards, APIs, and embedded forms. They will see your maintenance message. Administrators keep access and can reopen the site here."
         confirmLabel="Close site for maintenance"
         variant="danger"
-        isLoading={maintenanceBusy}
+        isLoading={maintenanceAction === 'close'}
       />
       <ConfirmDialog
         isOpen={confirmBoot}

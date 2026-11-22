@@ -3,7 +3,7 @@
 <p align="center"><strong>Build forms and business apps with a backend, a database and the AI you choose.</strong></p>
 
 <p align="center">
-  Create forms, dashboards, portals and automations in one workspace. Import an existing app, edit its interface and backend, and manage its SQLite records without leaving FormLogic. Build or import <strong>JavaScript, React or Vue</strong> apps, and connect <strong>OAIY</strong> for AI and local services. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
+  Create forms, dashboards, portals and automations in one workspace. Import an existing app, edit its interface and backend, and manage its SQLite records without leaving FormLogic. Build or import <strong>SoftN, JavaScript, React, Vue, PHP, Rust or Python</strong> apps, connect <strong>OAIY</strong> for AI and local services, and optionally toggle the <strong>bot.computer</strong> 3D/2D interactive workspace guide. Add <strong>Aokie</strong> when calls, messages and appointments belong in the same app.
 </p>
 
 <p align="center">
@@ -38,7 +38,7 @@
 2. **Share one database across apps & API backends.** Link multiple SoftN apps, Form Apps, and dedicated external **API Backends** (callable via scoped API keys) to the exact same SQLite database.
 3. **Connect the work with Flows.** Trigger flows from form submissions, SQLite table changes, or programmatically over the API, and call sibling apps in the same account.
 4. **Test privately in the Marketplace.** Launch any SoftN app or modular plugin in a private, source-hidden live sandbox (with its own ephemeral SQLite database and 1-click Reset) before installing or buying.
-5. **Build visually or via MCP.** Use the Form Builder, App Studio, Visual Builder, AI Studio, or connect Claude/Cursor/Codex via FormLogic's 59-tool **MCP server** (`/api/mcp`).
+5. **Build visually, via MCP, or with an interactive guide.** Use the Form Builder, App Studio, Visual Builder, AI Studio, or connect Claude/Cursor/Codex via FormLogic's 59-tool **MCP server** (`/api/mcp`). Toggle the optional **bot.computer** 3D/2D interactive guide (`Guide` button in the header or `Settings → Workspace → Interactive guide`) for route-aware full-body walkthrough tours and a built-in AIML 2.0 Q&A assistant. Both the guide avatar and the Site AI Chat launcher can be freely dragged anywhere on screen or hidden anytime.
 
 <table>
   <tr>
@@ -413,7 +413,7 @@ cargo check -p aokie-plugin --features voice
 cargo clippy --workspace --all-targets
 ```
 
-Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF protection, endpoint-specific rate limits, optional TOTP MFA, sandboxed user code, SSRF-guarded outbound requests, custom-screen no-egress CSP, signed packages/manifests and a hash-chained audit log. The authenticated **Doctor** view checks critical production dependencies and configuration after a deploy or restore.
+Security controls include server-enforced RBAC, HttpOnly session cookies, CSRF protection, endpoint-specific rate limits, optional TOTP MFA, optional encryption at rest (`DATA_ENCRYPTION_KEY`) and sealed nightly backups (`BACKUP_PUBLIC_KEY`), sandboxed user code, SSRF-guarded outbound requests, custom-screen no-egress CSP, signed packages/manifests and a hash-chained audit log. The authenticated **Doctor** view checks critical production dependencies, workers, encryption, backup status and dual-store consistency after a deploy or restore.
 
 <details>
 <summary><strong>Current beta boundaries</strong></summary>

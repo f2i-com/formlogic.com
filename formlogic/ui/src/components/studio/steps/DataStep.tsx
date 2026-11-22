@@ -138,7 +138,7 @@ export function DataStep({
   // `null` = not editing, so the heading always shows the stored name.
   const [typeNameDraft, setTypeNameDraft] = useState<string | null>(null);
   const [showRelation, setShowRelation] = useState(false);
-  const [vaultAction, setVaultAction] = useState<'create-type' | 'add-field' | null>(null);
+  const [vaultAction, setVaultAction] = useState<'create-type' | 'add-field' | { kind: 'toggle-required'; field: FormField; required: boolean } | null>(null);
   const [showVaultSetup, setShowVaultSetup] = useState(false);
   const [showVaultUnlock, setShowVaultUnlock] = useState(false);
   const fieldLabelRef = useRef<HTMLInputElement>(null);
@@ -177,7 +177,9 @@ export function DataStep({
    * the "Add a form" dialog is closed first — two stacked aria-modal dialogs
    * meant one Escape dismissed both and the half-typed data type vanished.
    */
-  const ensurePrivateReady = async (action: 'create-type' | 'add-field'): Promise<boolean> => {
+  const ensurePrivateReady = async (
+    action: 'create-type' | 'add-field' | { kind: 'toggle-required'; field: FormField; required: boolean },
+  ): Promise<boolean> => {
     if (isDemo) {
       toast.info('Private forms need a workspace', 'This demo app stays in IndexedDB. Sign up to create end-to-end encrypted forms.');
       return false;
@@ -280,7 +282,11 @@ export function DataStep({
    * through it, so the private-form signing rule and the store re-seed can never be
    * implemented once and forgotten the second time.
    */
-  const writeFields = async (nextFields: FormField[], label: string) => {
+  const writeFields = async (
+    nextFields: FormField[],
+    label: string,
+    retryAction: 'add-field' | { kind: 'toggle-required'; field: FormField; required: boolean } = 'add-field',
+  ) => {
     const form = selected?.form;
     if (!form) return false;
     const res = await trackStudioSave(
@@ -294,7 +300,7 @@ export function DataStep({
       (r) => r.ok
     );
     if (!res.ok) {
-      if (res.needsVault) void ensurePrivateReady('add-field');
+      if (res.needsVault) void ensurePrivateReady(retryAction);
       else toast.error('Could not save the change', res.error);
       return false;
     }
@@ -306,11 +312,12 @@ export function DataStep({
    *  usage lookup and the keep-data-vs-purge dialog. */
   const toggleRequired = async (field: FormField, required: boolean) => {
     if (!selected?.form || savingField) return;
-    if (selected.form.isPrivate && !(await ensurePrivateReady('add-field'))) return;
+    const retryAction = { kind: 'toggle-required' as const, field, required };
+    if (selected.form.isPrivate && !(await ensurePrivateReady(retryAction))) return;
     setSavingField(true);
     try {
       const nextFields = selected.form.fields.map((f) => (f.id === field.id ? { ...f, required } : f));
-      await writeFields(nextFields, `${formNameById[selected.form.id]} fields`);
+      await writeFields(nextFields, `${formNameById[selected.form.id]} fields`, retryAction);
     } finally {
       setSavingField(false);
     }
@@ -394,7 +401,8 @@ export function DataStep({
         (r) => r.ok
       );
       if (!res.ok) {
-        toast.error('Could not add the field', res.error);
+        if (res.needsVault) void ensurePrivateReady('add-field');
+        else toast.error('Could not add the field', res.error);
         return;
       }
       toast.success('Field added', `"${label}" was added to ${formNameById[selected.form.id]}.`);
@@ -409,7 +417,10 @@ export function DataStep({
     const action = vaultAction;
     setVaultAction(null);
     if (action === 'create-type') { setShowAddType(true); void createDataType(); }
-    if (action === 'add-field') void addField();
+    else if (action === 'add-field') void addField();
+    else if (action && typeof action === 'object' && action.kind === 'toggle-required') {
+      void toggleRequired(action.field, action.required);
+    }
   };
 
   const cancelVaultAction = () => {
@@ -438,14 +449,14 @@ export function DataStep({
           <h3 className="px-1 text-sm font-semibold text-gray-900 dark:text-white">App forms</h3>
           {/* The actions wrap as whole buttons: in the narrow rail "Export data" used to break
               into two lines inside its own button. */}
-          <div className="flex flex-wrap items-center gap-1 whitespace-nowrap">
+          <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap">
             {/* The section that owns the app's data is where an owner looks for the
                 data itself. Exporting it was four hops away, under App settings →
                 Manage → Records. Acting admins keep their own export gate on that
                 page and do not get it here. */}
             {!acting && <ExportDataMenu appId={app.id} appSlug={app.slug} />}
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => navigate(`/apps/${app.id}/records`, { state: studioReturn })}
               title="Record counts, per-form responses and analytics"
@@ -453,7 +464,7 @@ export function DataStep({
               Records
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               onClick={() => navigate(`/apps/${app.id}/forms`, { state: studioReturn })}
               title="Attach existing forms, reorder and set visibility"

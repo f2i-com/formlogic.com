@@ -127,9 +127,9 @@ export default function ConnectAiWizard() {
       <div className="w-full max-w-3xl space-y-5 px-4 pb-24 pt-4 sm:px-6">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 text-sm text-gray-500"
+          className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-white"
         >
-          <ArrowLeft size={16} />
+          <ArrowLeft size={16} aria-hidden="true" />
           Home
         </Link>
         <div>
@@ -182,7 +182,7 @@ export default function ConnectAiWizard() {
                     key={value}
                     aria-pressed={method === value}
                     onClick={() => setMethod(value)}
-                    className={`rounded-xl border p-5 text-left ${method === value ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30" : "border-gray-200 dark:border-slate-700"}`}
+                    className={`cursor-pointer rounded-xl border p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${method === value ? "border-primary-500 bg-primary-50 dark:border-primary-500/70 dark:bg-primary-950/30" : "border-gray-200 hover:border-gray-300 hover:bg-gray-50/70 dark:border-slate-700 dark:hover:border-slate-600 dark:hover:bg-slate-800/50"}`}
                   >
                     <Icon size={22} className="mb-3" />
                     <strong className="block">{title}</strong>
@@ -198,11 +198,11 @@ export default function ConnectAiWizard() {
             <>
               <fieldset className="space-y-2">
                 <legend className="mb-2 text-sm font-medium">Connection method</legend>
-                <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 hover:border-gray-300 dark:border-slate-700 dark:hover:border-slate-600">
                   <input type="radio" name="desktop-connection" value="account" checked={desktopConnection === 'account'} onChange={() => setDesktopConnection('account')} className="mt-1" />
                   <span className="text-sm"><strong className="block">Through my FormLogic account</strong><span className="text-gray-500 dark:text-slate-400">Use OAIY from any device through the encrypted AI relay.</span></span>
                 </label>
-                <label className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 dark:border-slate-700">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 p-3 hover:border-gray-300 dark:border-slate-700 dark:hover:border-slate-600">
                   <input type="radio" name="desktop-connection" value="local" checked={desktopConnection === 'local'} onChange={() => setDesktopConnection('local')} className="mt-1" />
                   <span className="text-sm"><strong className="block">Directly from this computer</strong><span className="text-gray-500 dark:text-slate-400">Pair this browser with OAIY running on the same computer.</span></span>
                 </label>
@@ -213,7 +213,7 @@ export default function ConnectAiWizard() {
                     href="https://oaiy.com/#download"
                     target="_blank"
                     rel="noreferrer"
-                    className="text-primary-600 underline"
+                    className="text-primary-600 underline dark:text-primary-300"
                   >
                     Get OAIY
                   </a>{" "}
@@ -232,7 +232,7 @@ export default function ConnectAiWizard() {
                 </li>
               </ol>
               {desktopConnection === 'local' && <LocalRuntimePanel />}
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
                 {desktopConnection === 'account'
                   ? 'No port forwarding or localhost pairing is needed. Select your AI provider in the next step. If several computers are linked, choose their assignments in Settings → AI & devices → Linked desktops.'
                   : 'Pairing lets this browser use OAIY. Your AI provider is selected in the next step.'}
@@ -257,7 +257,7 @@ export default function ConnectAiWizard() {
               <Button onClick={() => setServicesOpen(true)}>
                 Add or test an AI service
               </Button>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
                 Keys use the existing browser credential store. For a provider
                 that blocks browser requests, configure it in OAIY instead.
               </p>
@@ -265,7 +265,7 @@ export default function ConnectAiWizard() {
           )}
           {step === 2 && (
             <>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-500 dark:text-slate-400">
                 Select the provider you connected. These settings power chat and
                 automations using your default AI.
               </p>
@@ -274,13 +274,13 @@ export default function ConnectAiWizard() {
                 <Button onClick={() => void verify()} isLoading={checking}>
                   Check saved setup
                 </Button>
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-gray-500 dark:text-slate-400">
                   Checks your saved selection and available provider. It does
                   not send a paid AI prompt.
                 </p>
               </div>
               {error && (
-                <p role="alert" className="text-sm text-red-600">
+                <p role="alert" className="text-sm text-red-600 dark:text-red-400">
                   {error}
                 </p>
               )}
@@ -315,7 +315,7 @@ export default function ConnectAiWizard() {
               Back
             </Button>
           ) : (
-            <Link to="/" className="text-sm text-gray-500 underline">
+            <Link to="/" className="text-sm text-gray-500 underline hover:text-gray-900 dark:text-slate-400 dark:hover:text-white">
               Skip for now
             </Link>
           )}

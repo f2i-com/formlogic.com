@@ -1,4 +1,5 @@
 import { downloadPackProjects } from '../lib/packProjectDownload';
+import { API_BASE_URL } from '../lib/apiBase';
 import { starterCatalog } from '../lib/starterCatalog';
 import '../styles/landing-v2.css';
 import '../styles/landing-refresh.css';
@@ -222,8 +223,8 @@ function PackDetailContent() {
   }), [slug, loadPackDetail, loadRatings]);
 
   useEffect(() => {
-    if (pack) return deferEffect(() => { void checkInstalled(); });
-  }, [pack, checkInstalled]);
+    if (pack && user) return deferEffect(() => { void checkInstalled(); });
+  }, [pack, user, checkInstalled]);
 
   // Check if signed-in member already owns an active license for this Marketplace SoftN app / plugin
   useEffect(() => {
@@ -237,7 +238,7 @@ function PackDetailContent() {
         const found = res.data.licenses.find((l) => l.catalogId === pack.id) ?? null;
         setActiveLicense(found);
       }).catch(() => {});
-      if (pack.itemType === 'plugin' && myApps.length === 0) {
+      if ((pack.itemType === 'plugin' || pack.bundledSoftnPack) && myApps.length === 0) {
         void fetchApps();
       }
       return () => { cancelled = true; };
@@ -567,7 +568,7 @@ function PackDetailContent() {
   const sourcesButton = pack.folderSource && !isPrivateSource && (
     pack.bundledSoftnPack ? (
       <a
-        href={`/api/packs/catalog/${encodeURIComponent(pack.slug)}/download?format=softn`}
+        href={`${API_BASE_URL}/packs/catalog/${encodeURIComponent(pack.slug)}/download?format=softn`}
         className={cn(
           'inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800',
           touch
@@ -641,7 +642,7 @@ function PackDetailContent() {
   ));
 
   const ownedSoftnApps = myApps.filter((a) => a.status !== 'archived' && !!a.settings?.softnApp);
-  const bundledInstallOptions = !isDemo && pack.bundledSoftnPack && !installedAppId && !installedMgmtAppId && (
+  const bundledInstallOptions = !isDemo && !!user && pack.bundledSoftnPack && !installedAppId && !installedMgmtAppId && (
     <div className="mt-3 space-y-2.5 rounded-xl border border-primary-200/80 bg-primary-50/50 p-3.5 dark:border-primary-500/30 dark:bg-primary-500/10">
       <p className="text-xs font-semibold text-primary-950 dark:text-primary-100">
         Choose how to install this Free SoftN + Forms pack:
@@ -675,14 +676,24 @@ function PackDetailContent() {
             <select
               value={linkTargetSoftnAppId}
               onChange={(e) => setLinkTargetSoftnAppId(e.target.value)}
-              className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              disabled={ownedSoftnApps.length === 0}
+              className="mt-1 h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
             >
-              <option value="">Choose one of your installed SoftN apps…</option>
+              <option value="">
+                {ownedSoftnApps.length === 0
+                  ? 'No SoftN apps in your workspace yet'
+                  : 'Choose one of your installed SoftN apps…'}
+              </option>
               {ownedSoftnApps.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </label>
+          {ownedSoftnApps.length === 0 && (
+            <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+              Install a SoftN app first (or pick &ldquo;SoftN App + Forms&rdquo; above to install both together).
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -862,8 +873,8 @@ function PackDetailContent() {
 
   // What's inside — the actual forms and apps this pack installs
   const insideHeading = workspace
-    ? 'mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-slate-400'
-    : 'font-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-400 dark:text-slate-500';
+    ? 'mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-600 dark:text-slate-400'
+    : 'font-mono mb-2.5 text-[11px] uppercase tracking-[0.2em] text-gray-600 dark:text-slate-400';
   const insideLists = (
     <>
       {appNames.length > 0 && (
@@ -928,8 +939,9 @@ function PackDetailContent() {
               <p className="mt-0.5 text-xs text-gray-600 dark:text-slate-400">{v.changelog}</p>
             )}
           </div>
-          {!installed && (
+          {!installed && !isDemo && !isSoftnMarketplaceItem && (
             <button
+              type="button"
               onClick={() => handleInstall(v.id)}
               disabled={installing}
               className={cn(
@@ -947,10 +959,15 @@ function PackDetailContent() {
 
   // Ratings & reviews. With no reviews this collapses to a single quiet
   // line so an empty pack page isn't dominated by an empty ratings block.
-  const quiet = workspace ? 'text-gray-500 dark:text-slate-400' : 'text-gray-400 dark:text-slate-500';
+  const quiet = 'text-gray-600 dark:text-slate-400';
   const showRatings = !pack.folderSource;
   const ratingsOpen = ratings.length > 0 || !!userRating || showRatingForm;
-  const ratingForm = (
+  const ratingForm = isDemo ? null : !user ? (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3">
+      <p className="text-sm text-gray-600 dark:text-slate-300">Sign in to rate or review this pack.</p>
+      <Button size="sm" variant="secondary" onClick={goSignIn}>Sign in</Button>
+    </div>
+  ) : (
     <div className="rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/50 p-3">
       <p className="mb-2 text-sm font-medium text-gray-700 dark:text-slate-300">
         {userRating ? 'Update your rating' : 'Rate this pack'}
@@ -1216,7 +1233,7 @@ function PackDetailContent() {
               <span className="font-mono text-sm font-medium text-gray-700 dark:text-slate-300">
                 {pack.avgRating.toFixed(1)}
               </span>
-              <span className="font-mono text-xs text-gray-400 dark:text-slate-500">
+              <span className="font-mono text-xs text-gray-600 dark:text-slate-400">
                 ({plural(pack.ratingCount, 'rating')})
               </span>
             </div>

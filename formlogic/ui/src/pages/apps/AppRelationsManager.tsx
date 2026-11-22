@@ -113,6 +113,7 @@ export function AppRelationsManager() {
       const upd = await saveFormFields(deleteTarget.sourceFormId, updatedFields, { fieldsRevision: form.fieldsRevision });
       if (!upd.ok) {
         setDeleteError(upd.error ?? 'Could not delete the relation.');
+        setDeleteTarget(null);
         setDeleting(false);
         return;
       }
@@ -120,6 +121,7 @@ export function AppRelationsManager() {
       await loadRelations();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete relation');
+      setDeleteTarget(null);
     }
     setDeleting(false);
   };
@@ -200,7 +202,7 @@ export function AppRelationsManager() {
       <PageBody>
         <p className="mb-3 text-sm text-gray-500 dark:text-slate-400">A relation is a linked-record field: it lets a record in one form point at a record in another.</p>
         {deleteError && (
-          <div className="mb-3 flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
+          <div role="alert" className="mb-3 flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
             <span>{deleteError}</span>
             <button onClick={() => setDeleteError(null)} className="ml-2 inline-flex h-8 w-8 flex-none cursor-pointer items-center justify-center rounded-lg text-red-400 hover:text-red-600 max-sm:h-11 max-sm:w-11 dark:hover:text-red-300" aria-label="Dismiss error">
               <X className="h-4 w-4" />
@@ -303,7 +305,7 @@ export function AppRelationsManager() {
       {/* Delete confirmation */}
       <ConfirmDialog
         isOpen={!!deleteTarget}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
         onConfirm={handleDelete}
         title="Delete relation"
         message={deleteTarget ? `Remove the "${deleteTarget.field.label}" linked-record field from "${deleteTarget.sourceFormName}"? This will also remove any existing linked data for this field.` : ''}

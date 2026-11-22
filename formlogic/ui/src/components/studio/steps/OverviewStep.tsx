@@ -100,6 +100,10 @@ export function OverviewStep({
   }, [appForms, formsById]);
 
   const activeFlows = flows.filter((f) => f.enabled).length;
+  const screenFormCount = useMemo(
+    () => appForms.filter((af) => af.isVisible !== false && (af.settings as { hidden?: boolean } | undefined)?.hidden !== true).length,
+    [appForms]
+  );
   const canStartForm = formsKnown && !appForms.length && !nativeTableCount;
   const summary = [`${appForms.length} ${appForms.length === 1 ? 'form' : 'forms'}`];
   if (nativeTableCount) summary.push(`${nativeTableCount} database ${nativeTableCount === 1 ? 'table' : 'tables'}`);
@@ -241,7 +245,7 @@ export function OverviewStep({
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => navigate(`/app/${app.slug}`, { state: studioReturn })}
+              onClick={() => window.open(appUrl, '_blank', 'noopener,noreferrer')}
               leftIcon={<ExternalLink className="h-4 w-4" />}
             >
               Open app
@@ -255,7 +259,7 @@ export function OverviewStep({
         <ul className="grid gap-2 @lg/studio:grid-cols-2 @4xl/studio:grid-cols-3">
           <SummaryLink icon={Database} label="Forms" detail={!formsKnown ? 'Forms not loaded' : canStartForm ? 'Add your first form' : summary.join(' · ')}
             to={`/apps/${app.id}/studio/data${canStartForm ? '?new=form' : ''}`} />
-          <SummaryLink icon={LayoutPanelTop} label="Screens" detail={formsKnown ? `${appForms.length + 1} ${appForms.length === 0 ? 'screen' : 'screens'}` : 'Edit app screens'}
+          <SummaryLink icon={LayoutPanelTop} label="Screens" detail={formsKnown ? `${screenFormCount + 1} ${screenFormCount === 0 ? 'screen' : 'screens'}` : 'Edit app screens'}
             to={`/apps/${app.id}/studio/screens`} />
           <SummaryLink icon={GitBranch} label="Automations" detail={flows.length
             ? `${flows.length} ${flows.length === 1 ? 'automation' : 'automations'} · ${activeFlows} running` : 'Add an automation'}

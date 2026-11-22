@@ -33,7 +33,7 @@ import { useAppStore } from '../../../stores/appStore';
 import { useAppUserStore } from '../../../stores/appUserStore';
 import { returnToState } from '../../../hooks/useReturnTo';
 import { trackStudioSave } from '../studioSaveState';
-import { cn, copyToClipboard, formatRelativeTime } from '../../../lib/utils';
+import { cn, copyToClipboard, formatRelativeTime, parseServerDate } from '../../../lib/utils';
 import { useAuthStore } from '../../../stores/authStore';
 import { APP_LEVEL_PERMISSIONS, APP_PERMISSION_LABELS, OWNER_ONLY_MEMBER_REASON, roleGrantsOwnerGuarded, viewerOwnsApp } from '../../../types/app';
 import type { App, AppForm, AppRole, PermissionAction } from '../../../types/app';
@@ -83,6 +83,19 @@ export function AccessStep({
   onReloadApp: () => Promise<void>;
 }) {
   const [tab, setTab] = useState<AccessTab>('people');
+  // Keep RolesView mounted once opened so unsaved permission matrix edits survive switching tabs.
+  const [rolesMounted, setRolesMounted] = useState(false);
+  if (tab === 'roles' && !rolesMounted) setRolesMounted(true);
+
+  const onTabKeyDown = (e: React.KeyboardEvent, idx: number) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    e.preventDefault();
+    const nextIdx = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1
+      : (idx + (e.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length;
+    const next = TABS[nextIdx];
+    setTab(next.id);
+    document.getElementById(`access-tab-${next.id}`)?.focus();
+  };
 
   return (
     <div className="space-y-4">
@@ -90,7 +103,7 @@ export function AccessStep({
           data manager's Browse / Structure / Export): a plain row, not a box of pills. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <div className="flex min-w-0 max-w-full gap-0.5 max-sm:w-full" role="tablist" aria-label="Access sections">
-          {TABS.map((item) => (
+          {TABS.map((item, idx) => (
             <button
               key={item.id}
               type="button"
@@ -98,8 +111,10 @@ export function AccessStep({
               id={`access-tab-${item.id}`}
               aria-controls={`access-panel-${item.id}`}
               aria-selected={tab === item.id}
+              tabIndex={tab === item.id ? 0 : -1}
               aria-label={item.label}
               onClick={() => setTab(item.id)}
+              onKeyDown={(e) => onTabKeyDown(e, idx)}
               className={cn(
                 'flex h-8 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium transition max-sm:h-11 max-sm:flex-1 max-sm:px-2',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
@@ -119,11 +134,21 @@ export function AccessStep({
         </Badge>
       </div>
 
-      <div id={`access-panel-${tab}`} role="tabpanel" aria-labelledby={`access-tab-${tab}`}>
-        {tab === 'roles' && <RolesView app={app} roles={roles} appForms={appForms} formsById={formsById} onReloadRoles={onReloadRoles} />}
-        {tab === 'people' && <PeopleView app={app} roles={roles} />}
-        {tab === 'signup' && <SignupView app={app} roles={roles} onReloadApp={onReloadApp} />}
-      </div>
+      {rolesMounted && (
+        <div id="access-panel-roles" role="tabpanel" aria-labelledby="access-tab-roles" hidden={tab !== 'roles'}>
+          <RolesView app={app} roles={roles} appForms={appForms} formsById={formsById} onReloadRoles={onReloadRoles} />
+        </div>
+      )}
+      {tab === 'people' && (
+        <div id="access-panel-people" role="tabpanel" aria-labelledby="access-tab-people">
+          <PeopleView app={app} roles={roles} />
+        </div>
+      )}
+      {tab === 'signup' && (
+        <div id="access-panel-signup" role="tabpanel" aria-labelledby="access-tab-signup">
+          <SignupView app={app} roles={roles} onReloadApp={onReloadApp} />
+        </div>
+      )}
     </div>
   );
 }
@@ -551,6 +576,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
     | { kind: 'invite'; id: string; label: string }
     | null
   >(null);
+  const [confirming, setConfirming] = useState(false);
   const browserOnlyDemo = isDemoLocalId(app.id);
 
   // A failed read is not "no members". The store slice stays undefined on failure,
@@ -558,6 +584,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
   // invitation to add the people who are already there.
   const [membersFailed, setMembersFailed] = useState(false);
   const [membersReloadToken, setMembersReloadToken] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     // The store methods throw on API failure (for Promise.allSettled consumers) —
     // record it here instead of leaving an unhandled rejection. setState inside the
@@ -565,12 +592,14 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
     Promise.allSettled([fetchUsers(app.id), fetchInvitations(app.id)]).then((results) => {
       const failed = results.some((r) => r.status === 'rejected');
       setMembersFailed(failed);
+      setNowMs(Date.now());
       if (failed) toast.error('Some member data could not be loaded');
     });
   }, [app.id, fetchUsers, fetchInvitations, membersReloadToken]);
 
   const pendingInvites = invitations.filter((i) => i.status === 'pending');
-  const defaultInviteRole = roles.find((r) => !r.isSystem) ?? roles.find((r) => r.name !== 'Owner') ?? roles[0];
+  const invitableRoles = assignableRoles.filter((r) => !ownerOnlyRole(r));
+  const defaultInviteRole = invitableRoles.find((r) => !r.isSystem) ?? invitableRoles[0];
 
   const sendInvite = async () => {
     const email = inviteEmail.trim();
@@ -608,13 +637,18 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
   };
 
   const runConfirm = async () => {
-    if (!confirm) return;
+    if (!confirm || confirming) return;
     const target = confirm;
-    setConfirm(null);
-    if (target.kind === 'member') {
-      if (await removeUser(app.id, target.id)) toast.success('Member removed', `${target.label} no longer has access.`);
-    } else if (await revokeInvitation(app.id, target.id)) {
-      toast.success('Invitation revoked', `${target.label} can no longer use that link.`);
+    setConfirming(true);
+    try {
+      if (target.kind === 'member') {
+        if (await removeUser(app.id, target.id)) toast.success('Member removed', `${target.label} no longer has access.`);
+      } else if (await revokeInvitation(app.id, target.id)) {
+        toast.success('Invitation revoked', `${target.label} can no longer use that link.`);
+      }
+      setConfirm(null);
+    } finally {
+      setConfirming(false);
     }
   };
 
@@ -734,7 +768,9 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
             </div>
           );
         })}
-        {pendingInvites.map((invite) => (
+        {pendingInvites.map((invite) => {
+          const expired = !!invite.expiresAt && parseServerDate(invite.expiresAt).getTime() < nowMs;
+          return (
           <div key={invite.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 sm:min-h-10 sm:py-1 dark:hover:bg-white/[0.03]">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-xs font-bold text-amber-700 sm:h-7 sm:w-7 sm:rounded-lg sm:text-[10px] dark:bg-amber-500/10 dark:text-amber-300">
               {invite.email.slice(0, 2).toUpperCase()}
@@ -745,7 +781,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
                 Invited {formatRelativeTime(invite.createdAt)}{invite.roleName ? ` · ${invite.roleName}` : ''}
               </span>
             </span>
-            <Badge variant="warning" size="sm">Invited</Badge>
+            <Badge variant={expired ? 'error' : 'warning'} size="sm">{expired ? 'Expired' : 'Invited'}</Badge>
             <button
               type="button"
               onClick={() => setConfirm({ kind: 'invite', id: invite.id, label: invite.email })}
@@ -756,7 +792,8 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
               <X className="h-4 w-4" />
             </button>
           </div>
-        ))}
+          );
+        })}
         {membersFailed ? (
           <div className="p-4">
             <LoadFailure
@@ -789,8 +826,8 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
                 </Button>
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setInviteLink(null)}>Invite someone else</Button>
-                <Button onClick={() => { setInviteLink(null); setShowInvite(false); }}>Done</Button>
+                <Button variant="secondary" onClick={() => { setInviteLink(null); setLinkCopied(false); }}>Invite someone else</Button>
+                <Button onClick={() => { setInviteLink(null); setLinkCopied(false); setShowInvite(false); }}>Done</Button>
               </div>
             </>
           ) : (
@@ -808,12 +845,14 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
                 <label htmlFor="studio-invite-role" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">Role</label>
                 <select
                   id="studio-invite-role"
-                  value={inviteRoleId}
+                  value={inviteRoleId || defaultInviteRole?.id || ''}
                   onChange={(e) => setInviteRoleId(e.target.value)}
                   className="h-10 w-full cursor-pointer rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                 >
                   {assignableRoles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.name}</option>
+                    <option key={role.id} value={role.id} disabled={ownerOnlyRole(role)}>
+                      {ownerOnlyRole(role) ? `${role.name} (owner only)` : role.name}
+                    </option>
                   ))}
                 </select>
                 <p className="mt-1.5 text-xs text-gray-500 dark:text-slate-400">
@@ -821,7 +860,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
                 </p>
               </div>
               <div className="flex justify-end">
-                <Button onClick={sendInvite} isLoading={inviting} disabled={!inviteEmail.trim()}>
+                <Button onClick={sendInvite} isLoading={inviting} disabled={!inviteEmail.trim() || !(inviteRoleId || defaultInviteRole?.id)}>
                   Send invitation
                 </Button>
               </div>
@@ -832,7 +871,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
 
       <ConfirmDialog
         isOpen={confirm !== null}
-        onClose={() => setConfirm(null)}
+        onClose={() => { if (!confirming) setConfirm(null); }}
         onConfirm={runConfirm}
         title={confirm?.kind === 'invite' ? 'Revoke this invitation?' : 'Remove this member?'}
         message={
@@ -842,6 +881,7 @@ export function PeopleView({ app, roles, returnLabel = 'App Studio' }: { app: Ap
         }
         confirmLabel={confirm?.kind === 'invite' ? 'Revoke invitation' : 'Remove member'}
         variant="danger"
+        isLoading={confirming}
       />
     </section>
   );
@@ -946,7 +986,7 @@ export function SignupView({ app, roles, onReloadApp, peopleName = 'People & inv
               className="mt-1.5 h-11 w-full min-w-0 cursor-pointer rounded-xl border border-gray-200 bg-gray-50 px-3 text-sm font-semibold text-gray-700 outline-none focus:border-primary-400 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200"
             >
               <option value="">Lowest-privilege role (automatic)</option>
-              {roles.filter((r) => r.name !== 'Owner').map((role) => (
+              {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((role) => (
                 <option key={role.id} value={role.id}>{role.name}</option>
               ))}
             </select>

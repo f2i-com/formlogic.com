@@ -493,10 +493,10 @@ function Workspace({ app }: { app: App }) {
 
       <Messages draft={draft} onRequestDiscard={() => setConfirmDiscard(true)} />
 
-      {!ready && !draft.error && <p role="status" className="mt-8 text-sm text-slate-500">Loading your app…</p>}
+      {!ready && !draft.error && <p role="status" className="mt-8 text-sm text-slate-500 dark:text-slate-400">Loading your app…</p>}
       {ready && !project && !readOnly && <Setup app={app} aiReady={ai.ready} aiReason={ai.reason} onAiRecheck={ai.recheck} pendingOpen={pendingOpen ?? starterFromHistory(app.id, location.state)}
         onInstalled={open => { setSoftnOpen(open); setReloadKey(key => key + 1); }} />}
-      {ready && !project && readOnly && <p className="mt-8 text-sm text-slate-500">This app has nothing installed yet.</p>}
+      {ready && !project && readOnly && <p className="mt-8 text-sm text-slate-500 dark:text-slate-400">This app has nothing installed yet.</p>}
 
       {project && <>
         {/* An app that can use AI, with its AI off: one line for its owner, never for anyone else. */}
@@ -800,7 +800,7 @@ function Workspace({ app }: { app: App }) {
           {/* The panels fill the page's width in as many columns as fit, each as tall as what it
               holds: one column on a phone, two on a laptop, three on a wide screen. */}
           <div className={cn('mt-3', PANEL_COLUMNS)}>
-          <Panel id="settings-access" title="Who can use it" icon={<Users className="h-4 w-4" />}>
+          <Panel id="settings-access" className="scroll-mt-24" title="Who can use it" icon={<Users className="h-4 w-4" />}>
             <fieldset disabled={busy || readOnly} className="space-y-2">
               <legend className="sr-only">Who can use it</legend>
               {([['members', 'Only people you invite', 'Visitors sign in to FormLogic as members of this app. Invite them in Members.', Lock], ['application', 'Anyone with the link', 'The app is open to everyone. If it has its own sign-in, that is what protects it.', Globe]] as const).map(([value, label, hint, Icon]) =>
@@ -813,17 +813,17 @@ function Workspace({ app }: { app: App }) {
             {!projectHasBackend(project) && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">This app keeps its records in each visitor&rsquo;s own browser, so changing this starts everyone again from empty.</p>}
             <Link to={softnWorkspacePath(app.id, 'members')} className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-primary-600 dark:text-primary-300">Members</Link>
           </Panel>
-          {app.ownerId === userId && <Panel id="settings-before" title="Before it opens" icon={<Lock className="h-4 w-4" />}>
+          {app.ownerId === userId && <Panel id="settings-before" className="scroll-mt-24" title="Before it opens" icon={<Lock className="h-4 w-4" />}>
             <RequirementsSetting value={app.settings?.requires} disabled={gateBusy || readOnly} anonymousAccess={project.access === 'application'}
               onChange={next => void changeRequirements(next)} />
           </Panel>}
           {/* The other sites a JavaScript app may reach: none until its owner names them (SiteOutsidePanel). */}
-          {isOwner && isSite && <Panel id="settings-outside" title="Outside sites" icon={<Globe className="h-4 w-4" />}>
+          {isOwner && isSite && <Panel id="settings-outside" className="scroll-mt-24" title="Outside sites" icon={<Globe className="h-4 w-4" />}>
             <SiteOutsidePanel sites={siteOutsideOf(project)} disabled={busy || readOnly}
               onChange={next => changeSetting(withOutsideSites(project, next), next.length ? 'Saved. The app may reach the sites on its list.' : 'Saved. The app reaches no outside site.')} />
           </Panel>}
           {/* Files on the device and the engine are a SoftN app's: a JavaScript app runs in the browser's own. */}
-          {app.ownerId === userId && !isSite && <Panel id="settings-files" title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>
+          {app.ownerId === userId && !isSite && <Panel id="settings-files" className="scroll-mt-24" title="Files on this device" icon={<FolderOpen className="h-4 w-4" />}>
             <fieldset disabled={filesBusy || readOnly} className="space-y-2">
               <legend className="mb-2 text-xs leading-5 text-slate-500 dark:text-slate-400">Whether the app may open the files a person chooses for it and save files they ask for, such as a saved game. It never sees anything else on their device.</legend>
               {([[undefined, 'Off', 'The app cannot open or save files.'], ['ask', 'Ask each person', 'FormLogic asks each person before the app opens; they can say not now.'], ['allow', 'Allowed without asking', 'For an app you know: nobody is asked.']] as const).map(([value, label, hint]) =>
@@ -835,36 +835,36 @@ function Workspace({ app }: { app: App }) {
           </Panel>}
           {/* What the app may ask of FormLogic's own page, which does it where the person sees it
               (NativeAppView): a SoftN app's too, as files are. Off until its owner turns each on. */}
-          {app.ownerId === userId && !isSite && <Panel id="settings-listening" title="Listening" icon={<Mic className="h-4 w-4" />}>
+          {app.ownerId === userId && !isSite && <Panel id="settings-listening" className="scroll-mt-24" title="Listening" icon={<Mic className="h-4 w-4" />}>
             <Switch label="Let people speak to this app" description="FormLogic listens when they press the app’s microphone and gives the app only the words. Needs the site’s speech server."
               checked={app.settings?.softnListen === 'allow'} disabled={asksBusy || readOnly} onChange={on => void changeAsk('softnListen', on)} />
           </Panel>}
-          {app.ownerId === userId && !isSite && <Panel id="settings-apps" title="Apps it makes" icon={<PackagePlus className="h-4 w-4" />}>
+          {app.ownerId === userId && !isSite && <Panel id="settings-apps" className="scroll-mt-24" title="Apps it makes" icon={<PackagePlus className="h-4 w-4" />}>
             <Switch label="Let this app offer the apps it makes" description="It offers them to the people using it, to add to their own. FormLogic asks them each time."
               checked={app.settings?.softnApps === 'allow'} disabled={asksBusy || readOnly} onChange={on => void changeAsk('softnApps', on)} />
           </Panel>}
           {/* Only for an app whose manifest names a provider for the codes it texts: no other app sends any. */}
-          {showsCodes && <Panel id="settings-signin" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
+          {showsCodes && <Panel id="settings-signin" className="scroll-mt-24" title="Phone sign-in codes" icon={<MessageSquare className="h-4 w-4" />}>
             <PhoneSignInPanel appId={app.id} version={version} disabled={readOnly} onForgotten={() => setKeptCodes(false)} />
           </Panel>}
           {app.ownerId === userId && backend && declaresFormlogicAi(project) && <div id="app-ai-settings" className="min-w-0 scroll-mt-24"><Panel title="AI for this app" icon={<Sparkles className="h-4 w-4" />}>
             <AppAiPanel appId={app.id} />
           </Panel></div>}
-          {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel id="settings-payments" title="Payments" icon={<Wallet className="h-4 w-4" />}>
+          {app.ownerId === userId && backend && declaresFormlogicPayments(project) && <Panel id="settings-payments" className="scroll-mt-24" title="Payments" icon={<Wallet className="h-4 w-4" />}>
             <AppPaymentsPanel appId={app.id} />
           </Panel>}
-          {app.ownerId === userId && <Panel id="settings-look" title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
+          {app.ownerId === userId && <Panel id="settings-look" className="scroll-mt-24" title="Look and sharing" icon={<Palette className="h-4 w-4" />}>
 
             <SoftnLookPanel appId={app.id} project={project} look={app.settings?.softnLook} themeColor={app.settings?.pwaThemeColor} disabled={readOnly} onSave={changeLook} />
           </Panel>}
-          {!isSite && draft.engine && draft.enginePolicy && <Panel id="settings-engine" title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
+          {!isSite && draft.engine && draft.enginePolicy && <Panel id="settings-engine" className="scroll-mt-24" title="Engine" icon={<SettingsIcon className="h-4 w-4" />}>
             <AppEngineSelect appId={app.id} engine={draft.engine} policy={draft.enginePolicy} webContainer={!!project && usesWebContainer(project.files)} disabled={busy || readOnly} onChanged={() => void draft.refreshEngine()} />
             <div className="mt-4"><AppTorchSwitch appId={app.id} policy={draft.enginePolicy} disabled={busy || readOnly} /></div>
           </Panel>}
           {isOwner && <div id="settings-plugins" className="min-w-0 scroll-mt-24"><Panel title="Modular plugins" icon={<Puzzle className="h-4 w-4 text-indigo-500" />}>
             <AppPluginsPanel appId={app.id} hasNativeDatabase={liveBackend} readOnly={readOnly} />
           </Panel></div>}
-          <Panel id="settings-more" title="More tools" icon={<Code2 className="h-4 w-4" />}>
+          <Panel id="settings-more" className="scroll-mt-24" title="More tools" icon={<Code2 className="h-4 w-4" />}>
             <div className="flex flex-col items-start gap-1">
               {!sourceProtected && <Button variant="ghost" size="sm" onClick={() => setAdvanced(isSite && backend ? 'backend' : 'project')} leftIcon={<Code2 className="h-4 w-4" />}>{isSite ? (backend ? 'Edit the backend code' : 'Edit the app’s manifest') : 'Edit the source code'}</Button>}
               {isOwner && !readOnly && <Button variant="ghost" size="sm" onClick={() => leave(`/apps/${app.id}/studio/data?new=form`)} leftIcon={<ClipboardList className="h-4 w-4" />}>Add a form</Button>}
@@ -916,7 +916,7 @@ function Setup({ app, aiReady, aiReason, onAiRecheck, pendingOpen, onInstalled }
     const framework = { javascript: 'Vanilla JS', react: 'React', vue: 'Vue' }[pendingOpen.template];
     const editorName = pendingOpen.editor === 'studio' ? 'Studio' : 'Builder';
     return <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
-      <h2 className="text-lg font-semibold">Finish setting up {app.name}</h2>
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Finish setting up {app.name}</h2>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">Your app is saved. Install the {framework} starter to open its preview in {editorName}.</p>
       {error && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
       <Button className="mt-4" disabled={working} isLoading={working} onClick={() => void start(pendingOpen)}>Retry in {editorName}</Button>

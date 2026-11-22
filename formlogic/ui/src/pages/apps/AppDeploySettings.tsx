@@ -178,7 +178,7 @@ export function AppDeploySettings() {
    * boundary registers no `studio` child), so they keep a direct control here rather
    * than a link to a page that does not exist for them.
    */
-  const openPublish = () => navigate(paths.appSub(`${appId}`, 'studio/publish'));
+  const openPublish = () => navGuarded(paths.appSub(`${appId}`, 'studio/publish'));
 
   const setStatus = async (status: 'published' | 'draft') => {
     if (!appId || publishing) return;
@@ -292,7 +292,18 @@ export function AppDeploySettings() {
                 <div>
                   <label htmlFor="pwa-theme-color" className={LABEL}>Theme color</label>
                   <div className="flex items-center gap-2">
-                    <input id="pwa-theme-color" type="color" aria-label="PWA theme color picker" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} className="h-10 w-12 flex-none cursor-pointer rounded-lg border border-gray-300 dark:border-slate-600" />
+                    <input
+                      id="pwa-theme-color"
+                      type="color"
+                      aria-label="PWA theme color picker"
+                      value={/^#[0-9a-fA-F]{6}$/.test(pwaThemeColor)
+                        ? pwaThemeColor
+                        : /^#[0-9a-fA-F]{3}$/.test(pwaThemeColor)
+                          ? `#${pwaThemeColor[1]}${pwaThemeColor[1]}${pwaThemeColor[2]}${pwaThemeColor[2]}${pwaThemeColor[3]}${pwaThemeColor[3]}`
+                          : '#6366f1'}
+                      onChange={(e) => setPwaThemeColor(e.target.value)}
+                      className="h-10 w-12 flex-none cursor-pointer rounded-lg border border-gray-300 dark:border-slate-600"
+                    />
                     <input type="text" aria-label="PWA theme color hex value" value={pwaThemeColor} onChange={(e) => setPwaThemeColor(e.target.value)} onBlur={(e) => { if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(e.target.value)) setPwaThemeColor('#6366f1'); }} className={cn(FIELD, 'flex-1 font-mono')} />
                   </div>
                   <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-slate-400">Browser/status-bar color when the app is installed.</p>

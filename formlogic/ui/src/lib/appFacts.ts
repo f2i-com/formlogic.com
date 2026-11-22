@@ -12,12 +12,16 @@ export function appTools(app: App, summary?: AppSummary) {
   return { web, forms, label: web && forms ? 'Web + forms' : web ? 'Web app' : 'Forms app' };
 }
 
-/** Who can use the app ("Anyone", "Members · 3"); '' while it is not known. */
+/** Who can use the app ("Anyone", "Members · 3"); falls back to app settings when summary is unavailable (e.g. demo or member-only view). */
 export const who = (app: App, summary: AppSummary | undefined): string => {
   const members = typeof summary?.members === 'number' ? ` · ${summary.members.toLocaleString()}` : '';
   if (summary?.access === 'application') return 'Anyone';
-  if (summary?.access === 'members' || !isSoftnApp(app)) return summary ? `Members${members}` : '';
-  return '';
+  if (summary?.access === 'members') return `Members${members}`;
+  if (!isSoftnApp(app)) {
+    return app.settings?.allowSelfRegistration ? 'Anyone (sign-up)' : `Members${members}`;
+  }
+  if (summary && !summary.installed) return 'Not set';
+  return app.settings?.allowSelfRegistration ? 'Anyone' : `Members${members}`;
 };
 
 /** What the app holds ("13 tables · 208 KB", "3 forms"); '' while it is not known. */

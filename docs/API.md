@@ -56,12 +56,15 @@ Authorization: Bearer flk_xxxxxxxxxxxxxxxxxxxx
 | `responses:manage` | Update / delete responses |
 | `webhooks:read` | List webhooks |
 | `webhooks:write` | Create / update / delete webhooks |
+| `apps:invoke` | List invokable hosted apps and call hosted SoftN or container (PHP/Rust/JS/Python) app backend routes |
+| `flows:run` | Programmatically run or enqueue an owned flow (by flow ID or by app + flow slug) |
 | `flows:read` | List flows + flow bindings, read run history, poll claimable queued runs, read flow KV |
 | `flows:write` | Claim queued flow runs, complete runs, write/delete flow KV |
 | `connector:relay` | Act as a desktop runtime: long-poll for pending connector commands, claim + complete them |
+| `ai:relay`, `flows:relay`, `aokie:realtime` | OAIY / desktop-link scopes for sealed AI relay, sealed flow relay, and Aokie realtime media admission |
 
 Grant only what each integration needs (e.g. a kiosk that only submits needs just
-`responses:write`).
+`responses:write`, and a service that only calls one app's backend needs just `apps:invoke`).
 
 ---
 
@@ -92,6 +95,48 @@ Grant only what each integration needs (e.g. a kiosk that only submits needs jus
 | `POST` | `/forms/{formId}/webhooks` | `webhooks:write` |
 | `PUT` | `/forms/{formId}/webhooks/{webhookId}` | `webhooks:write` |
 | `DELETE` | `/forms/{formId}/webhooks/{webhookId}` | `webhooks:write` |
+
+### Hosted app backends & programmatic flows (`apps:invoke`, `flows:run`)
+
+Call hosted SoftN (`.logic`) or container (PHP, Rust, JS, Python) app backend routes and trigger
+automations externally from your own servers, scripts, or third-party apps. `{appId}` accepts
+either the app's UUID or its slug.
+
+| Method | Path | Scope |
+|---|---|---|
+| `GET` | `/apps` | `apps:invoke` — list owned apps with an enabled hosted backend, declared routes, and external API policy |
+| `POST` | `/apps/{appId}/invoke` | `apps:invoke` — envelope call: `{ "method": "GET", "path": "/api/items", "query"?: {}, "body"?: …, "headers"?: {} }` |
+| `ANY` | `/apps/{appId}/routes/{path}` | `apps:invoke` — direct HTTP passthrough (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`) to the app's backend |
+| `POST` | `/flows/{flowId}/run` | `flows:run` — run or enqueue an enabled owned flow: `{ "inputs"?: {}, "async"?: false, "idempotencyKey"?: "…" }` |
+| `POST` | `/apps/{appId}/flows/{slug}/run` | `flows:run` — run or enqueue an enabled app flow by app ID/slug and flow slug |
+
+- **Per-app external API policy** (configured in **App Settings → External API**): each app controls
+  `enabled`, `authMode` (`api_key`, `both`, or `public`), `allowedMethods`, `allowedPaths`,
+  `blockedPaths`, `defaultPrefix`, `corsOrigins`, `rateLimitPerMinute`, and `customHeaders`.
+- **Public REST routes (optional):** when an app is published and its `authMode` is `public` or
+  `both`, visitors can call `ANY /api/public/apps/{appId}/routes/{path}` directly (without an
+  `flk_` key) subject to that app's method/path allowlists, CORS policy, and rate limit.
+- **Forwarding app-level auth:** on `/routes/{path}` passthrough calls, FormLogic strips its own
+  `Authorization` header so `flk_` keys are never exposed to app code. Pass an app-specific token
+  in `X-App-Authorization` and FormLogic forwards it to the backend as `Authorization`.
+- **Sync vs. async flow runs:** cloud-eligible flows run synchronously and return `200` with
+  `{ "runId", "status", "result", "error", "executionLocation": "cloud" }`. Setting `"async": true`
+  (or calling a desktop/browser flow) enqueues the run and returns `202` with
+  `{ "runId", "status": "queued", "executionLocation", "queued": true }`.
+
+```bash
+# Direct REST call into a hosted SoftN/PHP/Rust/JS/Python app backend
+curl -X POST https://<your-api-host>/api/v1/apps/pottery-studio/routes/api/bookings \
+  -H "Authorization: Bearer flk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{ "student": "Ada Lovelace", "classId": "wheel-101" }'
+
+# Trigger an owned automation flow programmatically
+curl -X POST https://<your-api-host>/api/v1/apps/pottery-studio/flows/confirm-booking/run \
+  -H "Authorization: Bearer flk_xxx" \
+  -H "Content-Type: application/json" \
+  -d '{ "inputs": { "bookingId": "bk_42" } }'
+```
 
 ### FormLogic Flows (headless runtime — used by FormLogic Desktop)
 

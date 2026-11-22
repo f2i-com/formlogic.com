@@ -61,10 +61,10 @@ export function AppFormManager() {
   // Guards against out-of-order loadForms resolving (e.g. rapid appId changes)
   const loadTokenRef = useRef(0);
 
-  const loadForms = async () => {
+  const loadForms = async (initial = false) => {
     if (!appId) return;
     const token = ++loadTokenRef.current;
-    setLoading(true);
+    if (initial) setLoading(true);
     // Use the API directly so a fetch FAILURE is distinguishable from "no forms"
     // (the store helper returns [] either way), letting us show error + retry.
     // Relations come from ONE owner-scoped call (replaces the old per-form getForm
@@ -130,19 +130,18 @@ export function AppFormManager() {
     setLoading(false);
   };
 
-  // Settings → Manage → "Companion app" deep-links here with #companion; scroll to it
-  // rather than dropping the user at the top of a page titled "Manage forms".
+  // Settings → Manage → "Companion app" deep-links here with #companion; wait until initial
+  // loading finishes so #companion is actually mounted before scrolling to it.
   useEffect(() => {
-    if (window.location.hash === '#companion') {
-      const id = window.setTimeout(() => document.getElementById('companion')?.scrollIntoView({ block: 'start' }), 250);
-      return () => window.clearTimeout(id);
+    if (!loading && window.location.hash === '#companion') {
+      document.getElementById('companion')?.scrollIntoView({ block: 'start' });
     }
-  }, []);
+  }, [loading]);
 
   useEffect(() => {
     const init = async () => {
       await refreshForms();
-      await loadForms();
+      await loadForms(true);
     };
     init();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -234,7 +233,9 @@ export function AppFormManager() {
     const reportFormIds = new Map<string, string>();
     for (const item of reports) { if (!isReportDocument(item)) reportFormIds.set(item.id, item.spec.formId); }
     const widgetRefCount = widgets.filter((w) =>
-      (w.kind === 'report' && w.spec?.formId === formId) || (w.kind === 'list' && w.list?.formId === formId)
+      (w.kind === 'report' && w.spec?.formId === formId)
+      || (w.kind === 'list' && w.list?.formId === formId)
+      || (w.kind === 'grid' && w.grid?.formId === formId)
     ).length;
     const reportRefCount = reports.filter((item) => (
       isReportDocument(item)
@@ -312,20 +313,17 @@ export function AppFormManager() {
 
   // Companion app: a second app (e.g. an admin console) over these same forms + data.
   const sourceAppName = apps.find((a) => a.id === appId)?.name;
-  const [companionName, setCompanionName] = useState('');
+  // Prefill "<App> Admin" once the app name is known, reset when switching apps, and never clobber user input.
+  const [companionDraft, setCompanionDraft] = useState<{ appId: string | undefined; value: string } | null>(null);
+  const companionName = companionDraft && companionDraft.appId === appId
+    ? companionDraft.value
+    : (sourceAppName ? `${sourceAppName} Admin` : '');
   const [companionBusy, setCompanionBusy] = useState(false);
   // What to copy across: dashboard + saved reports default ON (they stay valid — the forms are
   // identical), app-level custom logic defaults OFF (custom code is opt-in per app).
   const [companionCopyDashboard, setCompanionCopyDashboard] = useState(true);
   const [companionCopyReports, setCompanionCopyReports] = useState(true);
   const [companionCopyLogic, setCompanionCopyLogic] = useState(false);
-  // Prefill "<App> Admin" once the app name is known, but never clobber user input.
-  const companionTouchedRef = useRef(false);
-  useEffect(() => {
-    if (!companionTouchedRef.current && sourceAppName) {
-      setCompanionName(`${sourceAppName} Admin`);
-    }
-  }, [sourceAppName]);
 
   const handleCreateCompanion = async () => {
     if (!appId || companionBusy) return;
@@ -359,8 +357,9 @@ export function AppFormManager() {
   const saveRename = async (formId: string) => {
     if (!appId) return;
     const name = editNameValue.trim();
+    const current = appForms.find((f) => f.formId === formId)?.displayName ?? '';
     setEditingNameId(null);
-    if (!name) return;
+    if (!name || name === current) return;
     await updateAppForm(appId, formId, { displayName: name });
     await loadForms();
   };
@@ -434,7 +433,7 @@ export function AppFormManager() {
       className={cn(
         'w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-1.5 transition-colors disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900',
         finger ? 'min-h-11 text-base' : 'h-8 text-xs',
-        formNavState(af) === 'shown' ? 'text-green-600' : formNavState(af) === 'off' ? 'text-gray-500 dark:text-slate-400' : 'text-amber-600 dark:text-amber-400'
+        formNavState(af) === 'shown' ? 'text-green-600 dark:text-green-400' : formNavState(af) === 'off' ? 'text-gray-500 dark:text-slate-400' : 'text-amber-600 dark:text-amber-400'
       )}
     >
       <option value="shown">Shown</option>
@@ -476,7 +475,7 @@ export function AppFormManager() {
           >
             <Share2 className="h-3 w-3" />
             <span className="font-medium">Shared</span>
-            <span className="opacity-60">· also in {sharedApps.length <= 2 ? sharedApps.join(' & ') : `${sharedApps.length} other apps`}</span>
+            <span className="text-violet-700/80 dark:text-violet-300/80">· also in {sharedApps.length <= 2 ? sharedApps.join(' & ') : `${sharedApps.length} other apps`}</span>
           </span>
         )}
         {relationBadges[af.formId]?.map((badge, i) => (
@@ -485,8 +484,8 @@ export function AppFormManager() {
             className={cn(
               'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs',
               badge.type === 'outgoing'
-                ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400'
-                : 'bg-gray-100 text-gray-500 dark:bg-slate-700 dark:text-slate-400'
+                ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-slate-300'
             )}
             title={badge.type === 'outgoing'
               ? `"${badge.fieldLabel}" links to ${badge.formName}`
@@ -495,8 +494,8 @@ export function AppFormManager() {
           >
             {badge.type === 'outgoing' ? <Link2 className="h-3 w-3" /> : <ArrowLeftIcon className="h-3 w-3" />}
             <span className="font-medium">{badge.fieldLabel}</span>
-            <span className="opacity-60">{badge.type === 'outgoing' ? '→' : '←'} {badge.formName}</span>
-            <span className="opacity-50">{badge.allowMultiple ? '1:N' : '1:1'}</span>
+            <span>{badge.type === 'outgoing' ? '→' : '←'} {badge.formName}</span>
+            <span className="font-mono text-[11px]">{badge.allowMultiple ? '1:N' : '1:1'}</span>
           </span>
         ))}
       </div>
@@ -679,7 +678,7 @@ export function AppFormManager() {
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={companionName}
-            onChange={(e) => { companionTouchedRef.current = true; setCompanionName(e.target.value); }}
+            onChange={(e) => setCompanionDraft({ appId, value: e.target.value })}
             onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCompanion(); }}
             placeholder={sourceAppName ? `${sourceAppName} Admin` : 'Companion app name'}
             aria-label="Companion app name"

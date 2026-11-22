@@ -16,7 +16,7 @@ Build a form, connect your AI, publish an app, or operate the connected desktop.
 | Create, edit and delete native SQLite records | [Owner database controls and API](HOSTED_APPS.md#owner-record-api) |
 | Publish/sell private SoftN apps & modular plugins with live sandboxes | [Editable app packs & Marketplace](PACK_PROJECTS.md) |
 | Let an AI create and edit my workspace | [MCP connection guide and tool reference](MCP.md) |
-| Connect an external system using an API key | [REST API](API.md) |
+| Connect an external system using an API key (forms, hosted apps `apps:invoke`, flows `flows:run`) | [REST API](API.md) |
 
 Manual editing and starters do not require an AI provider. Site AI and payments are off by default. Browser pairing with OAIY and linking the FormLogic account for records/background flows are separate setup steps; the connected apps guide explains both.
 

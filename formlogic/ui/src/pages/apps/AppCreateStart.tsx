@@ -23,9 +23,9 @@ import { CreateAppChat } from './CreateAppChat';
 
 type Build = 'web' | 'forms' | 'upload';
 const builds = [
-  { type: 'web', label: 'Web app', hint: 'JavaScript, React or Vue', icon: AppWindow },
-  { type: 'forms', label: 'Forms app', hint: 'Forms, CRUD & live charts', icon: ClipboardList },
-  { type: 'upload', label: 'Upload ZIP / SoftN', hint: 'SoftN, PHP, Rust, JS or static', icon: FileUp },
+  { type: 'web', label: 'Web app', mobileLabel: 'Web app', hint: 'JavaScript, React or Vue', icon: AppWindow },
+  { type: 'forms', label: 'Forms app', mobileLabel: 'Forms', hint: 'Forms, CRUD & live charts', icon: ClipboardList },
+  { type: 'upload', label: 'Upload ZIP / SoftN', mobileLabel: 'Upload', hint: 'SoftN, PHP, Rust, JS or static', icon: FileUp },
 ] as const;
 const headings = {
   web: ['Start with a web app', 'Choose a framework and open a working starter in your editor.'],
@@ -152,13 +152,15 @@ export function AppCreateStart() {
         onKeyDownCapture={() => { if (!requested && !ai) setManualStarted(true); }}>
         <div className="grid items-start gap-3 @3xl/create:grid-cols-[12rem_minmax(0,1fr)] @3xl/create:gap-6">
         <nav aria-label="App creation methods" className="grid grid-cols-3 gap-1 rounded-xl border border-slate-200 bg-slate-50 p-1 dark:border-slate-700 dark:bg-slate-900/70 @3xl/create:grid-cols-1 @3xl/create:gap-1.5 @3xl/create:border-0 @3xl/create:bg-transparent @3xl/create:p-0 @3xl/create:dark:bg-transparent">
-          {builds.map(({type, label, hint, icon: Icon}) => <Link key={type} to={`?type=${type}`} replace preventScrollReset
+          {builds.map(({type, label, mobileLabel, hint, icon: Icon}) => <Link key={type} to={`?type=${type}`} replace preventScrollReset
             aria-current={build === type ? 'page' : undefined}
-            className={cn('flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-transparent px-1 text-sm focus-visible:outline-2 focus-visible:outline-primary-500 @3xl/create:justify-start @3xl/create:gap-3 @3xl/create:px-3 @3xl/create:py-3', build === type
+            className={cn('flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-transparent px-2 text-xs @md/create:text-sm focus-visible:outline-2 focus-visible:outline-primary-500 @3xl/create:justify-start @3xl/create:gap-3 @3xl/create:px-3 @3xl/create:py-3', build === type
               ? 'border-slate-200 bg-white text-primary-800 shadow-sm dark:border-primary-500/40 dark:bg-primary-500/10 dark:text-primary-200'
               : 'text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800')}>
             <Icon className="size-4 shrink-0" aria-hidden="true" />
-            <span className="min-w-0"><span className="block font-semibold">{label}</span>
+            <span className="min-w-0">
+              <span className="block truncate font-semibold @3xl/create:hidden">{mobileLabel}</span>
+              <span className="hidden font-semibold @3xl/create:block">{label}</span>
               <span className="mt-0.5 hidden text-xs text-slate-600 dark:text-slate-400 @3xl/create:block">{hint}</span>
             </span>
           </Link>)}
@@ -200,7 +202,7 @@ export function AppCreateStart() {
                 </div>
                 <div>
                   <label htmlFor="new-app-desc" className="mb-1.5 block text-xs font-semibold text-gray-600 dark:text-slate-300">
-                    What is it for? <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
+                    What is it for? <span className="font-normal text-gray-500 dark:text-slate-400">(optional)</span>
                   </label>
                   <Textarea
                     id="new-app-desc"

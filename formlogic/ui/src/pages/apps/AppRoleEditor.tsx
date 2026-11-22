@@ -43,9 +43,11 @@ function AppRoleEditorContent() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [rolesLoading, setRolesLoading] = useState(true);
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
+  const [pendingCreateRole, setPendingCreateRole] = useState<string | null>(null);
   const [pendingNav, setPendingNav] = useState<{ to: string; state?: ReturnToState } | null>(null);
   const nextPermissionKey = `${appId ?? ''}/${selectedRoleId ?? ''}/${permsReloadToken}`;
   const [permissionKey, setPermissionKey] = useState(nextPermissionKey);
@@ -64,15 +66,18 @@ function AppRoleEditorContent() {
 
   const loadData = async (isCancelled: () => boolean = () => false) => {
     if (!appId) return;
+    setRolesLoading(true);
     try {
       const [r, f] = await Promise.all([fetchRoles(appId), fetchAppForms(appId)]);
       if (isCancelled()) return;
       setRoles(r);
       setAppForms(f);
-      // Select the first role on (re)load; the route key resets selection when switching apps.
-      if (r.length > 0) setSelectedRoleId(r[0].id);
+      // Preserve an already-selected role if it still exists; otherwise select the first role.
+      setSelectedRoleId((prev) => (prev && r.some((role) => role.id === prev) ? prev : (r[0]?.id ?? null)));
     } catch {
       if (!isCancelled()) toast.error('Load failed', 'Could not load roles. Please refresh the page.');
+    } finally {
+      if (!isCancelled()) setRolesLoading(false);
     }
   };
 
@@ -130,14 +135,15 @@ function AppRoleEditorContent() {
   const saveRenameRole = async (roleId: string) => {
     if (!appId) return;
     const name = editRoleName.trim();
+    const current = roles.find((r) => r.id === roleId)?.name ?? '';
     setEditingRoleId(null);
-    if (!name) return;
+    if (!name || name === current) return;
     // Only apply the optimistic rename if the server accepted it.
     const ok = await updateRole(appId, roleId, { name });
     if (ok) {
       setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, name } : r)));
     } else {
-      loadData();
+      void loadData();
     }
   };
 
@@ -162,18 +168,27 @@ function AppRoleEditorContent() {
     setSaving(false);
   };
 
-  const handleCreateRole = async () => {
-    if (!appId || !newRoleName.trim()) return;
-    // Creating a role SWITCHES the selection, which discards an unsaved matrix — the
-    // same loss the role buttons already confirm before causing.
-    if (dirty && !window.confirm('You have unsaved permission changes. Create the role and discard them?')) return;
-    const role = await createRole(appId, { name: newRoleName.trim() });
+  const performCreateRole = async (name: string) => {
+    if (!appId || !name) return;
+    const role = await createRole(appId, { name });
     if (role) {
       setRoles((prev) => [...prev, role]);
       setDirty(false);
       setSelectedRoleId(role.id);
       setNewRoleName('');
     }
+  };
+
+  const handleCreateRole = async () => {
+    const trimmed = newRoleName.trim();
+    if (!appId || !trimmed) return;
+    // Creating a role SWITCHES the selection, which discards an unsaved matrix — confirm
+    // with the same styled ConfirmDialog used for role switching.
+    if (dirty) {
+      setPendingCreateRole(trimmed);
+      return;
+    }
+    await performCreateRole(trimmed);
   };
 
   const handleDeleteRole = async (roleId: string) => {
@@ -217,7 +232,9 @@ function AppRoleEditorContent() {
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <h2 className="mb-2 px-1 text-sm font-semibold text-gray-900 dark:text-white">Roles</h2>
           <div className="mb-3 space-y-0.5">
-            {roles.map((role) => (
+            {rolesLoading && roles.length === 0 ? (
+              <p className="px-2 py-2 text-xs text-gray-500 dark:text-slate-400">Loading roles…</p>
+            ) : roles.map((role) => (
               <div key={role.id} className={cn('flex min-h-9 cursor-pointer items-center justify-between rounded-lg px-2 transition-colors max-sm:min-h-11',
                 selectedRoleId === role.id ? 'bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400' : 'hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-slate-300'
               )}>
@@ -241,7 +258,7 @@ function AppRoleEditorContent() {
                   >
                     <Shield className="h-4 w-4 flex-shrink-0" />
                     <span className="truncate">{role.name}</span>
-                    {role.isSystem && <span className="text-xs text-gray-400 flex-shrink-0">(system)</span>}
+                    {role.isSystem && <span className="text-xs text-gray-500 dark:text-slate-400 flex-shrink-0">(system)</span>}
                   </button>
                 )}
                 {/* The row's actions at a size a pointer, and on a phone a finger, can hit: they
@@ -265,7 +282,7 @@ function AppRoleEditorContent() {
             <input type="text" value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} placeholder="New role" aria-label="New role name"
               onKeyDown={(e) => { if (e.key === 'Enter' && newRoleName.trim()) handleCreateRole(); }}
               className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 transition-all duration-200 focus:border-transparent focus:ring-2 focus:ring-primary-500 max-sm:min-h-11 max-sm:text-base dark:border-slate-600 dark:bg-slate-800 dark:text-white" />
-            <button onClick={handleCreateRole} disabled={!newRoleName.trim()} title="Create role" className="inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-lg text-primary-600 transition-colors hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 max-sm:h-11 max-sm:w-11 dark:hover:bg-primary-500/10" aria-label="Create role">
+            <button type="button" onClick={handleCreateRole} disabled={!newRoleName.trim()} title="Create role" className="inline-flex h-9 w-9 flex-none cursor-pointer items-center justify-center rounded-lg text-primary-600 dark:text-primary-400 transition-colors hover:bg-primary-50 hover:text-primary-700 disabled:opacity-50 max-sm:h-11 max-sm:w-11 dark:hover:bg-primary-500/10 dark:hover:text-primary-300" aria-label="Create role">
               <Plus className="h-4 w-4" />
             </button>
           </div>
@@ -307,12 +324,27 @@ function AppRoleEditorContent() {
                 />
               )}
             </>
+          ) : rolesLoading ? (
+            <div className="flex items-center gap-3 py-4 text-sm text-gray-500 dark:text-slate-400">
+              <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary-600 dark:border-primary-400" role="status" aria-label="Loading roles" />
+              Loading roles…
+            </div>
           ) : (
             <p className="text-sm text-gray-500 dark:text-slate-400">Select a role to edit permissions</p>
           )}
         </div>
       </div>
       </PageBody>
+
+      <ConfirmDialog
+        isOpen={pendingCreateRole !== null}
+        onClose={() => setPendingCreateRole(null)}
+        onConfirm={() => { const name = pendingCreateRole; setPendingCreateRole(null); if (name) void performCreateRole(name); }}
+        title="Discard unsaved changes?"
+        message="You have unsaved permission changes for this role. Create the new role and discard them?"
+        confirmLabel="Discard & create"
+        variant="danger"
+      />
 
       <ConfirmDialog
         isOpen={deleteRoleId !== null}

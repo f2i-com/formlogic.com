@@ -17,6 +17,7 @@ import { Button } from '../ui/Button';
 import { Dropdown } from '../ui/Dropdown';
 import { cn } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
+import { useUIStore } from '../../stores/uiStore';
 
 const HELP = 'text-xs leading-5 text-gray-500 dark:text-slate-400';
 const FIELD =
@@ -62,6 +63,8 @@ export function BotGuideSettingsPanel() {
   } = useBotGuideStore();
 
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const chatLauncherPosition = useUIStore((s) => s.chatLauncherPosition);
+  const setChatLauncherPosition = useUIStore((s) => s.setChatLauncherPosition);
 
   return (
     <div className="space-y-4">
@@ -262,7 +265,7 @@ export function BotGuideSettingsPanel() {
       </div>
 
       <p className={HELP}>
-        Drag the avatar anywhere on screen to move it out of your way, or click its × button to hide it anytime.
+        Drag the avatar or the floating AI Chat button anywhere on screen to move them out of your way, or click the avatar&apos;s × button to hide it anytime.
         {customPosition && (
           <>
             {' '}
@@ -271,7 +274,19 @@ export function BotGuideSettingsPanel() {
               onClick={() => setCustomPosition(null)}
               className="cursor-pointer font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300"
             >
-              Reset screen position
+              Reset avatar position
+            </button>
+          </>
+        )}
+        {chatLauncherPosition && (
+          <>
+            {customPosition ? ' · ' : ' '}
+            <button
+              type="button"
+              onClick={() => setChatLauncherPosition(null)}
+              className="cursor-pointer font-medium text-primary-700 underline-offset-2 hover:underline dark:text-primary-300"
+            >
+              Reset AI chat position
             </button>
           </>
         )}
@@ -326,7 +341,8 @@ export function BotGuideSettingsPanel() {
             type="button"
             onClick={() => {
               resetDefaults();
-              toast.success('Interactive guide reset', 'Default bot.computer settings restored.');
+              setChatLauncherPosition(null);
+              toast.success('Interactive guide reset', 'Default bot.computer settings and floating positions restored.');
             }}
             className="inline-flex cursor-pointer items-center gap-1 text-xs text-gray-500 hover:text-gray-800 dark:text-slate-400 dark:hover:text-slate-200"
           >

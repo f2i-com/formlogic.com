@@ -3641,7 +3641,7 @@ class ResponseService
                 $aggregates = $mysqlStmt->fetch() ?: [];
 
                 return [
-                    'totalResponses' => 0,
+                    'totalResponses' => $responseCount,
                     'totalViews' => (int)($aggregates['total_views'] ?? 0),
                     'totalStarts' => (int)($aggregates['total_starts'] ?? 0),
                     'completionRate' => 0,

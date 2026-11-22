@@ -177,8 +177,11 @@ export function ScreensStep({
   const [busy, setBusy] = useState(false);
   const settingsHeading = useRef<HTMLHeadingElement>(null);
 
-  const selectedRole = roles.find((r) => r.id === roleId) ?? roles.find((r) => r.name === 'Owner') ?? roles[0] ?? null;
-  const ownerLike = !selectedRole || selectedRole.name === 'Owner';
+  const selectedRole = roles.find((r) => r.id === roleId)
+    ?? roles.find((r) => r.isSystem !== false && r.name === 'Owner')
+    ?? roles[0]
+    ?? null;
+  const ownerLike = !selectedRole || (selectedRole.isSystem !== false && selectedRole.name === 'Owner');
   const selectedRoleId = selectedRole?.id ?? null;
   const hideNav = (app.settings as { hideNav?: boolean } | undefined)?.hideNav === true;
 
@@ -302,7 +305,7 @@ export function ScreensStep({
     : null;
 
   useEffect(() => {
-    if (previewData !== 'real' || !selectedFormId || previewUnavailable) return;
+    if (previewData !== 'real' || !selectedFormId || previewUnavailable || selectedForm?.isPrivate) return;
     let cancelled = false;
     api.getResponses(selectedFormId, { limit: 3 }).then(
       (res) => {
@@ -322,10 +325,11 @@ export function ScreensStep({
       }
     );
     return () => { cancelled = true; };
-  }, [previewData, selectedFormId, previewUnavailable]);
+  }, [previewData, selectedFormId, previewUnavailable, selectedForm?.isPrivate]);
 
   const previewRecordsLoading = previewData === 'real'
     && !!selectedFormId
+    && !selectedForm?.isPrivate
     && recordState?.formId !== selectedFormId;
   const previewRecords = recordState?.formId === selectedFormId ? recordState.records : [];
   const previewRecordsError = recordState?.formId === selectedFormId ? recordState.error : null;
@@ -668,26 +672,39 @@ export function ScreensStep({
                   <label htmlFor="studio-landing" className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400">
                     Members land on
                   </label>
-                  <select
-                    id="studio-landing"
-                    value={app.settings?.landingPage ?? 'dashboard'}
-                    onChange={(e) => void setLanding(e.target.value)}
-                    disabled={busy}
-                    className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
-                  >
-                    <option value="dashboard">App home</option>
-                    {appForms.map((af) => {
-                      // Data-only forms render no screen: the runtime bounces members
-                      // straight back to the dashboard, so they are not landing targets.
-                      const dataOnly = attachmentState(af) === 'data-only' || attachmentState(af) === 'off';
-                      return (
-                        <option key={af.formId} value={af.formId} disabled={dataOnly}>
-                          {af.displayName || formsById[af.formId]?.title || 'Untitled'}
-                          {dataOnly ? ' — data only, cannot be a landing screen' : ''}
-                        </option>
-                      );
-                    })}
-                  </select>
+                  {(() => {
+                    const currentLanding = app.settings?.landingPage ?? 'dashboard';
+                    const landingIsDetached = currentLanding !== 'dashboard'
+                      && currentLanding !== 'records'
+                      && !appForms.some((af) => af.formId === currentLanding);
+                    return (
+                      <select
+                        id="studio-landing"
+                        value={currentLanding}
+                        onChange={(e) => void setLanding(e.target.value)}
+                        disabled={busy}
+                        className="mt-1.5 h-10 w-full min-w-0 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:h-11 dark:border-white/10 dark:bg-slate-900 dark:text-slate-200"
+                      >
+                        <option value="dashboard">App home</option>
+                        {landingIsDetached && (
+                          <option value={currentLanding} disabled>
+                            Removed form — choose a new landing screen
+                          </option>
+                        )}
+                        {appForms.map((af) => {
+                          // Data-only forms render no screen: the runtime bounces members
+                          // straight back to the dashboard, so they are not landing targets.
+                          const dataOnly = attachmentState(af) === 'data-only' || attachmentState(af) === 'off';
+                          return (
+                            <option key={af.formId} value={af.formId} disabled={dataOnly}>
+                              {af.displayName || formsById[af.formId]?.title || 'Untitled'}
+                              {dataOnly ? ' — data only, cannot be a landing screen' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    );
+                  })()}
                 </div>
                 <Button className="w-full" onClick={customiseScreen} leftIcon={<WandSparkles className="h-4 w-4" />}>
                   {homeKind === 'dashboard' ? 'Edit dashboard in the app' : 'Customise home screen'}
@@ -1135,9 +1152,22 @@ function AppPreview({
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-slate-950/70">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[10px] font-bold text-gray-800 dark:text-slate-200">Recent {screenLabel} records</p>
-                <span className="text-[9px] font-semibold text-gray-500 dark:text-slate-400">{records.length} shown</span>
+                {!selectedForm.isPrivate && (
+                  <span className="text-[9px] font-semibold text-gray-500 dark:text-slate-400">{records.length} shown</span>
+                )}
               </div>
-              {recordsLoading ? (
+              {selectedForm.isPrivate ? (
+                <div className="flex min-h-36 flex-col items-center justify-center px-3 text-center">
+                  <LockKeyhole className="h-5 w-5 text-primary-500 dark:text-primary-400" aria-hidden="true" />
+                  <p className="mt-2 text-[10px] font-semibold text-gray-700 dark:text-slate-200">End-to-end encrypted records</p>
+                  <p className="mt-1 max-w-52 text-[9px] leading-4 text-gray-500 dark:text-slate-400">
+                    Answers on this private form are encrypted — unlock the vault in Records or the live app to read them.
+                  </p>
+                  <button type="button" onClick={onUseSample} className="mt-2 cursor-pointer text-[10px] font-bold text-primary-600 hover:underline dark:text-primary-300">
+                    Preview with sample content
+                  </button>
+                </div>
+              ) : recordsLoading ? (
                 <div className="flex min-h-36 items-center justify-center" role="status">
                   <Loader2 className="h-5 w-5 animate-spin text-primary-500" aria-hidden="true" />
                   <span className="sr-only">Loading records</span>

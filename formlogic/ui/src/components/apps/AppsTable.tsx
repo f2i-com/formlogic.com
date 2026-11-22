@@ -167,7 +167,7 @@ export function AppsTable({ apps, summaries, packNames, userId, onDelete, sortab
               </th>
               <td className="hidden px-2 text-slate-600 dark:text-slate-300 @4xl/list:table-cell">{f.kind}</td>
               <td className="truncate px-2"><span className={cn('inline-flex items-center gap-1.5 font-medium', f.tone)}><span aria-hidden="true" className={cn('h-1.5 w-1.5 rounded-full', f.dot)} />{f.status}</span></td>
-              <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @5xl/list:table-cell">{f.who}</td>
+              <td className="hidden truncate px-2 text-slate-700 dark:text-slate-300 @5xl/list:table-cell">{f.who || '—'}</td>
               <td className="hidden break-words px-2 text-slate-700 dark:text-slate-300 @3xl/list:table-cell">{f.holds}</td>
               <td className="truncate px-2 text-slate-500 dark:text-slate-400">{formatRelativeTime(app.updatedAt)}</td>
               <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(app, f, small, places)}</span></td>

@@ -14,7 +14,7 @@ import { Input } from '../../components/ui/Input';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { DynamicIcon } from '../../components/ui/DynamicIcon';
 import { ExportDataMenu } from '../../components/apps/ExportDataMenu';
-import { useAdminActing } from '../../components/admin/AdminActingContext';
+import { useAdminActing, useResourcePaths } from '../../components/admin/AdminActingContext';
 import { useAppStore } from '../../stores/appStore';
 import { api } from '../../lib/api';
 import { useFormStore } from '../../stores/formStore';
@@ -31,12 +31,14 @@ const touch = 'inline-flex h-11 w-11 items-center justify-center rounded-lg text
 export function AppRecords() {
   const { appId } = useParams<{ appId: string }>();
   const navigate = useNavigate();
+  const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
-  const backTo = useReturnTo(`/apps/${appId}/settings?tab=manage`);
-  // Acting admins see record COUNTS only — no data export.
+  const backTo = useReturnTo(appId ? `${paths.appSub(appId, 'settings')}?tab=manage` : '/apps');
+  // Acting admins see record COUNTS only — no data export or live record views.
   const acting = useAdminActing();
   const { getApp, fetchApps } = useAppStore();
   const ownerForms = useFormStore((s) => s.forms);
+  const formsHydrating = useFormStore((s) => !s.isInitialized && s.isLoading);
   const cachedForms = getCachedStudioAppForms(appId);
   const [appForms, setAppForms] = useState<AppForm[]>(() =>
     cachedForms ? [...cachedForms.forms].sort((a, b) => a.sortOrder - b.sortOrder) : []
@@ -111,7 +113,7 @@ export function AppRecords() {
 
   /** What can be done with one form's records; `button` is the look for where they are drawn.
       A phone's card opens the records from the form's name, so it leaves that icon out. */
-  const actions = (r: (typeof rows)[number], button: string, card = false) => (
+  const actions = (r: (typeof rows)[number], button: string, card = false) => acting ? null : (
     <>
       {!card && (
         <Link to={`/responses/${r.formId}`} title="View records" aria-label={`View records of ${r.name}`} className={button}>
@@ -162,6 +164,8 @@ export function AppRecords() {
               <Button
                 variant="outline"
                 size="sm"
+                disabled={!!acting}
+                title={acting ? 'The live app shows record data, which is not visible to platform admins' : undefined}
                 onClick={() => window.open(`/app/${app.slug}`, '_blank', 'noopener')}
                 leftIcon={<ExternalLink className="h-4 w-4" />}
               >
@@ -188,7 +192,7 @@ export function AppRecords() {
               <p className="mt-1 text-sm text-gray-500 dark:text-slate-400">{query ? 'Try a different search term.' : 'Add forms to the app to start collecting data.'}</p>
               {query
                 ? <Button variant="outline" size="sm" className="mt-3" onClick={() => setQuery('')}>Clear search</Button>
-                : <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate(`/apps/${appId}/forms`)}>Manage forms</Button>}
+                : <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate(paths.appSub(`${appId}`, 'forms'))}>Manage forms</Button>}
             </div>
           ) : (
             <>
@@ -197,12 +201,21 @@ export function AppRecords() {
                 {rows.map((r) => (
                   <li key={r.formId} className="flex items-center gap-2 border-b border-gray-100 py-1 pl-3 pr-1 last:border-b-0 dark:border-slate-800">
                     {formIcon(r, 'h-7 w-7')}
-                    <Link to={`/responses/${r.formId}`} className="min-w-0 flex-1 py-1.5">
-                      <span className="block truncate text-[15px] font-semibold text-gray-900 dark:text-white">{r.name}</span>
-                      <span className="block text-xs tabular-nums text-gray-500 dark:text-slate-400">
-                        {r.count.toLocaleString()} record{r.count === 1 ? '' : 's'}{r.isVisible ? '' : ' · hidden in app'}
-                      </span>
-                    </Link>
+                    {acting ? (
+                      <div className="min-w-0 flex-1 py-1.5">
+                        <span className="block truncate text-[15px] font-semibold text-gray-900 dark:text-white">{r.name}</span>
+                        <span className="block text-xs tabular-nums text-gray-500 dark:text-slate-400">
+                          {formsHydrating ? '…' : `${r.count.toLocaleString()} record${r.count === 1 ? '' : 's'}`}{r.isVisible ? '' : ' · hidden in app'}
+                        </span>
+                      </div>
+                    ) : (
+                      <Link to={`/responses/${r.formId}`} className="min-w-0 flex-1 py-1.5">
+                        <span className="block truncate text-[15px] font-semibold text-gray-900 dark:text-white">{r.name}</span>
+                        <span className="block text-xs tabular-nums text-gray-500 dark:text-slate-400">
+                          {formsHydrating ? '…' : `${r.count.toLocaleString()} record${r.count === 1 ? '' : 's'}`}{r.isVisible ? '' : ' · hidden in app'}
+                        </span>
+                      </Link>
+                    )}
                     <span className="flex flex-none items-center">{actions(r, touch, true)}</span>
                   </li>
                 ))}
@@ -226,10 +239,14 @@ export function AppRecords() {
                         <th scope="row" className="py-1 pl-3 pr-2 font-normal">
                           <div className="flex min-w-0 items-center gap-2">
                             {formIcon(r, 'h-6 w-6')}
-                            <Link to={`/responses/${r.formId}`} title="View records" className="min-w-0 truncate font-semibold text-gray-900 hover:text-primary-700 dark:text-white dark:hover:text-primary-300">{r.name}</Link>
+                            {acting ? (
+                              <span className="min-w-0 truncate font-semibold text-gray-900 dark:text-white">{r.name}</span>
+                            ) : (
+                              <Link to={`/responses/${r.formId}`} title="View records" className="min-w-0 truncate font-semibold text-gray-900 hover:text-primary-700 dark:text-white dark:hover:text-primary-300">{r.name}</Link>
+                            )}
                           </div>
                         </th>
-                        <td className="px-2 text-right tabular-nums text-gray-700 dark:text-slate-300">{r.count.toLocaleString()}</td>
+                        <td className="px-2 text-right tabular-nums text-gray-700 dark:text-slate-300">{formsHydrating ? '…' : r.count.toLocaleString()}</td>
                         <td className="truncate px-2 text-gray-500 dark:text-slate-400">{r.isVisible ? 'Shown' : 'Hidden in app'}</td>
                         <td className="py-0.5 pl-2 pr-2 text-right"><span className="inline-flex items-center justify-end gap-0.5">{actions(r, small)}</span></td>
                       </tr>

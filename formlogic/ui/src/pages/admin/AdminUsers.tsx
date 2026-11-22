@@ -1,6 +1,6 @@
 import { useCallback, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { api, type AdminUser } from '../../lib/api';
 import { formatDateTimeInZone, useAdminTimezone } from '../../lib/timezone';
 import { cn, formatRelativeTime } from '../../lib/utils';
@@ -56,8 +56,21 @@ export function AdminUsers() {
             onChange={(e) => { setSearch(e.target.value); setPage(0); }}
             placeholder="Search email or name…"
             aria-label="Search users"
-            className="h-10 w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 max-sm:h-11"
+            className={cn(
+              'h-10 w-full rounded-lg border border-gray-300 bg-white pl-9 text-sm text-gray-900 placeholder:text-gray-400 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 max-sm:h-11',
+              search ? 'pr-9' : 'pr-3',
+            )}
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => { setSearch(''); setPage(0); }}
+              aria-label="Clear search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus-visible:outline-2 focus-visible:outline-primary-500 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200 max-sm:h-9 max-sm:w-9"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
         </div>
         <p className="text-sm text-gray-500 dark:text-slate-400">Find an account to manage access, view its resources, or restore a backup.</p>
       </div>

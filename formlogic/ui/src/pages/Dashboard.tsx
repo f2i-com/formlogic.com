@@ -419,8 +419,9 @@ function FormActionsDropdown({
             className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden overflow-y-auto overscroll-contain"
             style={actionsMenuPosition(menuRect)}
           >
-            {/* Mobile-only quick actions */}
-            <div className="sm:hidden">
+            {/* Quick actions (always available in menu so Share & embed is reachable on desktop
+                and Preview/Analytics/View data remain reachable at mid container widths) */}
+            <div>
               <button
                 onClick={() => { onEdit(); setIsOpen(false); }}
                 role="menuitem"
@@ -463,7 +464,7 @@ function FormActionsDropdown({
               </button>
               <div className="border-t border-gray-100 dark:border-slate-800 my-1" />
             </div>
-            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-slate-500 uppercase tracking-wider">
+            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">
               Export
             </div>
             <button
@@ -494,7 +495,7 @@ function FormActionsDropdown({
             <button
               onClick={() => { onDelete(); setIsOpen(false); }}
               role="menuitem"
-              className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-500 flex items-center gap-2 cursor-pointer"
+              className="w-full px-3 py-2 text-sm text-left hover:bg-red-500/10 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
             >
               <Trash2 className="h-4 w-4" />
               Delete form
@@ -571,6 +572,7 @@ function QuickFind({
           type="text"
           role="combobox"
           aria-expanded={open}
+          aria-controls={open ? 'dashboard-quick-find-list' : undefined}
           aria-label="Quick find a form"
           placeholder="Search your forms"
           value={q}
@@ -607,7 +609,7 @@ function QuickFind({
           {results.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-gray-500 dark:text-slate-400">No forms match.</p>
           ) : (
-            <ul role="listbox" aria-label="Matching forms" className="max-h-80 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/60">
+            <ul id="dashboard-quick-find-list" role="listbox" aria-label="Matching forms" className="max-h-80 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/60">
               {results.map((form, i) => {
                 const count = countOf(form);
                 const appName = appOfForm[form.id];
@@ -688,6 +690,7 @@ export function Dashboard() {
   // value — so the headline can hold its '—' dash instead of flashing "0 responses" while
   // the analytics fetch is still in flight.
   const [statsReady, setStatsReady] = useState(false);
+  const [statsFetching, setStatsFetching] = useState(false);
   // api.request never throws — a 500 from every /analytics call returns {error} and used
   // to leave totalResponses at 0, which the headline reported as "No responses yet" and
   // the cache then persisted. Track the failure so the page can say so instead of lying.
@@ -759,14 +762,15 @@ export function Dashboard() {
   // What the apps list shows beside each app (its data, who can use it), as the Apps page has it.
   // A server from before the summary answers 404: the rows then show what the apps say themselves.
   const [appSummaries, setAppSummaries] = useState<Record<string, AppSummary>>({});
+  const appIdsKey = useMemo(() => apps.map((a) => a.id).sort().join(','), [apps]);
   useEffect(() => {
-    if (storageMode !== 'api' || apps.length === 0) return;
+    if (storageMode !== 'api' || !appIdsKey) return;
     const stop = new AbortController();
     void api.getAppsSummary(stop.signal).then((result) => {
       if (!stop.signal.aborted && !result.error && result.data?.apps) setAppSummaries(result.data.apps);
     });
     return () => stop.abort();
-  }, [storageMode, apps.length]);
+  }, [storageMode, appIdsKey, user?.id]);
 
   // First-run onboarding: a welcome that routes a brand-new user into creating their first form.
   // Dismissal persists PER USER (namespaced by id) so a fresh account on a shared browser still sees
@@ -942,8 +946,10 @@ export function Dashboard() {
           serverForms.every((form) => cached.data.responseCounts[form.id] !== undefined);
         if (statsReloadToken === 0 && cached && cacheMatchesForms && cached.ageMs < STATS_FRESH_MS && statsShownFor.current === user.id) {
           setStatsReady(true);
+          setStatsFetching(false);
           return;
         }
+        setStatsFetching(true);
         try {
           let totalResponses = 0;
           // getTimezoneOffset() returns minutes BEHIND UTC (JS convention); the API wants
@@ -1052,6 +1058,8 @@ export function Dashboard() {
             setStats(localStats);
           }
           setStatsReady(true);
+        } finally {
+          if (!cancelled) setStatsFetching(false);
         }
       } else if (storageMode !== 'api') {
         setStats(localStats);
@@ -1476,9 +1484,11 @@ export function Dashboard() {
                 {recentForms.map((form) => {
                   const formResponses = getResponsesByFormId(form.id);
                   const fieldCount = form.fieldCount ?? form.fields?.length ?? 0;
-                  const statsPending = statsLoading || (storageMode === 'api' && !statsReady && !statsFailed);
-                  const n = storageMode === 'api' ? displayedResponseCounts[form.id] : formResponses.length;
-                  const pulseUnavailable = storageMode === 'api' && !pulseByForm[form.id] && !statsPending;
+                  const fetchedCount = displayedResponseCounts[form.id];
+                  const statsPending = statsLoading || (storageMode === 'api' && ((!statsReady && !statsFailed) || (statsFetching && fetchedCount === undefined)));
+                  const n = storageMode === 'api' ? (fetchedCount ?? form.responseCount) : formResponses.length;
+                  const pulsePending = statsPending || (storageMode === 'api' && statsFetching && !pulseByForm[form.id]);
+                  const pulseUnavailable = storageMode === 'api' && !pulseByForm[form.id] && !pulsePending;
                   const days = pulseByForm[form.id] ?? buildPulseFromTimestamps([]);
                   const periodResponses = days.reduce((sum, day) => sum + day.count, 0);
                   return (
@@ -1505,7 +1515,7 @@ export function Dashboard() {
 
                             <div className="min-w-0 flex-1">
                               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                                <h4 className="min-w-0 max-w-full break-words font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
+                                <h3 className="min-w-0 max-w-full break-words font-semibold text-gray-900 motion-safe:transition-colors group-hover:text-primary-600 dark:text-white dark:group-hover:text-primary-400" title={form.title || 'Untitled Form'}>
                                   <Link
                                     to={`/builder/${form.id}`}
                                     aria-label={`Open ${form.title || 'Untitled Form'} in the builder`}
@@ -1514,7 +1524,7 @@ export function Dashboard() {
                                   >
                                     {form.title || 'Untitled Form'}
                                   </Link>
-                                </h4>
+                                </h3>
                                 <Badge
                                   variant={form.status === 'published' ? 'success' : 'default'}
                                   size="sm"
@@ -1614,7 +1624,7 @@ export function Dashboard() {
                                   <BarChart3 className="h-3.5 w-3.5 flex-none text-primary-500" />
                                   Last 14 days
                                 </span>
-                                {statsPending ? (
+                                {pulsePending ? (
                                   <Skeleton className="h-3 w-10" />
                                 ) : (
                                   <span className="flex-none text-[10px] font-semibold tabular-nums text-gray-500 dark:text-slate-400">
@@ -1622,7 +1632,7 @@ export function Dashboard() {
                                   </span>
                                 )}
                               </div>
-                              {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={statsPending} />}
+                              {pulseUnavailable ? <p className="py-3 text-xs text-gray-500 dark:text-slate-400">Activity couldn’t be loaded.</p> : <PulseStrip days={days} loading={pulsePending} />}
                               <div className="mt-0.5 flex justify-between text-[9px] font-medium uppercase tracking-wider text-gray-500 dark:text-slate-400">
                                 <span>14 days ago</span>
                                 <span>Today</span>
@@ -1713,8 +1723,8 @@ export function Dashboard() {
                       <Sparkles className="h-4 w-4 text-amber-600 dark:text-amber-500" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Pro tip</p>
-                      <p className="text-xs text-amber-600 dark:text-amber-300/70 mt-1">
+                      <p className="text-sm font-medium text-amber-900 dark:text-amber-100">Pro tip</p>
+                      <p className="text-xs text-amber-800 dark:text-amber-200 mt-1">
                         Set up an automation to do something every time a form is submitted — send a text,
                         save a record, or notify someone.
                       </p>

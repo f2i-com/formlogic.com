@@ -1485,7 +1485,7 @@ export default function FormBuilder() {
       <div ref={observeBuilderBody} className="flex min-h-0 flex-1 overflow-hidden">
         {/* Field Palette — inline when there is room, otherwise opened as a sheet. */}
         {builderLayout.palette === 'inline' && (
-          <aside data-bot-showcase="builder-palette" className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
+          <aside data-bot-showcase="builder-palette" aria-label="Field palette" className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
             <BuilderDockHeader
               title="Add a field"
               closeLabel="Collapse fields panel"
@@ -1632,7 +1632,7 @@ export default function FormBuilder() {
 
         {/* Settings Panel — inline when there is room, otherwise opened as a sheet. */}
         {fieldSettingsWanted && builderLayout.settings === 'inline' && (
-          <aside data-bot-showcase="builder-properties" className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
+          <aside data-bot-showcase="builder-properties" aria-label="Field settings" className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
             <BuilderDockHeader
               title="Field settings"
               note={selectedField ? FIELD_TYPE_INFO[selectedField.type]?.label : undefined}

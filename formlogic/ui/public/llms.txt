@@ -1,7 +1,7 @@
 # FormLogic: app-building guide for AI assistants
 
-FormLogic hosts forms, dashboards, automations and web apps built with JavaScript, React or Vue.
-An app can have private backend handlers and its own SQLite database.
+FormLogic hosts forms, dashboards, automations and full-stack web apps built with SoftN, JavaScript, React, Vue, PHP, Rust or Python.
+Forms and hosted apps can share a single live SQLite database (Unified SQLite Database + 1-Click Admin Panel CRUD Builder), and owners can invoke hosted app backends and flows externally via scoped API keys (`apps:invoke`, `flows:run`).
 
 ## Start
 - Human-readable onboarding: /ai-setup (public, no account required).

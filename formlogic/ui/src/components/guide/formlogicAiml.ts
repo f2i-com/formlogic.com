@@ -131,6 +131,13 @@ function chipsForSection(section: GuideRouteSection): string[] {
         'How do backups and encryption work?',
         'How do I customize or move you?',
       ];
+    case 'docs':
+      return [
+        'Take me on a tour',
+        'How do API keys and MCP work?',
+        'How do SoftN apps and forms work together?',
+        'How do I self-host FormLogic?',
+      ];
     default:
       return [
         'Take me on a tour',
@@ -161,6 +168,8 @@ function greetingForSection(section: GuideRouteSection, botName: string): string
       return `[nod] Welcome to Automations and Flows! Ask for a tour or ask about triggers, ZIPP code nodes, webhooks, AI nodes, OAIY Desktop, or Aokie.`;
     case 'settings':
       return `[smile] Welcome to Settings! You can customize my avatar, framing, voice, and AIML right here — or ask about API keys, MCP, vaults, and backups.`;
+    case 'docs':
+      return `[wave] Welcome to the FormLogic Docs! I'm ${botName}. Search sections on the left or ask me directly about forms, SoftN apps, API keys, MCP, Flows, or self-hosting.`;
     default:
       return `[wave] Hi, I'm ${botName}, your FormLogic guide. Drag me anywhere if I'm in your way, or ask for a guided tour and I'll walk you through this page!`;
   }
@@ -181,7 +190,7 @@ function tourStopsForSection(section: GuideRouteSection): string {
     case 'form-builder':
       return `
       <stop target="builder-header">[wave] Up here is your form header: rename the form, pick a custom Lucide icon, check your save state, and see if this form is live-bound to a shared SQLite table.</stop>
-      <stop target="builder-palette">[nod] This left panel is your Field Palette! Click any field type — from text, phone, and choices to linked records, calculated fields, file uploads, signatures, camera, and GPS location.</stop>
+      <stop target="builder-palette">[nod] This left panel is your Field Palette! Click any of the 23 field types — from text, phone, and choices to linked records, calculated and hidden fields, file uploads, signatures, and GPS location.</stop>
       <stop target="builder-canvas">[thumbsup] Here is your drag-and-drop canvas! Reorder questions smoothly, duplicate or delete fields, and use Undo or Redo anytime.</stop>
       <stop target="builder-properties">[smile] Selecting any field opens Field Settings on the right: configure labels, placeholders, validation rules, and conditional show-or-hide logic.</stop>
       <stop target="builder-toolbar">[cheerful] Finish up on the top toolbar: customize your Theme, design Custom Screens or Dashboards, write ZIPP Scripts, wire Flows, Preview, Share, and hit Publish!</stop>
@@ -220,6 +229,11 @@ function tourStopsForSection(section: GuideRouteSection): string {
       <stop target="apps-toolbar">[wave] Search across all your Forms and SoftN apps, filter by type or publish status, and switch between Table and Card views here.</stop>
       <stop target="create-app">[thumbsup] Click Create app to start a fresh Classic Forms app, install a SoftN starter in PHP, Rust, JS, or Python, or import from the Marketplace.</stop>
       <stop target="sidebar-nav">[nod] Your pinned apps, Forms, Automations, Marketplace, and Settings are always one click away on the sidebar.</stop>
+      `;
+    case 'docs':
+      return `
+      <stop target="docs-toc">[wave] Use this table of contents and quick search filter to jump to any guide — from Quick Start and Backend Scripts to External APIs, MCP, Interactive Guide, and Self-Hosting.</stop>
+      <stop target="docs-content">[thumbsup] Every guide includes real copy-paste code examples, visual walkthroughs, and links to deeper developer references in the repository.</stop>
       `;
     default:
       return `
@@ -361,9 +375,9 @@ ${tourStops}
   </category>
 
   <category>
-    <pattern># FIELD TYPE # | # FIELD TYPES # | # PALETTE # | # QUESTIONS # | # SIGNATURE # | # CAMERA # | # LOCATION # | # GPS # | # FILE UPLOAD # | # PHONE FIELD #</pattern>
+    <pattern># FIELD TYPE # | # FIELD TYPES # | # PALETTE # | # QUESTIONS # | # SIGNATURE # | # HIDDEN FIELD # | # LOCATION # | # GPS # | # FILE UPLOAD # | # PHONE FIELD #</pattern>
     <template>
-      <showcase target="builder-palette"/>[nod] FormLogic includes rich field types for every workflow: Short and Long Text, Email, international E.164 Phone with country picker, Number, URL, Dropdown, Multiple Choice, Checkboxes, Rating, Scale, Date and Time, Linked Records, Calculated fields, File Uploads, Signatures, Camera capture, GPS Location, plus Welcome, Statement, and Thank-You screens!
+      <showcase target="builder-palette"/>[nod] FormLogic includes 23 field types for every workflow: Short and Long Text, Email, international E.164 Phone with country picker, Number, URL, Dropdown, Multiple Choice, Checkboxes, Rating, Scale, Date, Time, Date and Time, Linked Records, Calculated fields, Hidden fields, File Uploads, Signatures, GPS Location, plus Welcome, Statement, and Thank-You screens!
       <reply>How do linked records work?</reply>
       <reply>How do calculated fields work?</reply>
       <reply>How do scripts and conditional logic work?</reply>

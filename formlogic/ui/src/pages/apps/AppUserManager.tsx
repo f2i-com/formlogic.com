@@ -38,7 +38,8 @@ export function AppUserManager() {
   const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
   const backTo = useReturnTo(paths.appSub(`${appId}`, 'settings?tab=access'));
-  const [loading, setLoading] = useState(true);
+  const [loadedAppId, setLoadedAppId] = useState<string | null>(null);
+  const loading = !!appId && loadedAppId !== appId;
   const { users, invitations, groups, fetchUsers, fetchInvitations, fetchGroups, inviteUser, revokeInvitation, removeUser, updateUser, createGroup, deleteGroup, addGroupMember, removeGroupMember } = useAppUserStore();
   const { fetchRoles, getApp } = useAppStore();
   // Only the Owner may re-role, suspend or remove a member whose role grants an app-level
@@ -134,6 +135,7 @@ export function AppUserManager() {
 
   useEffect(() => {
     if (!appId) return;
+    let cancelled = false;
     // Groups are behind GROUPS_ENABLED (permanently false today): fetching them cost a
     // request per visit, and a failure of that dead endpoint told the owner their member
     // and invitation data had failed to load when both were fine.
@@ -141,13 +143,15 @@ export function AppUserManager() {
       fetchUsers(appId),
       fetchInvitations(appId),
       ...(GROUPS_ENABLED ? [fetchGroups(appId)] : []),
-      fetchRoles(appId).then(setRoles),
+      fetchRoles(appId).then((r) => { if (!cancelled) setRoles(r); }),
     ]).then((results) => {
+      if (cancelled) return;
       const failed = results.filter((r) => r.status === 'rejected');
       if (failed.length > 0) {
         toast.error('Load error', 'Some data could not be loaded. Please refresh the page.');
       }
-    }).finally(() => setLoading(false));
+    }).finally(() => { if (!cancelled) setLoadedAppId(appId); });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
@@ -273,17 +277,17 @@ export function AppUserManager() {
               return (
               <div className="flex items-center justify-end gap-1">
                 {u.status === 'pending' && (
-                  <button onClick={() => handleApprove(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
-                    className="p-1.5 text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Approve member. ${OWNER_ONLY_REASON}` : 'Approve member'}><Check className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => handleApprove(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 items-center justify-center text-gray-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Approve member. ${OWNER_ONLY_REASON}` : 'Approve member'}><Check className="h-4 w-4" /></button>
                 )}
-                {ownerOnly && <span className="text-xs text-gray-400 dark:text-slate-500" title={OWNER_ONLY_REASON}>Owner only</span>}
+                {ownerOnly && <span className="text-xs text-gray-600 dark:text-slate-400" title={OWNER_ONLY_REASON}>Owner only</span>}
                 {!isOwner && (
-                  <button onClick={() => openEditUser(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
-                    className="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Edit member role and status. ${OWNER_ONLY_REASON}` : 'Edit member role and status'}><Pencil className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => openEditUser(u)} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 items-center justify-center text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Edit member role and status. ${OWNER_ONLY_REASON}` : 'Edit member role and status'}><Pencil className="h-4 w-4" /></button>
                 )}
                 {!isOwner && (
-                  <button onClick={() => setConfirmAction({ type: 'removeUser', id: u.id, label: String(u.name || u.email) })} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
-                    className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Remove user. ${OWNER_ONLY_REASON}` : 'Remove user'}><Trash2 className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => setConfirmAction({ type: 'removeUser', id: u.id, label: String(u.name || u.email) })} disabled={ownerOnly} title={ownerOnly ? OWNER_ONLY_REASON : undefined}
+                    className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-400" aria-label={ownerOnly ? `Remove user. ${OWNER_ONLY_REASON}` : 'Remove user'}><Trash2 className="h-4 w-4" /></button>
                 )}
               </div>
               );
@@ -317,7 +321,7 @@ export function AppUserManager() {
             emptyMessage="No invitations yet — invite a user to get started."
             actions={(inv) => (
               (inv as unknown as AppInvitation).status === 'pending' ? (
-                <button onClick={() => setConfirmAction({ type: 'revokeInvitation', id: String(inv.id), label: String((inv as unknown as AppInvitation).email) })} className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
+                <button type="button" onClick={() => setConfirmAction({ type: 'revokeInvitation', id: String(inv.id), label: String((inv as unknown as AppInvitation).email) })} className="inline-flex h-8 w-8 max-sm:h-11 max-sm:w-11 items-center justify-center text-gray-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors cursor-pointer" aria-label="Revoke invitation"><Trash2 className="h-4 w-4" /></button>
               ) : null
             )}
           />
@@ -350,7 +354,7 @@ export function AppUserManager() {
         </div>}
       </PageBody>
 
-      <Modal isOpen={showInviteModal} onClose={closeInviteModal} title="Invite user" size="sm">
+      <Modal isOpen={showInviteModal} onClose={() => { if (!inviteLoading) closeInviteModal(); }} title="Invite user" size="sm">
         {inviteLink ? (
           <div className="p-6 space-y-4">
             {/* The token is returned once, at creation. Closing without copying leaves the
@@ -361,9 +365,9 @@ export function AppUserManager() {
               <span>Invitation created. <strong>This link is shown once</strong> — copy it before closing.</span>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Invite link</label>
+              <label htmlFor="invite-link-input" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Invite link</label>
               <div className="flex gap-2">
-                <input type="text" readOnly value={inviteLink} onFocus={(e) => e.target.select()} aria-label="Invite link"
+                <input id="invite-link-input" type="text" readOnly value={inviteLink} onFocus={(e) => e.target.select()} aria-label="Invite link"
                   className="flex-1 min-w-0 px-3 py-2.5 border border-gray-200/80 dark:border-slate-700/60 rounded-xl bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-300 text-xs font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500" />
                 <Button variant="outline" size="sm" onClick={copyInviteLink} leftIcon={linkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}>
                   {linkCopied ? 'Copied' : 'Copy'}
@@ -375,32 +379,32 @@ export function AppUserManager() {
               </p>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={() => { setInviteLink(null); setLinkCopied(false); }}>Invite another</Button>
+              <Button variant="ghost" onClick={() => { setInviteLink(null); setLinkCopied(false); setInviteEmail(''); setInviteError(null); }}>Invite another</Button>
               <Button onClick={closeInviteModal}>Done</Button>
             </div>
           </div>
         ) : (
         <div className="p-6 space-y-4">
           {inviteError && (
-            <div className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
+            <div role="alert" className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-lg border border-red-200 dark:border-red-500/20">
               <span>{inviteError}</span>
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
-            <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com"
+            <label htmlFor="invite-user-email" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Email</label>
+            <input id="invite-user-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com"
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
-            <select value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
+            <label htmlFor="invite-user-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
+            <select id="invite-user-role" value={inviteRoleId} onChange={(e) => setInviteRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
               <option value="">Select role...</option>
               {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id} disabled={ownerOnlyRole(r)}>{ownerOnlyRole(r) ? `${r.name} (Owner only)` : r.name}</option>)}
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={closeInviteModal}>Cancel</Button>
+            <Button variant="ghost" onClick={closeInviteModal} disabled={inviteLoading}>Cancel</Button>
             <Button onClick={handleInvite} disabled={!inviteEmail || !inviteRoleId || inviteLoading} isLoading={inviteLoading}>Send invitation</Button>
           </div>
         </div>
@@ -444,7 +448,7 @@ export function AppUserManager() {
         </div>
       </Modal>
 
-      <Modal isOpen={editingUser !== null} onClose={() => setEditingUser(null)} title="Edit member" size="sm">
+      <Modal isOpen={editingUser !== null} onClose={() => { if (!editSaving) setEditingUser(null); }} title="Edit member" size="sm">
         <div className="p-6 space-y-4">
           <div>
             <p className="text-sm font-medium text-gray-900 dark:text-white">{editingUser?.name || editingUser?.email}</p>
@@ -453,22 +457,22 @@ export function AppUserManager() {
             )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
-            <select value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)}
+            <label htmlFor="edit-member-role" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Role</label>
+            <select id="edit-member-role" value={editRoleId} onChange={(e) => setEditRoleId(e.target.value)}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
               {roles.filter((r) => !(r.isSystem && r.name === 'Owner')).map((r) => <option key={r.id} value={r.id} disabled={ownerOnlyRole(r)}>{ownerOnlyRole(r) ? `${r.name} (Owner only)` : r.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
-            <select value={editStatus} onChange={(e) => setEditStatus(e.target.value as 'active' | 'suspended')}
+            <label htmlFor="edit-member-status" className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Status</label>
+            <select id="edit-member-status" value={editStatus} onChange={(e) => setEditStatus(e.target.value as 'active' | 'suspended')}
               className="w-full px-3.5 py-2.5 border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200">
               <option value="active">Active</option>
               <option value="suspended">Suspended</option>
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setEditingUser(null)}>Cancel</Button>
+            <Button variant="ghost" onClick={() => setEditingUser(null)} disabled={editSaving}>Cancel</Button>
             <Button onClick={handleSaveUser} disabled={!editRoleId || editSaving} isLoading={editSaving}>
               {editingUser?.status === 'pending' && editStatus === 'active' ? 'Approve member' : 'Save'}
             </Button>

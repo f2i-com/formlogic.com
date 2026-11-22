@@ -154,6 +154,7 @@ per-form **SQLite** files plus uploaded files on disk. A backup is *not* just a 
 **Back up all of:**
 - MySQL database (`mysqldump formlogic > formlogic.sql`)
 - `formlogic/backend/storage/forms/` — per-form SQLite response databases
+- `formlogic/backend/storage/hosted-apps/` and `formlogic/backend/storage/native-apps/` — hosted SoftN / container app files and SQLite databases
 - `formlogic/backend/storage/uploads/` — uploaded files
 - `formlogic/backend/storage/packs/` — pack archives
 - `formlogic/backend/.env` — secrets (store securely/separately)

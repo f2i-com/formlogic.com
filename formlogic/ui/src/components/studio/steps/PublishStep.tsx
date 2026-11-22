@@ -85,8 +85,10 @@ export function PublishStep({
   const browserOnlyDemo = isDemo && isDemoLocalId(app.id);
   const seededDemoReadOnly = isDemo && !browserOnlyDemo;
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogSession, setDialogSession] = useState(0);
   const [showUnpublish, setShowUnpublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [unpublishing, setUnpublishing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showAllVersions, setShowAllVersions] = useState(false);
   const [showPassedChecks, setShowPassedChecks] = useState(false);
@@ -107,8 +109,14 @@ export function PublishStep({
     // 'dashboard' (and other non-form values) are always valid.
     const landing = (app.settings as { landingPage?: string } | undefined)?.landingPage;
     // Only a list that was read can say the form is gone: publish is never blocked on an unread one.
+    const landingAttachment = landing ? appForms.find((af) => af.formId === landing) : undefined;
+    const landingHidden = !!landingAttachment && (
+      landingAttachment.isVisible === false
+      || (landingAttachment.settings as { hidden?: boolean } | undefined)?.hidden === true
+    );
     const landingPageMissing =
-      formCountKnown !== false && !!landing && landing !== 'dashboard' && landing !== 'records' && !appForms.some((af) => af.formId === landing);
+      formCountKnown !== false && !!landing && landing !== 'dashboard' && landing !== 'records'
+      && (!landingAttachment || landingHidden);
     const settings = app.settings as { allowSelfRegistration?: boolean; defaultRoleId?: string } | undefined;
     const preflight = buildPreflightChecks({
       formCount: appForms.length,
@@ -209,16 +217,22 @@ export function PublishStep({
   };
 
   const doUnpublish = async () => {
-    setShowUnpublish(false);
-    const ok = await updateApp(app.id, { status: 'draft' });
-    if (ok) {
-      toast.success(
-        'App unpublished',
-        browserOnlyDemo
-          ? 'The preview is offline in this browser until you publish again.'
-          : 'Members lose access until you publish again.',
-      );
-      await Promise.all([onPublished(), fetchApps()]);
+    if (unpublishing) return;
+    setUnpublishing(true);
+    try {
+      const ok = await updateApp(app.id, { status: 'draft' });
+      if (ok) {
+        setShowUnpublish(false);
+        toast.success(
+          'App unpublished',
+          browserOnlyDemo
+            ? 'The preview is offline in this browser until you publish again.'
+            : 'Members lose access until you publish again.',
+        );
+        await Promise.all([onPublished(), fetchApps()]);
+      }
+    } finally {
+      setUnpublishing(false);
     }
   };
 
@@ -462,7 +476,10 @@ export function PublishStep({
             </p>
             <Button
               className="mt-5 w-full"
-              onClick={() => setDialogOpen(true)}
+              onClick={() => {
+                setDialogSession((n) => n + 1);
+                setDialogOpen(true);
+              }}
               disabled={!hasChanges || seededDemoReadOnly || blocking.length > 0}
               leftIcon={hasChanges ? <Rocket className="h-4 w-4" /> : <Check className="h-4 w-4" />}
             >
@@ -552,7 +569,7 @@ export function PublishStep({
                 <p className="text-sm font-semibold text-gray-900 dark:text-white">Release log</p>
                 <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">A dated record of each publish — apps roll forward, not back</p>
               </div>
-              <History className="h-4 w-4 text-gray-400" />
+              <History className="h-4 w-4 text-gray-500 dark:text-slate-400" aria-hidden="true" />
             </div>
             <div className="mt-4 space-y-3">
               {versions.length === 0 && versionsKnown === false && (
@@ -603,6 +620,7 @@ export function PublishStep({
       </div>
 
       <PublishDialog
+        key={dialogSession}
         open={dialogOpen}
         appName={app.name}
         nextVersion={nextVersion}
@@ -610,14 +628,15 @@ export function PublishStep({
         publishing={publishing}
         browserOnly={browserOnlyDemo}
         published={published}
-        onClose={() => setDialogOpen(false)}
+        onClose={() => { if (!publishing) setDialogOpen(false); }}
         onConfirm={doPublish}
       />
 
       <ConfirmDialog
         isOpen={showUnpublish}
-        onClose={() => setShowUnpublish(false)}
+        onClose={() => { if (!unpublishing) setShowUnpublish(false); }}
         onConfirm={doUnpublish}
+        isLoading={unpublishing}
         title="Take this app offline?"
         message="Users lose access until you republish. Existing data and the version history are kept."
         confirmLabel="Unpublish"
@@ -663,7 +682,7 @@ function PublishDialog({
     return `Updated ${list}`.slice(0, 160);
   }, [releaseSummary]);
   return (
-    <Modal isOpen={open} onClose={onClose} title={`Publish version ${nextVersion}?`} size="sm">
+    <Modal isOpen={open} onClose={() => { if (!publishing) onClose(); }} title={`Publish version ${nextVersion}?`} size="sm">
       <div className="p-4 sm:p-5 space-y-4">
         <p className="text-sm leading-6 text-gray-500 dark:text-slate-400">
           {browserOnly
@@ -687,7 +706,7 @@ function PublishDialog({
               </li>
             )}
             {releaseSummary.length > 5 && (
-              <li className="flex items-center gap-2 text-gray-400">
+              <li className="flex items-center gap-2 text-gray-500 dark:text-slate-400">
                 <GitBranch className="h-3.5 w-3.5 shrink-0" /> …and {releaseSummary.length - 5} more
               </li>
             )}
@@ -696,7 +715,7 @@ function PublishDialog({
         <div>
           <div className="mb-1.5 flex items-center justify-between gap-2">
             <label htmlFor="publish-label" className="block text-xs font-semibold text-gray-600 dark:text-slate-300">
-              Release note <span className="font-normal text-gray-400">(optional)</span>
+              Release note <span className="font-normal text-gray-500 dark:text-slate-400">(optional)</span>
             </label>
             {suggestedLabel && !label && (
               <button
@@ -717,7 +736,7 @@ function PublishDialog({
           />
         </div>
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
-          <Button variant="secondary" className="flex-1" onClick={onClose}>
+          <Button variant="secondary" className="flex-1" onClick={onClose} disabled={publishing}>
             Keep editing
           </Button>
           <Button className="flex-1" onClick={() => onConfirm(label)} isLoading={publishing} leftIcon={<Rocket className="h-4 w-4" />}>

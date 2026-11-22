@@ -474,63 +474,98 @@ const FormCard = memo(function FormCard({
 });
 
 // Compact list-mode row (the data-browsing view): clicking the row opens the form's
-// RECORDS, with explicit quick actions for Edit / Analytics / Preview. The full action
-// menu (duplicate, embed, archive, delete…) stays on the card view.
+// RECORDS, with explicit quick actions plus the full actions menu so list-view users can
+// publish, share, duplicate, archive, or delete without switching back to Cards.
 const FormListRow = memo(function FormListRow({
   form,
   responseCount,
   packName,
+  activeMenuId,
+  activeMenuRect,
+  onMenuToggle,
+  onMenuClose,
   onNavigate,
   onPreview,
   onRename,
+  onDuplicate,
+  onEmbed,
+  onDelete,
+  onStatusChange,
+  onConfirmStatus,
 }: {
   form: Form;
   responseCount: number;
   packName: string | null;
+  activeMenuId: string | null;
+  activeMenuRect: DOMRect | null;
+  onMenuToggle: (id: string, rect: DOMRect) => void;
+  onMenuClose: () => void;
   onNavigate: (path: string) => void;
   onPreview: (formId: string) => void;
   onRename: (form: Form) => void;
+  onDuplicate: (id: string) => void;
+  onEmbed: (id: string, title: string, status: Form['status']) => void;
+  onDelete: (id: string, title: string) => void;
+  onStatusChange: (id: string, status: 'draft' | 'published' | 'archived') => void;
+  onConfirmStatus: (id: string, title: string, status: 'draft' | 'archived') => void;
 }) {
+  const isMenuOpen = activeMenuId === form.id;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (isMenuOpen) {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus({ preventScroll: true });
+    } else if (wasOpen.current && document.activeElement === document.body) {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+    wasOpen.current = isMenuOpen;
+  }, [isMenuOpen]);
+  const title = form.title || 'Untitled Form';
+
   return (
     <div
-      role="button"
-      tabIndex={0}
       onClick={() => onNavigate(`/responses/${form.id}`)}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onNavigate(`/responses/${form.id}`); } }}
       title="View records"
-      className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-500"
+      className="flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 py-3 hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group"
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-medium text-gray-900 dark:text-white truncate">{form.title}</span>
+          <Link
+            to={`/responses/${form.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-sm font-medium text-gray-900 dark:text-white truncate hover:text-primary-600 dark:hover:text-primary-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 rounded"
+          >
+            {title}
+          </Link>
           {form.isPrivate && <PrivateLockBadge />}
           {packName && (
-            <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:text-slate-400 flex-none">
+            <span className="hidden md:inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:text-slate-400 flex-none">
               <Package className="h-3 w-3" /> {packName}
             </span>
           )}
         </div>
         <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500 dark:text-slate-400">
           <span className="inline-flex items-center gap-1" title={`${responseCount} response${responseCount === 1 ? '' : 's'}`}>
-            <Inbox className="h-3.5 w-3.5 text-gray-400 dark:text-slate-500" aria-hidden="true" />
+            <Inbox className="h-3.5 w-3.5 text-gray-500 dark:text-slate-400" aria-hidden="true" />
             <span className="tabular-nums">{responseCount}</span>
             <span className="sr-only">{` response${responseCount === 1 ? '' : 's'}`}</span>
           </span>
           <span className="hidden sm:inline-flex items-center gap-1 min-w-0" title={`Updated ${formatRelativeTime(form.updatedAt)}`}>
-            <Clock className="h-3.5 w-3.5 flex-none text-gray-400 dark:text-slate-500" aria-hidden="true" />
+            <Clock className="h-3.5 w-3.5 flex-none text-gray-500 dark:text-slate-400" aria-hidden="true" />
             <span className="truncate">{formatRelativeTime(form.updatedAt)}</span>
           </span>
         </div>
       </div>
       <StatusPill status={form.status} />
-      <div className="flex flex-none items-center gap-1" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-        <button type="button" onClick={() => onRename(form)} title="Rename form" aria-label={`Rename ${form.title}`} className="min-h-11 rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-400 dark:hover:bg-primary-500/10">Rename</button>
+      <div className="flex flex-none items-center gap-0.5 sm:gap-1" onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => onRename(form)} title="Rename form" aria-label={`Rename ${title}`} className="hidden sm:inline-flex min-h-10 items-center rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 cursor-pointer dark:text-primary-400 dark:hover:bg-primary-500/10">Rename</button>
         <button
           type="button"
           onClick={() => onNavigate(`/responses/${form.id}`)}
           title="View records"
-          aria-label={`View records for ${form.title}`}
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+          aria-label={`View records for ${title}`}
+          className="hidden sm:flex min-h-10 min-w-10 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Table className="h-4 w-4" />
         </button>
@@ -538,8 +573,8 @@ const FormListRow = memo(function FormListRow({
           type="button"
           onClick={() => onNavigate(`/analytics/${form.id}`)}
           title="Analytics"
-          aria-label={`Analytics for ${form.title}`}
-          className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer sm:flex dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+          aria-label={`Analytics for ${title}`}
+          className="hidden md:flex min-h-10 min-w-10 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <BarChart3 className="h-4 w-4" />
         </button>
@@ -547,8 +582,8 @@ const FormListRow = memo(function FormListRow({
           type="button"
           onClick={() => onNavigate(`/builder/${form.id}`)}
           title="Edit form"
-          aria-label={`Edit ${form.title}`}
-          className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+          aria-label={`Edit ${title}`}
+          className="flex min-h-10 min-w-10 max-sm:min-h-11 max-sm:min-w-11 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Pencil className="h-4 w-4" />
         </button>
@@ -556,11 +591,61 @@ const FormListRow = memo(function FormListRow({
           type="button"
           onClick={() => onPreview(form.id)}
           title="Preview"
-          aria-label={`Preview ${form.title}`}
-          className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer sm:flex dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
+          aria-label={`Preview ${title}`}
+          className="hidden md:flex min-h-10 min-w-10 items-center justify-center rounded-lg text-gray-500 dark:text-slate-400 transition-colors hover:bg-primary-50 hover:text-primary-600 cursor-pointer dark:hover:bg-primary-500/10 dark:hover:text-primary-400"
         >
           <Eye className="h-4 w-4" />
         </button>
+        <Button
+          ref={triggerRef}
+          variant="ghost"
+          size="sm"
+          aria-label={`Actions for ${title}`}
+          aria-haspopup="menu"
+          aria-expanded={isMenuOpen}
+          className="h-10 w-10 max-sm:h-11 max-sm:w-11 p-0"
+          onClick={(e) => {
+            if (isMenuOpen) onMenuClose();
+            else onMenuToggle(form.id, e.currentTarget.getBoundingClientRect());
+          }}
+        >
+          <MoreVertical className="h-4 w-4" />
+        </Button>
+        {isMenuOpen && activeMenuRect && createPortal(
+          <div className="fixed inset-0 z-[60]" style={{ zIndex: 60 }} onClick={(e) => e.stopPropagation()}>
+            <div className="absolute inset-0 bg-transparent" onClick={onMenuClose} />
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label={`Actions for ${title}`}
+              className="absolute w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 ring-1 ring-black/5 dark:ring-white/[0.06] overflow-hidden overflow-y-auto overscroll-contain"
+              style={actionsMenuPosition(activeMenuRect)}
+            >
+              <button onClick={() => { onNavigate(`/builder/${form.id}`); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Pencil className="h-4 w-4" /> Edit</button>
+              <button onClick={() => { onMenuClose(); onRename(form); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Pencil className="h-4 w-4" /> Rename</button>
+              <button onClick={() => { onPreview(form.id); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Eye className="h-4 w-4" /> Preview</button>
+              <button onClick={() => { onNavigate(`/analytics/${form.id}`); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><BarChart3 className="h-4 w-4" /> Analytics</button>
+              <button onClick={() => { onNavigate(`/responses/${form.id}`); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Table className="h-4 w-4" /> View Data</button>
+              <button onClick={() => onDuplicate(form.id)} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Copy className="h-4 w-4" /> Duplicate</button>
+              <button onClick={() => { onEmbed(form.id, form.title, form.status); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Share2 className="h-4 w-4" /> Share &amp; Embed</button>
+              <hr className="my-1 border-gray-100 dark:border-slate-800" />
+              {form.status !== 'published' && form.status !== 'archived' && (
+                <button onClick={() => { onStatusChange(form.id, 'published'); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Globe className="h-4 w-4" /> Publish</button>
+              )}
+              {form.status === 'published' && (
+                <button onClick={() => { onConfirmStatus(form.id, title, 'draft'); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><EyeOff className="h-4 w-4" /> Unpublish</button>
+              )}
+              {form.status === 'archived' ? (
+                <button onClick={() => { onStatusChange(form.id, 'draft'); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><ArchiveRestore className="h-4 w-4" /> Restore to draft</button>
+              ) : (
+                <button onClick={() => { onConfirmStatus(form.id, title, 'archived'); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-gray-700 dark:text-slate-300 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer"><Archive className="h-4 w-4" /> Archive</button>
+              )}
+              <hr className="my-1 border-gray-100 dark:border-slate-800" />
+              <button onClick={() => { onDelete(form.id, form.title); onMenuClose(); }} role="menuitem" className="flex items-center gap-2 w-full px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer"><Trash2 className="h-4 w-4" /> Delete</button>
+            </div>
+          </div>,
+          document.body,
+        )}
       </div>
     </div>
   );
@@ -641,18 +726,18 @@ export function FormsList() {
     useFormStore.getState().storageMode === 'api' &&
     !loadAppGroupsCache(useAuthStore.getState().user?.id)
   );
-  // Hints cached from the previous apps fetch so this visit doesn't jump while apps load:
-  // whether to reserve apps-rail skeleton space at all (zero-apps users must not see a
-  // skeleton that vanishes), and which forms were in-app (hidden from the top level).
-  const [hadAppsHint] = useState<boolean>(() => {
-    try { return localStorage.getItem('fl-had-apps') === '1'; } catch { return false; }
-  });
-  const [cachedAppFormIds] = useState<Set<string>>(() => {
+  // Hints cached from the previous apps fetch, namespaced by user id so switching
+  // accounts or exiting demo mode never leaks another user's app-form membership.
+  const hintUserKey = user?.id ?? 'anon';
+  const hadAppsHint = useMemo<boolean>(() => {
+    try { return localStorage.getItem(`fl-had-apps:${hintUserKey}`) === '1'; } catch { return false; }
+  }, [hintUserKey]);
+  const cachedAppFormIds = useMemo<Set<string>>(() => {
     try {
-      const raw = JSON.parse(localStorage.getItem('fl-app-form-ids') || '[]') as unknown;
+      const raw = JSON.parse(localStorage.getItem(`fl-app-form-ids:${hintUserKey}`) || '[]') as unknown;
       return new Set(Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string') : []);
     } catch { return new Set<string>(); }
-  });
+  }, [hintUserKey]);
   // Incremental pagination limits.
   const [appLimit, setAppLimit] = useState(APPS_PAGE);
   const [formLimit, setFormLimit] = useState(FORMS_PAGE);
@@ -720,8 +805,8 @@ export function FormsList() {
         // Refresh the layout hints for the next visit (skip on fetch errors so a
         // transient failure doesn't wrongly clear them).
         try {
-          localStorage.setItem('fl-had-apps', groups.length > 0 ? '1' : '0');
-          localStorage.setItem('fl-app-form-ids', JSON.stringify(groups.flatMap((g) => g.formIds)));
+          localStorage.setItem(`fl-had-apps:${hintUserKey}`, groups.length > 0 ? '1' : '0');
+          localStorage.setItem(`fl-app-form-ids:${hintUserKey}`, JSON.stringify(groups.flatMap((g) => g.formIds)));
         } catch { /* storage unavailable — hints are optional */ }
       } catch {
         // Keep whatever is on screen (cached or empty) on a transient failure.
@@ -730,7 +815,7 @@ export function FormsList() {
       }
     })();
     return () => { cancelled = true; };
-  }, [storageMode, user?.id]);
+  }, [storageMode, user?.id, hintUserKey]);
 
   // formId → its app, for GROUPING standalone vs in-app forms only. Preview routing does NOT
   // use this map — a form can be in several apps (companion apps), so preview does a fresh
@@ -887,14 +972,26 @@ export function FormsList() {
     return map;
   }, [appGroups, searchQuery, formTitleById]);
 
-  // The same search box also filters the apps rail (name, description, or a member form's title).
+  const appPackIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const pack of installedPacks) {
+      for (const appId of pack.appIds ?? []) {
+        map[appId] = pack.packId;
+      }
+    }
+    return map;
+  }, [installedPacks]);
+
+  // The same search box and pack filter also filter the apps rail.
   const filteredApps = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return appGroups;
-    return appGroups.filter((g) =>
-      g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q) || appMemberMatches[g.id]
-    );
-  }, [appGroups, searchQuery, appMemberMatches]);
+    return appGroups.filter((g) => {
+      if (packFilter === 'none' && appPackIdMap[g.id]) return false;
+      if (packFilter !== 'all' && packFilter !== 'none' && appPackIdMap[g.id] !== packFilter) return false;
+      if (!q) return true;
+      return g.name.toLowerCase().includes(q) || (g.description ?? '').toLowerCase().includes(q) || !!appMemberMatches[g.id];
+    });
+  }, [appGroups, searchQuery, appMemberMatches, packFilter, appPackIdMap]);
 
   const compareForms = useCallback((a: Form, b: Form): number => {
     switch (sortBy) {
@@ -968,7 +1065,7 @@ export function FormsList() {
     <EmptyState
       icon={Search}
       title="No forms match your filters"
-      description="Try a different search term, or clear the filters to see all your forms."
+      description="Clear the pack filter to see all your forms."
       className={EMPTY_SHELL_CLASS}
       action={
         <Button variant="outline" onClick={() => { setSearchQuery(''); setPackFilter('all'); }}>
@@ -978,6 +1075,13 @@ export function FormsList() {
     />
   );
 
+  const selectAppScope = (appId: string | null) => {
+    setSelectedAppId(appId);
+    setActiveTab('all');
+    setFormLimit(FORMS_PAGE);
+    if (appId) setSearchQuery('');
+  };
+
   const renderAppTile = (g: (typeof appGroups)[number]) => {
     // appMemberMatches already excludes apps with an obvious own-name/description
     // match (see its definition above), so no need to re-derive that here.
@@ -985,7 +1089,7 @@ export function FormsList() {
     return (
       <button
         key={g.id}
-        onClick={() => { setSelectedAppId(g.id); setSearchQuery(''); }}
+        onClick={() => selectAppScope(g.id)}
         className="flex items-center gap-3 p-4 rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 hover:bg-gray-50/70 dark:hover:bg-slate-800/50 hover:border-gray-300 dark:hover:border-slate-600 transition-colors duration-200 text-left group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-slate-950"
       >
         <AppIdentityTile
@@ -1009,13 +1113,13 @@ export function FormsList() {
               </span>
             </span>
           ) : appPackMap[g.id] && (
-            <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-400 dark:text-slate-500" title={`From the ${appPackMap[g.id]} pack`}>
+            <span className="mt-0.5 flex items-center gap-1 text-[11px] text-gray-600 dark:text-slate-400" title={`From the ${appPackMap[g.id]} pack`}>
               <Package className="h-3 w-3 shrink-0" />
               <span className="truncate">{appPackMap[g.id]}</span>
             </span>
           )}
         </div>
-        <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 group-hover:text-gray-500 dark:group-hover:text-slate-400 shrink-0" />
+        <ChevronRight className="h-4 w-4 text-gray-400 dark:text-slate-500 group-hover:text-gray-600 dark:group-hover:text-slate-300 shrink-0" />
       </button>
     );
   };
@@ -1055,13 +1159,47 @@ export function FormsList() {
             form={form}
             responseCount={responseCountOf(form)}
             packName={formPackMap[form.id] ?? null}
+            activeMenuId={activeMenu?.id ?? null}
+            activeMenuRect={activeMenu?.id === form.id ? activeMenu.rect : null}
+            onMenuToggle={handleMenuToggle}
+            onMenuClose={handleMenuClose}
             onNavigate={handleNavigate}
             onPreview={handlePreview}
             onRename={openRename}
+            onDuplicate={handleDuplicate}
+            onEmbed={handleEmbed}
+            onDelete={handleDelete}
+            onStatusChange={handleStatusChange}
+            onConfirmStatus={(id, title, status) => setPendingStatus({ id, title, status })}
           />
         ))}
       </div>
     );
+
+  const renderLoadingSkeletons = () =>
+    viewMode === 'list' ? (
+      <div className="col-span-full overflow-hidden rounded-xl border border-gray-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/40 divide-y divide-gray-100 dark:divide-slate-800" aria-busy="true">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 px-4 py-3.5 motion-safe:animate-pulse">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="h-4 w-48 rounded bg-gray-200 dark:bg-slate-700" />
+              <div className="h-3 w-28 rounded bg-gray-200/80 dark:bg-slate-800" />
+            </div>
+            <div className="h-5 w-16 rounded-full bg-gray-200 dark:bg-slate-700" />
+            <div className="h-8 w-20 rounded-lg bg-gray-200/80 dark:bg-slate-800" />
+          </div>
+        ))}
+      </div>
+    ) : (
+      Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+    );
+
+  const formsLoadFailure = (
+    <LoadFailure
+      title="We couldn't load your forms"
+      onRetry={() => { void useFormStore.getState().refreshForms(); }}
+    />
+  );
 
   return (
     <div className="min-h-screen">
@@ -1091,7 +1229,7 @@ export function FormsList() {
         {selectedAppId && (
           <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <nav className="flex items-center gap-1.5 text-sm min-w-0" aria-label="Breadcrumb">
-              <button onClick={() => setSelectedAppId(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">Forms</button>
+              <button type="button" onClick={() => selectAppScope(null)} className="text-gray-500 dark:text-slate-400 hover:text-primary-600 dark:hover:text-primary-400 cursor-pointer">Forms</button>
               <ChevronRight className="h-4 w-4 text-gray-300 dark:text-slate-600 shrink-0" />
               <span className="font-medium text-gray-900 dark:text-slate-100 inline-flex items-center gap-1.5 min-w-0">
                 <AppIdentityTile
@@ -1200,9 +1338,9 @@ export function FormsList() {
           <div>
             {storageMode === 'api' && filteredApps.length > 0 && (
               <div className="mb-6">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-slate-400 mb-2.5 flex items-center gap-2">
                   Apps
-                  <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>
+                  <span className="font-medium tabular-nums text-gray-500 dark:text-slate-400">{filteredApps.length}</span>
                 </h2>
                 <div className="grid grid-cols-1 gap-3 @xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @6xl/forms:grid-cols-4">
                   {filteredApps.slice(0, appLimit).map(renderAppTile)}
@@ -1225,7 +1363,7 @@ export function FormsList() {
             ) : (
               globalFormGroups.map((group) => (
                 <div key={group.key} className="mb-6">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-1.5">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-slate-400 mb-2.5 flex items-center gap-1.5">
                     {group.label ? (
                       <>
                         <Boxes className="h-3.5 w-3.5" />
@@ -1234,7 +1372,7 @@ export function FormsList() {
                     ) : (
                       'Forms not in an app'
                     )}
-                    <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{group.forms.length}</span>
+                    <span className="font-medium tabular-nums text-gray-500 dark:text-slate-400">{group.forms.length}</span>
                   </h2>
                   <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
                     {renderFormsView(group.forms)}
@@ -1249,11 +1387,11 @@ export function FormsList() {
             the cached hint says this user had apps — zero-apps users never see a skeleton vanish. */}
         {!selectedAppId && storageMode === 'api' && ((appsLoading && hadAppsHint) || appGroups.length > 0) && (
           <div>
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mb-2.5 flex items-center gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-slate-400 mb-2.5 flex items-center gap-2">
               Apps
               {appsLoading
-                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400 dark:text-slate-500" />
-                : <span className="font-medium tabular-nums text-gray-300 dark:text-slate-600">{filteredApps.length}</span>}
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-500 dark:text-slate-400" />
+                : <span className="font-medium tabular-nums text-gray-500 dark:text-slate-400">{filteredApps.length}</span>}
             </h2>
             {appsLoading ? (
               <div className="grid grid-cols-1 gap-3 @xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @6xl/forms:grid-cols-4" aria-busy="true">
@@ -1277,32 +1415,27 @@ export function FormsList() {
                 <ShowMore shown={Math.min(appLimit, filteredApps.length)} total={filteredApps.length} onShowMore={() => setAppLimit((n) => n + APPS_PAGE)} noun="apps" className="mt-3" />
               </>
             )}
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-slate-500 mt-6 mb-2.5">Forms not in an app</h2>
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-slate-400 mt-6 mb-2.5">Forms not in an app</h2>
           </div>
         )}
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={(tab) => { setActiveTab(tab); setFormLimit(FORMS_PAGE); }}>
-          <TabsList className="mb-4 sm:mb-6 overflow-x-auto flex-nowrap">
-            <TabsTrigger value="all" className="inline-flex items-center">All<TabCount n={filteredForms.length} /></TabsTrigger>
-            <TabsTrigger value="published" className="inline-flex items-center">Published<TabCount n={publishedForms.length} /></TabsTrigger>
-            <TabsTrigger value="draft" className="inline-flex items-center">Drafts<TabCount n={draftForms.length} /></TabsTrigger>
-            <TabsTrigger value="archived" className="inline-flex items-center">Archived<TabCount n={archivedForms.length} /></TabsTrigger>
+          <TabsList className="mb-4 sm:mb-6 overflow-x-auto flex-nowrap max-sm:gap-0.5">
+            <TabsTrigger value="all" className="inline-flex items-center max-sm:px-2 max-sm:text-xs">All<TabCount n={filteredForms.length} /></TabsTrigger>
+            <TabsTrigger value="published" className="inline-flex items-center max-sm:px-2 max-sm:text-xs">Published<TabCount n={publishedForms.length} /></TabsTrigger>
+            <TabsTrigger value="draft" className="inline-flex items-center max-sm:px-2 max-sm:text-xs">Drafts<TabCount n={draftForms.length} /></TabsTrigger>
+            <TabsTrigger value="archived" className="inline-flex items-center max-sm:px-2 max-sm:text-xs">Archived<TabCount n={archivedForms.length} /></TabsTrigger>
           </TabsList>
 
           <TabsContent value="all">
             <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4" aria-busy={gridLoading && filteredForms.length === 0}>
               {gridLoading && filteredForms.length === 0 && !filtersActive ? (
-                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+                renderLoadingSkeletons()
               ) : filteredForms.length === 0 ? (
                 <div className="col-span-full">
                   {formsFailed ? (
-                    // A cloud read failure also leaves forms: [], so without this the owner
-                    // was shown "No forms yet — create your first form" over intact data.
-                    <LoadFailure
-                      title="We couldn't load your forms"
-                      onRetry={() => { void useFormStore.getState().refreshForms(); }}
-                    />
+                    formsLoadFailure
                   ) : filtersActive ? (
                     clearFiltersEmptyState
                   ) : selectedApp ? (
@@ -1342,10 +1475,10 @@ export function FormsList() {
           <TabsContent value="published">
             <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && publishedForms.length === 0 && !filtersActive ? (
-                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+                renderLoadingSkeletons()
               ) : publishedForms.length === 0 ? (
                 <div className="col-span-full">
-                  {filtersActive ? clearFiltersEmptyState : (
+                  {formsFailed ? formsLoadFailure : filtersActive ? clearFiltersEmptyState : (
                     <EmptyState
                       icon={Globe}
                       title="No published forms"
@@ -1364,10 +1497,10 @@ export function FormsList() {
           <TabsContent value="draft">
             <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && draftForms.length === 0 && !filtersActive ? (
-                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+                renderLoadingSkeletons()
               ) : draftForms.length === 0 ? (
                 <div className="col-span-full">
-                  {filtersActive ? clearFiltersEmptyState : (
+                  {formsFailed ? formsLoadFailure : filtersActive ? clearFiltersEmptyState : (
                     <EmptyState
                       icon={FileText}
                       title="No drafts"
@@ -1386,10 +1519,10 @@ export function FormsList() {
           <TabsContent value="archived">
             <div className="grid grid-cols-1 gap-4 @2xl/forms:grid-cols-2 @4xl/forms:grid-cols-3 @7xl/forms:grid-cols-4">
               {gridLoading && archivedForms.length === 0 && !filtersActive ? (
-                Array.from({ length: 6 }).map((_, i) => <FormCardSkeleton key={i} />)
+                renderLoadingSkeletons()
               ) : archivedForms.length === 0 ? (
                 <div className="col-span-full">
-                  {filtersActive ? clearFiltersEmptyState : (
+                  {formsFailed ? formsLoadFailure : filtersActive ? clearFiltersEmptyState : (
                     <EmptyState
                       icon={Archive}
                       title="No archived forms"

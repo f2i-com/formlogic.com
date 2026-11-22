@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { api, type DeepHealth, type DeepHealthCheck } from '../../lib/api';
@@ -54,13 +54,29 @@ export function AdminDoctor() {
   const [data, setData] = useState<DeepHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const requestIdRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // setState only in the async callback so the initial-load effect never calls it synchronously.
   const load = useCallback(() => {
-    api.getDeepHealth().then((res) => {
-      if (res) { setData(res); setError(false); } else { setError(true); }
-      setLoading(false);
-    });
+    const reqId = ++requestIdRef.current;
+    api.getDeepHealth().then(
+      (res) => {
+        if (!mountedRef.current || reqId !== requestIdRef.current) return;
+        if (res) { setData(res); setError(false); } else { setError(true); }
+        setLoading(false);
+      },
+      () => {
+        if (!mountedRef.current || reqId !== requestIdRef.current) return;
+        setError(true);
+        setLoading(false);
+      }
+    );
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -93,15 +109,19 @@ export function AdminDoctor() {
         </Button>
       </div>
 
+      {error && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-red-200 bg-red-50/60 px-3 py-2.5 dark:border-red-500/30 dark:bg-red-500/10">
+          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+            {data ? "Couldn't refresh diagnostics — showing the last check below." : "Couldn't load diagnostics."}
+          </p>
+          <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>Try again</Button>
+        </div>
+      )}
+
       {loading && !data ? (
         <div className="flex items-center gap-2.5 py-2 text-sm text-gray-500 dark:text-slate-400">
           <div className="h-5 w-5 flex-none animate-spin rounded-full border-b-2 border-primary-500" role="status" aria-label="Running diagnostics" />
           <span aria-hidden="true">Running diagnostics…</span>
-        </div>
-      ) : error ? (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-red-200 bg-red-50/60 px-3 py-2.5 dark:border-red-500/30 dark:bg-red-500/10">
-          <p role="alert" className="text-sm text-red-700 dark:text-red-300">Couldn't load diagnostics.</p>
-          <Button variant="secondary" size="sm" onClick={refresh}>Try again</Button>
         </div>
       ) : data ? (
         <>
@@ -132,7 +152,7 @@ export function AdminDoctor() {
               <thead className={LIST_HEAD}>
                 <tr>
                   <th scope="col" className={cn(LIST_TH, 'w-56 pl-3 @4xl/list:w-72')}>Check</th>
-                  <th scope="col" className={cn(LIST_TH, 'w-20')}>State</th>
+                  <th scope="col" className={cn(LIST_TH, 'w-24')}>State</th>
                   <th scope="col" className={cn(LIST_TH, 'pr-3')}>What it found</th>
                 </tr>
               </thead>
