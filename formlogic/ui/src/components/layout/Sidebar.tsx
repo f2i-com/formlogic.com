@@ -154,14 +154,16 @@ export function Sidebar({ floating = false, placementControl }: { floating?: boo
       {scoped ? <ScopedAppSidebar navigation={scoped.navigation} section={scoped.section} collapsed={sidebarCollapsed} /> : <>
       {/* Create app + search */}
       <div className={cn('p-3 space-y-2.5', sidebarCollapsed && 'space-y-0')}>
-        <Button
-          onClick={() => navigate('/apps/new')}
-          className={cn('w-full', sidebarCollapsed && 'px-0')}
-          leftIcon={<Plus className="h-4 w-4" />}
-          aria-label={sidebarCollapsed ? 'Create app' : undefined}
-        >
-          {!sidebarCollapsed && 'Create app'}
-        </Button>
+        <div data-bot-showcase="create-app">
+          <Button
+            onClick={() => navigate('/apps/new')}
+            className={cn('w-full', sidebarCollapsed && 'px-0')}
+            leftIcon={<Plus className="h-4 w-4" />}
+            aria-label={sidebarCollapsed ? 'Create app' : undefined}
+          >
+            {!sidebarCollapsed && 'Create app'}
+          </Button>
+        </div>
         {!sidebarCollapsed && (
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-slate-400" />
@@ -181,7 +183,7 @@ export function Sidebar({ floating = false, placementControl }: { floating?: boo
       </div>
 
       {/* Navigation */}
-      <nav className="scrollbar-thin flex-1 overflow-y-auto px-3 py-1 space-y-1" aria-label="Workspace">
+      <nav data-bot-showcase="sidebar-nav" className="scrollbar-thin flex-1 overflow-y-auto px-3 py-1 space-y-1" aria-label="Workspace">
         <SidebarNavLink
           to={homePath}
           end

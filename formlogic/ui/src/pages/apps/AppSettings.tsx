@@ -412,6 +412,7 @@ export function AppSettings() {
       <PageBody className="@container/page">
         {/* The page's five sections, and at the row's end which app this is: its name, whether
             it is live and its address. Links, not tabs: each section is an address. */}
+        <div data-bot-showcase="app-settings-tabs">
         <SectionNav
           label="App settings sections"
           current={activeTab}
@@ -434,13 +435,14 @@ export function AppSettings() {
             </div>
           }
         />
+        </div>
 
         {/* The section's name is in the row above: a heading for a screen reader's outline,
             and one line saying what the section holds. */}
         <h2 className="sr-only">{section.label}</h2>
         <p className="mt-3 text-sm text-gray-500 dark:text-slate-400">{section.description}</p>
 
-        <section aria-label={`${section.label} settings`} className={cn('mt-4', PANEL_COLUMNS)}>
+        <section aria-label={`${section.label} settings`} className={cn('mt-4 pb-8', PANEL_COLUMNS)}>
           {activeTab === 'general' && (
             <>
             <SettingsPanel title="App details" icon={Settings} description="The name and description help people recognize this app.">
@@ -525,7 +527,7 @@ export function AppSettings() {
                 placeholder="https://example.com/logo.png"
                 className={cn(FIELD, FIELD_LINE)} />
             </div>
-              <div>
+              <div data-bot-showcase="app-icon-picker">
               <span className={LABEL}>App icon</span>
               <div className="flex flex-wrap items-center gap-3">
                 {/* Live preview: the icon on a tile tinted with the app's accent color. */}
@@ -937,15 +939,20 @@ export function AppSettings() {
           )}
         </section>
 
-        {/* What is saved and what is not, with Save, kept in view while the page scrolls: at the
-            left, where the body starts, and above the phone's bottom navigation and the chat
-            launcher (--fl-mobile-reserve). One Save for every section. */}
-        <div className="sticky bottom-[calc(var(--fl-mobile-reserve)+0.75rem)] z-20 mt-4 flex w-full max-w-xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/95 px-4 py-3 shadow-lg backdrop-blur md:bottom-16 dark:border-slate-700 dark:bg-slate-900/95">
+        {/* What is saved and what is not, with Save, kept in view while the page scrolls: spans the
+            settings body cleanly, sits near the bottom edge on desktop without floating over the
+            Manage tab panels, and clears the phone nav + chat launcher (--fl-mobile-reserve). */}
+        <div className="sticky bottom-[calc(var(--fl-mobile-reserve)+0.75rem)] z-20 mt-4 flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-200/90 bg-white/95 px-4 py-3 shadow-lg shadow-gray-900/5 backdrop-blur md:bottom-4 md:w-[calc(100%-4.75rem)] dark:border-slate-700/80 dark:bg-slate-900/95 dark:shadow-black/30">
           <div className="min-w-0 flex-1" role="status" aria-live="polite">
             <p className="text-sm font-semibold text-gray-900 dark:text-white">{saving ? 'Saving your changes…' : dirty ? 'You have unsaved changes' : 'All changes saved'}</p>
             <p className="mt-0.5 text-xs text-gray-500 dark:text-slate-400">Changes in any section save together.</p>
           </div>
-          <Button onClick={handleSave} disabled={saving || !dirty} leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}>
+          <Button
+            variant={dirty || saving ? 'primary' : 'secondary'}
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            leftIcon={saveSuccess ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+          >
             {saving ? 'Saving…' : 'Save changes'}
           </Button>
         </div>

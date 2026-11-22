@@ -162,7 +162,7 @@ export function AppsDashboard() {
 
       <PageBody className="@container/apps flex-1">
         {apps.length > 0 && (
-          <div className="mb-4">
+          <div data-bot-showcase="apps-toolbar" className="mb-4">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <div className="flex min-w-0 w-full items-center gap-2 @2xl/apps:w-auto @2xl/apps:flex-1 @2xl/apps:max-w-lg">
                 <div className="min-w-0 flex-1">

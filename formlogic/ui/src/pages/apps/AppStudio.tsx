@@ -316,9 +316,11 @@ export function AppStudio() {
         every width.
       */}
       <PageBody className="@container/studio">
+        <div data-bot-showcase="studio-nav">
         <AppSectionBar items={navigation} section={section} hasSidebar={hasSidebar}
           trail={[{ label: navigation.find(item => item.value === section)?.label ?? active.label }]}
           status={<StudioStateLine app={data.app} changes={changes} onOpenPublish={() => setStep('publish')} />} />
+        </div>
 
         <div className="mb-4 mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h2 className="sr-only">{active.label}</h2>

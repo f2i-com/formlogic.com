@@ -193,6 +193,131 @@ function ToolProposalCard({
 // The widget.
 // ---------------------------------------------------------------------------
 
+function clampLauncherPos(x: number, y: number): { x: number; y: number } {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+  const pad = 12;
+  const btnSize = 48;
+  return {
+    x: Math.round(Math.max(pad, Math.min(x, Math.max(pad, vw - btnSize - pad)))),
+    y: Math.round(Math.max(pad, Math.min(y, Math.max(pad, vh - btnSize - pad)))),
+  };
+}
+
+function DraggableChatLauncher({
+  chatOpen,
+  isMobile,
+  position,
+  onOpen,
+  onMove,
+}: {
+  chatOpen: boolean;
+  isMobile: boolean;
+  position: { x: number; y: number } | null;
+  onOpen: () => void;
+  onMove: (pos: { x: number; y: number }) => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [, setViewportTick] = useState(0);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+    latest: { x: number; y: number } | null;
+  } | null>(null);
+  const suppressNextClickRef = useRef(false);
+
+  useEffect(() => {
+    if (!position) return;
+    const onResize = () => setViewportTick((n) => n + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [position]);
+
+  const effectivePos = dragPos ?? (position ? clampLauncherPos(position.x, position.y) : null);
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originX: rect.left,
+      originY: rect.top,
+      moved: false,
+      latest: null,
+    };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const dx = e.clientX - state.startX;
+    const dy = e.clientY - state.startY;
+    if (!state.moved && Math.hypot(dx, dy) < 6) return;
+    if (!state.moved) {
+      state.moved = true;
+      setDragging(true);
+    }
+    const next = clampLauncherPos(state.originX + dx, state.originY + dy);
+    state.latest = next;
+    setDragPos(next);
+  };
+
+  const finishDrag = (e: React.PointerEvent<HTMLButtonElement>) => {
+    const state = dragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    dragStateRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    setDragging(false);
+    if (state.moved && state.latest) {
+      suppressNextClickRef.current = true;
+      onMove(state.latest);
+      setDragPos(null);
+      window.setTimeout(() => { suppressNextClickRef.current = false; }, 80);
+    } else {
+      setDragPos(null);
+    }
+  };
+
+  return (
+    <button
+      ref={btnRef}
+      type="button"
+      aria-label={chatOpen ? 'Restore chat' : 'Open chat'}
+      title={chatOpen ? 'Restore AI chat (drag to move)' : 'Open AI chat (drag to move)'}
+      style={effectivePos ? { left: effectivePos.x, top: effectivePos.y } : undefined}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={finishDrag}
+      onPointerCancel={finishDrag}
+      onClick={() => {
+        if (suppressNextClickRef.current) return;
+        onOpen();
+      }}
+      className={cn(
+        'fixed z-40 flex h-12 w-12 touch-none select-none items-center justify-center rounded-full bg-primary-600 text-primary-foreground shadow-lg transition-colors hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
+        dragging ? 'cursor-grabbing scale-105 shadow-xl' : 'cursor-grab',
+        !effectivePos && (
+          isMobile
+            ? 'right-4 bottom-[var(--fl-mobile-float)]'
+            : 'bottom-[calc(1rem+var(--fl-nav-bottom,0px))] right-[calc(1rem+var(--fl-nav-right,0px))]'
+        )
+      )}
+    >
+      <MessageCircle className="h-5 w-5" aria-hidden="true" />
+    </button>
+  );
+}
+
 export function SiteChatWidget({ inlineTarget = null }: { inlineTarget?: HTMLDivElement | null } = {}) {
   const userId = useAuthStore((s) => s.user?.id ?? 'anonymous');
   // A different account receives a fresh transcript, pending turn and preferences.
@@ -217,6 +342,8 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
   const setChatOpen = useUIStore((s) => s.setChatOpen);
   const setChatMinimized = useUIStore((s) => s.setChatMinimized);
   const setChatPosition = useUIStore((s) => s.setChatPosition);
+  const chatLauncherPosition = useUIStore((s) => s.chatLauncherPosition);
+  const setChatLauncherPosition = useUIStore((s) => s.setChatLauncherPosition);
   const navigate = useNavigate();
   // §11B O5a: what the user is looking at rides each chat turn, so "this form" just
   // works — the builder's chat button counts on this.
@@ -1327,22 +1454,16 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
           ended with. Chat is still reachable inside the studio — from its app menu
           and from the command palette — and the chat PANEL still opens normally. */}
       {!inlineTarget && !panelVisible && !(isMobile && pathClaimsBottomEdge(location.pathname)) && (
-        <button
-          type="button"
-          aria-label={chatOpen ? 'Restore chat' : 'Open chat'}
-          onClick={() => {
+        <DraggableChatLauncher
+          chatOpen={chatOpen}
+          isMobile={isMobile}
+          position={chatLauncherPosition}
+          onOpen={() => {
             setChatOpen(true);
             setChatMinimized(false);
           }}
-          className={cn(
-            'fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary-600 text-primary-foreground shadow-lg transition-colors hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2',
-            isMobile
-              ? 'right-4 bottom-[var(--fl-mobile-float)]'
-              : 'bottom-[calc(1rem+var(--fl-nav-bottom,0px))] right-[calc(1rem+var(--fl-nav-right,0px))]'
-          )}
-        >
-          <MessageCircle className="h-5 w-5" aria-hidden="true" />
-        </button>
+          onMove={setChatLauncherPosition}
+        />
       )}
 
       {!inlineTarget && panelVisible && isMobile && (

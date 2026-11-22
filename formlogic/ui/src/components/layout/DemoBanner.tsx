@@ -69,7 +69,7 @@ export function DemoBanner() {
         <button
           type="button"
           onClick={() => go('/')}
-          className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-white/30 px-2.5 py-1 text-xs font-medium text-primary-foreground/90 transition hover:bg-white/10"
+          className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-primary-foreground/35 bg-primary-foreground/10 px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:bg-primary-foreground/20"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to site

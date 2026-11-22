@@ -99,6 +99,8 @@ interface UIState {
   chatOpen: boolean;
   chatMinimized: boolean;
   chatPosition: ChatPanelPosition | null;
+  /** Persisted viewport position (px from top-left) of the closed/minimized chat launcher button. */
+  chatLauncherPosition: ChatPanelPosition | null;
   /** §11B O1: a prompt typed into "What do you want to create?" — the chat widget
    *  consumes it as its composer text on open (never persisted). */
   chatSeed: string | null;
@@ -123,6 +125,7 @@ interface UIState {
   setChatOpen: (open: boolean) => void;
   setChatMinimized: (minimized: boolean) => void;
   setChatPosition: (position: ChatPanelPosition | null) => void;
+  setChatLauncherPosition: (position: ChatPanelPosition | null) => void;
 
   // NOTE: `fixedBottomBar` used to live here, for pages with a fixed bottom action
   // bar. The App Studio's footer was removed and nothing set the flag again, so its
@@ -184,6 +187,7 @@ export const useUIStore = create<UIState>()(
       chatOpen: false,
       chatMinimized: false,
       chatPosition: null,
+      chatLauncherPosition: null,
       chatSeed: null,
       chatLaunch: null,
       softnOpen: null,
@@ -197,6 +201,7 @@ export const useUIStore = create<UIState>()(
       setChatOpen: (open) => set({ chatOpen: open }),
       setChatMinimized: (minimized) => set({ chatMinimized: minimized }),
       setChatPosition: (position) => set({ chatPosition: position }),
+      setChatLauncherPosition: (position) => set({ chatLauncherPosition: position }),
 
       // Fixed bottom action bar (not persisted — reflects the mounted page)
     }),
@@ -225,7 +230,8 @@ export const useUIStore = create<UIState>()(
         chatFollowAi: state.chatFollowAi,
         chatDocked: state.chatDocked,
         chatMinimized: state.chatMinimized,
-        chatPosition: state.chatPosition
+        chatPosition: state.chatPosition,
+        chatLauncherPosition: state.chatLauncherPosition,
       }),
     }
   )

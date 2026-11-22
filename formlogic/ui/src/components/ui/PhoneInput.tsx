@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { COUNTRIES, COUNTRY_BY_ISO } from '../../data/countries';
 import { detectUserCountry, toE164, parseE164 } from '../../lib/phoneUtils';
+import { useFloatingPopover } from '../../hooks/useFloatingPopover';
 import type { CountryData } from '../../data/countries';
 
 // Example national numbers (without country code) for placeholder hints
@@ -79,6 +81,13 @@ export function PhoneInput({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const numberInputRef = useRef<HTMLInputElement>(null);
+
+  const floating = useFloatingPopover(isOpen, buttonRef, {
+    width: 288,
+    estimatedHeight: 260,
+    maxHeight: 280,
+    align: 'left',
+  });
 
   // Track what we last emitted so we don't re-sync our own onChange calls
   const lastEmittedRef = useRef(value || '');
@@ -233,14 +242,15 @@ export function PhoneInput({
           </svg>
         </button>
 
-        {/* Dropdown */}
-        {isOpen && (
+        {/* Portaled dropdown so country list never clips inside cards or modals */}
+        {isOpen && floating && createPortal(
           <div
             ref={dropdownRef}
-            className="absolute top-full left-0 mt-1 w-72 max-h-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50 flex flex-col overflow-hidden"
+            style={floating.style}
+            className="bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 z-[200] flex flex-col overflow-hidden"
           >
             {/* Search */}
-            <div className="sticky top-0 p-2 bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700">
+            <div className="shrink-0 p-2 bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-700">
               <input
                 ref={searchInputRef}
                 type="text"
@@ -264,7 +274,7 @@ export function PhoneInput({
             </div>
 
             {/* Country list */}
-            <div className="overflow-y-auto flex-1">
+            <div className="overflow-y-auto flex-1 min-h-0">
               {filteredCountries.length === 0 ? (
                 <div className="px-3 py-4 text-sm text-gray-400 dark:text-slate-500 text-center">No countries found</div>
               ) : (
@@ -286,7 +296,8 @@ export function PhoneInput({
                 ))
               )}
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
 

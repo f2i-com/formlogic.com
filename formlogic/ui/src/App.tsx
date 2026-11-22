@@ -23,6 +23,7 @@ import { useUIStore } from './stores/uiStore';
 import { useAppStore } from './stores/appStore';
 import { ToastContainer } from './components/ui/Toast';
 import { AppLocalAccessPrompt } from './components/desktop/AppLocalAccessPrompt';
+import { BotGuideGate } from './components/guide/BotGuideGate';
 import { SyncConflictDialog } from './components/sync/SyncConflictDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeManager } from './components/ui/ThemeManager';
@@ -591,6 +592,7 @@ export default function App() {
           <SyncConflictDialog />
           <AppLocalAccessPrompt />
           <AdminConfirmGate />
+          <BotGuideGate />
         </AppInitializer>
       </BrowserRouter>
     </ErrorBoundary>

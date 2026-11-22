@@ -120,7 +120,7 @@ export function ExportDataMenu({ appId, appSlug, variant = 'platform' }: { appId
           The popover keeps itself inside the window, closes on Escape or a press elsewhere, and
           gives the focus back to the button. */}
       {inPlace
-        ? open && <div className="absolute right-0 top-full z-20 mt-1.5 w-72 overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-lg dark:border-slate-700/60 dark:bg-slate-900">{choices}</div>
+        ? open && <div className="absolute right-0 top-full z-50 mt-1.5 w-72 overflow-hidden rounded-xl border border-gray-200/80 bg-white shadow-xl dark:border-slate-700/60 dark:bg-slate-900">{choices}</div>
         : <Popover isOpen={open} onClose={() => setOpen(false)} anchorRef={trigger} placement="bottom-start" ariaLabel="Export data"
           className="w-72 max-w-[calc(100vw-1rem)] rounded-xl">{choices}</Popover>}
     </div>

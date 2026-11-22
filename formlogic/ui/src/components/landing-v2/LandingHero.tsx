@@ -27,7 +27,7 @@ export function LandingHero({ beta }: { beta: boolean }) {
   }, []);
 
   return (
-    <section className="fl-intro" id="top" aria-labelledby="fl-intro-title">
+    <section className="fl-intro" id="top" data-bot-showcase="hero" aria-labelledby="fl-intro-title">
       <div className="lv2-container fl-intro__layout">
         <div className="fl-intro__copy">
           <div className="fl-intro__eyebrow">
@@ -65,7 +65,9 @@ export function LandingHero({ beta }: { beta: boolean }) {
           <p className="fl-intro__terms">{beta ? 'Free during public beta.' : 'Free to start.'} No credit card required.</p>
         </div>
 
-        <WorkspacePreview />
+        <div data-bot-showcase="preview" className="min-w-0">
+          <WorkspacePreview />
+        </div>
       </div>
     </section>
   );

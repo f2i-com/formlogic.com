@@ -7,7 +7,9 @@
 // description and an "Output:" hint (from the catalog) so the shape is visible while authoring.
 // Nothing here executes — it only mutates the stored graph.
 import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Info, Plus, Search, Sparkles, Trash2, X, Zap } from 'lucide-react';
+import { useFloatingPopover } from '../../../hooks/useFloatingPopover';
 import { checkFlowCallInput, serviceActionContract, type FlowCallIssue } from './flowCallChecks';
 import { cn } from '../../../lib/utils';
 import { Button } from '../../ui/Button';
@@ -180,14 +182,22 @@ function FormCombobox({
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const selected = options.find((f) => f.id === value) ?? null;
   const results = useMemo(() => filterForms(options, query).slice(0, 30), [options, query]);
+  const floating = useFloatingPopover(open, inputRef, {
+    align: 'match-width',
+    minWidth: 200,
+    estimatedHeight: 208,
+    maxHeight: 240,
+  });
 
   return (
     <div className="relative">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
         <input
+          ref={inputRef}
           type="text"
           value={open ? query : selected?.title ?? ''}
           placeholder={selected ? selected.title : 'Search your forms…'}
@@ -201,10 +211,11 @@ function FormCombobox({
           aria-label="Search your forms"
         />
       </div>
-      {open && (
+      {open && floating && createPortal(
         <ul
           role="listbox"
-          className="scrollbar-thin absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-lg"
+          style={floating.style}
+          className="scrollbar-thin z-[200] overflow-y-auto rounded-lg border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 shadow-2xl shadow-gray-900/15 dark:shadow-black/50"
         >
           {results.length === 0 ? (
             <li className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">No forms match "{query}".</li>
@@ -223,7 +234,8 @@ function FormCombobox({
               </li>
             ))
           )}
-        </ul>
+        </ul>,
+        document.body,
       )}
     </div>
   );

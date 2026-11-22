@@ -563,7 +563,7 @@ function QuickFind({
   const openRecords = (form: Form) => { setOpen(false); navigate(`/responses/${form.id}`); };
 
   return (
-    <div ref={wrapRef} className="relative mb-8 max-w-2xl">
+    <div ref={wrapRef} data-bot-showcase="dashboard-quick-search" className="relative mb-8 max-w-2xl">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500 dark:text-slate-400" />
         <input

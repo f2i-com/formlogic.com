@@ -1,5 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useCurrentTime } from '../hooks/useCurrentTime';
+import { useFloatingPopover } from '../hooks/useFloatingPopover';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { LinkedRecordChips } from '../components/responses/recordDisplay';
 import { renderEditField } from '../components/responses/renderEditField';
@@ -184,6 +186,13 @@ function FormResponses() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const exportPopover = useFloatingPopover(exportMenuOpen, exportRef, {
+    width: 288,
+    estimatedHeight: 240,
+    maxHeight: 340,
+    align: 'right',
+  });
   // E2EE private-form state: 5000-row list cap info, unlock dialog, decrypted export progress.
   const [privateCapInfo, setPrivateCapInfo] = useState<{ shown: number; total: number } | null>(null);
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
@@ -326,9 +335,14 @@ function FormResponses() {
   useEffect(() => {
     if (!exportMenuOpen) return;
     const onMouseDown = (event: MouseEvent) => {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setExportMenuOpen(false);
+      const target = event.target as Node;
+      if (
+        (exportRef.current && exportRef.current.contains(target)) ||
+        (exportMenuRef.current && exportMenuRef.current.contains(target))
+      ) {
+        return;
       }
+      setExportMenuOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setExportMenuOpen(false);
@@ -843,8 +857,14 @@ function FormResponses() {
                 <span className="ml-2 hidden @4xl/header:inline">Export</span>
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
-              {exportMenuOpen && (
-                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-72 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
+              {exportMenuOpen && exportPopover && createPortal(
+                <div
+                  ref={exportMenuRef}
+                  role="menu"
+                  aria-label="Export options"
+                  style={exportPopover.style}
+                  className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 border border-gray-200/80 dark:border-slate-700 py-1 z-[200] overflow-y-auto"
+                >
                   {/* Private forms: server exports are ciphertext (§9.2 refuses the
                       answer-bearing ones). Offer a full-decrypt CSV instead; SQLite
                       (ciphertext bundle) stays available. */}
@@ -911,7 +931,8 @@ function FormResponses() {
                   <p className="border-t border-gray-100 px-3 py-2 text-[11px] text-gray-500 dark:border-slate-800 dark:text-slate-400">
                     Everything above downloads all records, ignoring your current filters.
                   </p>
-                </div>
+                </div>,
+                document.body,
               )}
             </div>
           </div>

@@ -126,8 +126,10 @@ describe('the sections of Settings', () => {
     expect(links('Your data on this page')).toEqual([
       ['Export a copy', '/settings#your-data'], ['Backup & restore', '/settings#backup'], ['Recycle bin', '/settings#trash'], ['Delete account', '/settings#danger'],
     ]);
+    expect(links('Workspace on this page')).toEqual([
+      ['Appearance', '/settings#appearance'], ['Interactive guide', '/settings#interactive-guide'], ['Form defaults', '/settings#form-defaults'],
+    ]);
     expect(host.querySelector('nav[aria-label="Account on this page"]')).toBeNull();
-    expect(host.querySelector('nav[aria-label="Workspace on this page"]')).toBeNull();
   });
 
   it('moves to the section whose link is pressed, keeping what was typed in the one left', async () => {

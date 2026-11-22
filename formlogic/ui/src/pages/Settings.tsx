@@ -25,6 +25,7 @@ import { cn, parseServerDate } from '../lib/utils';
 import {
   User,
   Bell,
+  Bot,
   Settings2,
   Shield,
   Plug,
@@ -59,6 +60,7 @@ import { SupportAccessPanel } from '../components/settings/SupportAccessPanel';
 import { PassesPanel } from '../components/settings/PassesPanel';
 import { VaultPanel } from '../components/vault/VaultPanel';
 import { AiSourceCard } from '../components/settings/AiSourceCard';
+import { BotGuideSettingsPanel } from '../components/settings/BotGuideSettingsPanel';
 import { ApiKeysList } from '../components/settings/ApiKeysList';
 import { LinkedDesktopsList } from '../components/settings/LinkedDesktopsList';
 import { passwordError as getPasswordError } from '../lib/passwordPolicy';
@@ -103,14 +105,14 @@ interface SettingsSection {
 }
 const SECTIONS: readonly SettingsSection[] = [
   { id: 'account', label: 'Account', icon: User, panels: ['profile', 'notifications'] },
-  { id: 'workspace', label: 'Workspace', icon: Palette, panels: ['appearance', 'form-defaults'] },
+  { id: 'workspace', label: 'Workspace', icon: Palette, panels: ['appearance', 'interactive-guide', 'form-defaults'] },
   { id: 'connections', label: 'AI & devices', icon: Plug, panels: ['ai', 'local-runtime', 'linked-desktops', 'mcp'] },
   { id: 'security', label: 'Security', icon: Shield, panels: ['security', 'two-factor', 'support-access', 'passes', 'vault', 'audit', 'api-keys'] },
   { id: 'data', label: 'Your data', icon: Archive, panels: ['your-data', 'backup', 'trash', 'danger'] },
 ];
 /** What a link to a panel is called. */
 const PANEL_LABELS: Record<string, string> = {
-  profile: 'Profile', notifications: 'Notifications', appearance: 'Appearance', 'form-defaults': 'Form defaults',
+  profile: 'Profile', notifications: 'Notifications', appearance: 'Appearance', 'interactive-guide': 'Interactive guide', 'form-defaults': 'Form defaults',
   ai: 'AI assistant', 'local-runtime': 'Local runtime', 'linked-desktops': 'Linked desktops', mcp: 'External AI access',
   security: 'Password', 'two-factor': 'Two-factor authentication', 'support-access': 'Support access', passes: 'Passes', vault: 'Encryption vault',
   audit: 'Audit trail', 'api-keys': 'API keys',
@@ -121,6 +123,7 @@ const NOT_IN_THE_DEMO: readonly string[] = ['two-factor', 'support-access', 'pas
 
 const SEARCH_TERMS: Readonly<Record<string, string>> = {
   profile: 'name email timezone', notifications: 'email alerts', appearance: 'theme colour color dark light',
+  'interactive-guide': 'bot bot.computer companion avatar voice guide tour aiml walkthrough',
   'form-defaults': 'navigation defaults', ai: 'site ai provider model chat', 'local-runtime': 'oaiy pairing computer',
   'linked-desktops': 'computer connection relay', mcp: 'mcp connection token assistant', 'two-factor': '2fa mfa authenticator',
   passes: 'access receipts age verification', vault: 'encryption keys', audit: 'history log',
@@ -153,7 +156,7 @@ function SettingsSearch({ isDemo }: { isDemo: boolean }) {
       <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
       <input ref={input} type="search" value={query} onChange={e => setQuery(e.target.value)} aria-label="Find a setting"
         placeholder="Find a setting" autoComplete="off" className="min-h-11 w-full rounded-lg border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-gray-900 placeholder:text-slate-500 focus-visible:outline-2 focus-visible:outline-primary-500 sm:min-h-9 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
-      {words.length > 0 && <div className="absolute inset-x-0 top-full z-30 mt-1 max-h-[min(52dvh,22rem)] overflow-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+      {words.length > 0 && <div className="absolute inset-x-0 top-full z-50 mt-1 max-h-[min(52dvh,22rem)] overflow-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
         <span role="status" className={matches.length ? 'sr-only' : 'block p-2 text-sm text-slate-600 dark:text-slate-300'}>
           {matches.length ? matches.length + (matches.length === 1 ? ' setting found.' : ' settings found.') : 'No matching settings.'}
         </span>
@@ -682,10 +685,12 @@ export function Settings() {
       {/* The sections are links under the header, and each one's panels start at the page's left
           and fill its width: one column on a phone, two on a laptop, three on a wide screen. */}
       <PageBody className="@container/settings">
-        <SectionNav label="Settings sections" current={section.id} end={<SettingsSearch isDemo={isDemo} />}
+        <div data-bot-showcase="settings-sections">
+        <SectionNav label="Settings sections" current={section.id} end={<div data-bot-showcase="settings-search"><SettingsSearch isDemo={isDemo} /></div>}
           // A section adds a step to the history, as an app page's sections do: Back returns to
           // the one before. (The links to a panel inside a section replace the step they are on.)
           items={SECTIONS.map(({ id, label, icon, panels }) => ({ value: id, label, icon, to: { hash: `#${panels[0]}` } }))} />
+        </div>
 
         <Section {...sectionProps('account')}>
           <div className={PANEL_COLUMNS}>
@@ -815,6 +820,12 @@ export function Settings() {
                 </div>
               </div>
             </Panel>
+
+            <div data-bot-showcase="settings-guide">
+            <Panel id="interactive-guide" title="Interactive guide (bot.computer)" icon={<Bot className="h-4 w-4" />} description="Optional speaking 2D/3D walkthrough companion saved in this browser.">
+              <BotGuideSettingsPanel />
+            </Panel>
+            </div>
 
             <Panel id="form-defaults" title="Form defaults" icon={<Settings2 className="h-4 w-4" />} description="Set defaults for new forms you create">
               <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">

@@ -204,17 +204,20 @@ export function Dropdown({
               const spaceBelow = window.innerHeight - menuRect.bottom;
               const spaceAbove = menuRect.top;
               const openUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+              const vw = window.innerWidth || 1024;
+              const width = Math.min(menuRect.width, Math.max(160, vw - 16));
+              const left = Math.max(8, Math.min(menuRect.left, vw - width - 8));
               return {
                 position: 'fixed' as const,
-                left: menuRect.left,
-                width: menuRect.width,
+                left,
+                width,
                 maxHeight: Math.max(120, Math.min(240, (openUp ? spaceAbove : spaceBelow) - 8)),
                 ...(openUp
                   ? { bottom: window.innerHeight - menuRect.top + 4 }
                   : { top: menuRect.bottom + 4 }),
               };
             })()}
-            className="z-[70] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg overflow-auto animate-scale-in"
+            className="z-[200] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg shadow-xl overflow-auto animate-scale-in"
           >
             {options.map((option, index) => (
               <div

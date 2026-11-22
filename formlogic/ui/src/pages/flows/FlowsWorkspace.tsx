@@ -672,6 +672,7 @@ export function FlowsWorkspace() {
           // width it is given, and its two sections are links under the header. Each is an
           // address (/flows, /flows?view=existing), so a reload and Back land on it.
           <div className={cn('min-w-0 flex-1 overflow-y-auto bg-gray-50 dark:bg-slate-950', PAGE_BODY)}>
+            <div data-bot-showcase="flows-nav">
             <SectionNav
               label="Automation workspace"
               current={libraryVisible ? 'existing' : 'create'}
@@ -680,7 +681,8 @@ export function FlowsWorkspace() {
                 { value: 'existing', label: 'Existing flows', icon: Workflow, to: { search: '?view=existing' }, mark: allFlows.length },
               ]}
             />
-            <div className="mt-4 min-w-0">
+            </div>
+            <div data-bot-showcase="flows-canvas" className="mt-4 min-w-0">
               {/* Kept while the list is shown, so a name typed here is still here on the way back. */}
               <div hidden={libraryVisible}>
                 <NewFlowDialog embedded isOpen onClose={() => selectFlow(null)} onCreate={createFlow} creating={creating} apps={apps} initialTemplate={newFlowInitialTemplate} />

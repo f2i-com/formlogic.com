@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useId } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, X, Loader2, ChevronDown, Check } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
+import { useFloatingPopover } from '../../hooks/useFloatingPopover';
 import type { LinkedRecord } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useDisplayTimezone, formatDateInZone } from '../../lib/timezone';
@@ -44,8 +46,16 @@ export function LinkedRecordInput({
   const [resolvedLabels, setResolvedLabels] = useState<Record<string, string>>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchIdRef = useRef(0);
+
+  const floating = useFloatingPopover(isOpen, inputRef, {
+    align: 'match-width',
+    minWidth: 220,
+    estimatedHeight: 240,
+    maxHeight: 260,
+  });
 
   // Current selection(s)
   const selectedIds: string[] = allowMultiple
@@ -126,9 +136,14 @@ export function LinkedRecordInput({
   useEffect(() => {
     if (!isOpen) return;
     const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
+      const target = e.target as Node;
+      if (
+        (containerRef.current && containerRef.current.contains(target)) ||
+        (listRef.current && listRef.current.contains(target))
+      ) {
+        return;
       }
+      setIsOpen(false);
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
@@ -271,9 +286,15 @@ export function LinkedRecordInput({
         </div>
       )}
 
-      {/* Dropdown results */}
-      {isOpen && (
-        <div id={listId} role="listbox" className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 max-h-64 overflow-y-auto">
+      {/* Portaled dropdown results so listbox never clips inside cards or modals */}
+      {isOpen && floating && createPortal(
+        <div
+          ref={listRef}
+          id={listId}
+          role="listbox"
+          style={floating.style}
+          className="z-[200] bg-white dark:bg-slate-800 border border-gray-200/80 dark:border-slate-700 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 overflow-y-auto scrollbar-thin"
+        >
           {loading && results.length === 0 ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-5 w-5 text-gray-400 animate-spin" />
@@ -316,7 +337,8 @@ export function LinkedRecordInput({
               );
             })
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

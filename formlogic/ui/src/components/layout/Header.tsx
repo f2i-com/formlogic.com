@@ -1,6 +1,7 @@
 import { useContext, useState } from 'react';
 import { ArrowLeft, ChevronRight } from 'lucide-react';
 import { ThemeToggle } from '../ui/ThemeToggle';
+import { BotGuideToggle } from '../guide/BotGuideToggle';
 import { UserMenu } from '../auth/UserMenu';
 import { AuthModal } from '../auth/AuthModal';
 import { VaultChip } from '../vault/VaultChip';
@@ -83,7 +84,10 @@ export function Header({ title, mark, actions, back }: HeaderProps) {
             {/* E2EE vault lock state - renders only when the user has a vault. */}
             <VaultChip />
             {!accountInDock && <>
-              <div className={signedIn ? 'hidden md:block' : undefined}><ThemeToggle /></div>
+              <div className={signedIn ? 'hidden md:flex items-center gap-1' : 'flex items-center gap-1'}>
+                <BotGuideToggle variant="header" />
+                <ThemeToggle />
+              </div>
               <UserMenu onOpenAuth={() => setShowAuthModal(true)} />
             </>}
           </div>

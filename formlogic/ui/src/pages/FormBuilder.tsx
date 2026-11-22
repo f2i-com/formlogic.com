@@ -53,6 +53,8 @@ import { LoadFailure } from '../components/ui/LoadFailure';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DeleteFieldDialog } from '../components/builder/DeleteFieldDialog';
 import { IconPicker } from '../components/ui/IconPicker';
+import { ThemeToggle } from '../components/ui/ThemeToggle';
+import { BotGuideToggle } from '../components/guide/BotGuideToggle';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { ScriptEditor, FieldPalette, SortableFieldCard, FieldSettingsPanel, FormFlowsPanel, useFormPreview } from '../components/builder';
 import { EmbedModal } from '../components/builder/EmbedModal';
@@ -1286,7 +1288,7 @@ export default function FormBuilder() {
     <div className={`h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col overflow-hidden transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
       {/* Header */}
       <header ref={observeHeader} className="@container/bar relative z-30 flex h-14 flex-shrink-0 items-center gap-2 border-b border-gray-200/80 bg-white/95 px-2 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 sm:px-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+        <div data-bot-showcase="builder-header" className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
           <Button variant="ghost" size="sm" className="flex-none px-2.5" onClick={() => navigate(backTo.path)} title={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'} aria-label={backTo.label ? `Back to ${backTo.label}` : 'Back to Forms'}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
@@ -1364,7 +1366,7 @@ export default function FormBuilder() {
         </div>
 
         {/* How it looks, how it behaves, what happens to it: three groups, then the rest. */}
-        <div className="flex flex-none items-center gap-1 sm:gap-1.5">
+        <div data-bot-showcase="builder-toolbar" className="flex flex-none items-center gap-1 sm:gap-1.5">
           {!foldMiddleClusters && (
             <>
               <BuilderToolbarGroup label="Look">
@@ -1392,6 +1394,11 @@ export default function FormBuilder() {
           >
             <span className={BAR_LABEL.publish}>{form.status === 'published' ? 'Published' : 'Publish'}</span>
           </Button>
+
+          <div className="hidden @2xl/bar:flex items-center gap-1 flex-none">
+            <BotGuideToggle variant="header" />
+            <ThemeToggle />
+          </div>
 
           <div className="relative flex-none" ref={overflowMenuRef}>
             <Button
@@ -1478,7 +1485,7 @@ export default function FormBuilder() {
       <div ref={observeBuilderBody} className="flex min-h-0 flex-1 overflow-hidden">
         {/* Field Palette — inline when there is room, otherwise opened as a sheet. */}
         {builderLayout.palette === 'inline' && (
-          <aside className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
+          <aside data-bot-showcase="builder-palette" className="w-full md:w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-left motion-safe:transition-[width] motion-safe:duration-200">
             <BuilderDockHeader
               title="Add a field"
               closeLabel="Collapse fields panel"
@@ -1497,7 +1504,7 @@ export default function FormBuilder() {
         )}
 
         {/* Canvas */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div data-bot-showcase="builder-canvas" className="flex-1 flex flex-col overflow-hidden">
             {/* Desktop builder toolbar: dock toggles + field count (always reachable) */}
             <div className="hidden h-11 md:flex items-center justify-between gap-3 px-4 border-b border-gray-200/80 dark:border-slate-800 bg-white/70 dark:bg-slate-900/50 backdrop-blur flex-shrink-0">
               <div className="flex items-center gap-2">
@@ -1625,7 +1632,7 @@ export default function FormBuilder() {
 
         {/* Settings Panel — inline when there is room, otherwise opened as a sheet. */}
         {fieldSettingsWanted && builderLayout.settings === 'inline' && (
-          <aside className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
+          <aside data-bot-showcase="builder-properties" className="w-full md:w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col flex-shrink-0 md:animate-scale-in md:origin-right motion-safe:transition-[width] motion-safe:duration-200">
             <BuilderDockHeader
               title="Field settings"
               note={selectedField ? FIELD_TYPE_INFO[selectedField.type]?.label : undefined}

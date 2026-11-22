@@ -136,7 +136,7 @@ export function ToastContainer() {
         {assertive.map((t) => <div key={t.id}>{announce(t)}</div>)}
       </div>
       {toasts.length > 0 && (
-        <div className="fixed bottom-[var(--fl-mobile-float)] right-4 md:bottom-4 z-[100] flex flex-col gap-3 max-h-[calc(100dvh-6rem)] overflow-y-auto">
+        <div className="fixed bottom-[var(--fl-mobile-float)] right-4 md:bottom-20 z-[100] flex flex-col gap-3 max-h-[calc(100dvh-7rem)] overflow-y-auto overflow-x-hidden">
           {toasts.map((toast) => (
             <ToastItem key={toast.id} toast={toast} />
           ))}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, type ElementType, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Download, Users, Clock, CheckCircle, TrendingUp, Loader2, ChevronDown, Database, FileJson, Table, Share2, Star, BarChart3, Inbox, Eye, MousePointerClick, Lock } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList } from 'recharts';
@@ -19,6 +20,7 @@ import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
 import { cn, formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useFittedColumns } from '../hooks/useFittedColumns';
+import { useFloatingPopover } from '../hooks/useFloatingPopover';
 import { EmbedModal } from '../components/builder/EmbedModal';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 import { csvEscapeCell } from '../lib/csv';
@@ -160,13 +162,25 @@ export default function FormAnalytics() {
   const [isExporting, setIsExporting] = useState(false);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const exportPopover = useFloatingPopover(exportMenuOpen, exportRef, {
+    width: 192,
+    estimatedHeight: 160,
+    maxHeight: 280,
+    align: 'right',
+  });
 
   useEffect(() => {
     if (!exportMenuOpen) return;
     function handleClickOutside(event: MouseEvent) {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setExportMenuOpen(false);
+      const target = event.target as Node;
+      if (
+        (exportRef.current && exportRef.current.contains(target)) ||
+        (exportMenuRef.current && exportMenuRef.current.contains(target))
+      ) {
+        return;
       }
+      setExportMenuOpen(false);
     }
     function handleEscape(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -586,8 +600,14 @@ export default function FormAnalytics() {
                 <span className="ml-2 hidden @2xl/header:inline">Export</span>
                 <ChevronDown className="h-4 w-4 ml-1" />
               </Button>
-              {exportMenuOpen && (
-                <div role="menu" aria-label="Export options" className="absolute right-0 mt-1.5 w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-800 py-1 z-50">
+              {exportMenuOpen && exportPopover && createPortal(
+                <div
+                  ref={exportMenuRef}
+                  role="menu"
+                  aria-label="Export options"
+                  style={exportPopover.style}
+                  className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 border border-gray-200/80 dark:border-slate-700 py-1 z-[200] overflow-y-auto"
+                >
                   {isPrivateForm ? (
                     <p className="px-3 py-2 text-xs text-gray-500 dark:text-slate-400">
                       This form is private, so answers can only be exported where they can be decrypted —
@@ -625,7 +645,8 @@ export default function FormAnalytics() {
                     <Database className="h-4 w-4 text-blue-500 dark:text-blue-400" />
                     Download SQLite
                   </button>
-                </div>
+                </div>,
+                document.body,
               )}
             </div>
           </div>

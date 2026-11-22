@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Pencil, Trash2, Columns3, Download, Inbox, Lock, Plus, X } from 'lucide-react';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
@@ -6,6 +7,7 @@ import { DataTable, type Column } from '../ui/DataTable';
 import { PageHeader } from '../ui/PageHeader';
 import { EmptyState } from '../ui/EmptyState';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { useFloatingPopover } from '../../hooks/useFloatingPopover';
 import { cn } from '../../lib/utils';
 import { useDisplayTimezone, formatAnswerDateTime, formatDateTimeInZone, formatDateOnly, isIsoDateTime } from '../../lib/timezone';
 import { api } from '../../lib/api';
@@ -79,6 +81,13 @@ export function AppDataTable() {
   const [deleting, setDeleting] = useState(false);
   const [colDropdownOpen, setColDropdownOpen] = useState(false);
   const colDropdownRef = useRef<HTMLDivElement>(null);
+  const colPanelRef = useRef<HTMLDivElement>(null);
+  const colPopover = useFloatingPopover(colDropdownOpen, colDropdownRef, {
+    width: 224,
+    estimatedHeight: 260,
+    maxHeight: 300,
+    align: 'right',
+  });
   // Server-side sort: the DataTable column key ('answer_<fieldId>',
   // 'submittedAt' or 'status'); the fetch maps it to the API's sort param so
   // ordering spans ALL rows and composes with pagination.
@@ -129,9 +138,14 @@ export function AppDataTable() {
   // Close dropdown on click outside or Escape (keyboard-dismissible)
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (colDropdownRef.current && !colDropdownRef.current.contains(e.target as Node)) {
-        setColDropdownOpen(false);
+      const target = e.target as Node;
+      if (
+        (colDropdownRef.current && colDropdownRef.current.contains(target)) ||
+        (colPanelRef.current && colPanelRef.current.contains(target))
+      ) {
+        return;
       }
+      setColDropdownOpen(false);
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') setColDropdownOpen(false);
@@ -477,8 +491,15 @@ export function AppDataTable() {
         <Columns3 className="h-4 w-4" />
         <span className="hidden sm:inline">Columns</span>
       </button>
-      {colDropdownOpen && (
-        <div id="col-vis-panel" role="group" aria-label="Toggle columns" className="absolute right-0 top-full mt-1 z-50 w-56 max-h-72 overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-lg py-1">
+      {colDropdownOpen && colPopover && createPortal(
+        <div
+          ref={colPanelRef}
+          id="col-vis-panel"
+          role="group"
+          aria-label="Toggle columns"
+          style={colPopover.style}
+          className="z-[200] overflow-y-auto bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-600 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 py-1 scrollbar-thin"
+        >
           {/* Fixed columns */}
           <label className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-slate-700 cursor-pointer">
             <input type="checkbox" checked={visibleColumns.has('__submittedAt')} onChange={() => toggleColumn('__submittedAt')} className="app-accent rounded" />
@@ -494,7 +515,8 @@ export function AppDataTable() {
             <input type="checkbox" checked={visibleColumns.has('__responseStatus')} onChange={() => toggleColumn('__responseStatus')} className="app-accent rounded" />
             <span className="text-gray-700 dark:text-slate-300">Submission status</span>
           </label>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

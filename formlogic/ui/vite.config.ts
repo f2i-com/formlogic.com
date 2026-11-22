@@ -40,9 +40,11 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
   return [
     "default-src 'self'",
     // Cloudflare may inject its analytics beacon when enabled by the site owner.
-    // This permits that provider in the shell; it does not install analytics or
+    // jsDelivr & bot.computer serve the optional bot.computer interactive guide SDK
+    // and its local tts.wasm voice synthesizer only when the user enables the guide.
+    // This permits those providers in the shell; it does not install analytics or
     // relax the isolated app/custom-screen runtime policies.
-    "script-src 'self' 'wasm-unsafe-eval' https://www.paypal.com https://static.cloudflareinsights.com",
+    "script-src 'self' 'wasm-unsafe-eval' https://www.paypal.com https://static.cloudflareinsights.com https://cdn.jsdelivr.net https://bot.computer",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
     `img-src 'self' data: blob:${apiOrigin} https://www.paypal.com https://www.paypalobjects.com`,
@@ -69,7 +71,7 @@ function buildAppShellCsp(apiUrl: string | undefined): string {
     // No bare `wss:`: it let this page open a socket to any host, and nothing in the shell opens
     // one. The hosted runtime and the app editors are documents of their own under their own
     // policies. Should the shell ever need a socket, name its wss:// origin here, not every host.
-    `connect-src 'self'${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://esm.sh https://www.paypal.com https://cloudflareinsights.com`,
+    `connect-src 'self'${apiOrigin} ${DESKTOP_LOOPBACK_ORIGINS.join(' ')} https://esm.sh https://www.paypal.com https://cloudflareinsights.com https://cdn.jsdelivr.net https://bot.computer`,
     // Per-app PWA manifests are served by the API (AppRuntimeRoot injects
     // <link rel="manifest"> to /api/app/{slug}/manifest.json), which is a
     // separate origin on split-host installs.
@@ -181,6 +183,7 @@ export default defineConfig(({ mode }) => {
         //   0.79 MB and fit inside the precache, so that case worked. Buying it back
         //   would cost every visitor 6.58 MB up front, which is the worse trade.
         globIgnores: [
+          'bot/**',
           'hosted-runtime/**',
           // The site's ZIPP folder: a frame's and an editor's, fetched on their own.
           'zipp/**',

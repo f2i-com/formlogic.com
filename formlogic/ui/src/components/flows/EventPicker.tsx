@@ -3,8 +3,10 @@
 // The binding editor still accepts arbitrary event names, but the common Aokie/FormLogic events
 // are discoverable here with their payload chips. Teach entries can write a real event plus a
 // preset condition without pretending to be an event themselves.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Lightbulb, Search } from 'lucide-react';
+import { useFloatingPopover } from '../../hooks/useFloatingPopover';
 import { cn } from '../../lib/utils';
 import {
   flowEventGroupsForConnectors,
@@ -49,8 +51,33 @@ export function EventPicker({
 }: EventPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listboxRef = useRef<HTMLDivElement>(null);
   const hasAokie = connectorIds.includes('aokie');
   const effectivePlaceholder = placeholder ?? (hasAokie ? 'aokie.call.incoming' : 'form.submitted');
+
+  const floating = useFloatingPopover(open, inputRef, {
+    align: 'match-width',
+    minWidth: 260,
+    estimatedHeight: 280,
+    maxHeight: 320,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        (inputRef.current && inputRef.current.contains(target)) ||
+        (listboxRef.current && listboxRef.current.contains(target))
+      ) {
+        return;
+      }
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open]);
 
   const grouped = useMemo(() => {
     const q = query.trim();
@@ -74,6 +101,7 @@ export function EventPicker({
       <div className="relative">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
         <input
+          ref={inputRef}
           type="text"
           value={value}
           placeholder={effectivePlaceholder}
@@ -81,7 +109,15 @@ export function EventPicker({
           aria-expanded={open}
           aria-label={ariaLabel}
           onFocus={() => { setOpen(true); setQuery(''); }}
-          onBlur={() => setTimeout(() => setOpen(false), 120)}
+          onBlur={(e) => {
+            const next = e.relatedTarget as Node | null;
+            if (next && listboxRef.current?.contains(next)) return;
+            setTimeout(() => {
+              if (!listboxRef.current?.contains(document.activeElement)) {
+                setOpen(false);
+              }
+            }, 120);
+          }}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
@@ -100,10 +136,12 @@ export function EventPicker({
           )}
         />
       </div>
-      {open && (
+      {open && floating && createPortal(
         <div
+          ref={listboxRef}
           role="listbox"
-          className="scrollbar-thin absolute z-30 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          style={floating.style}
+          className="scrollbar-thin z-[200] overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-2xl shadow-gray-900/15 dark:border-slate-700 dark:bg-slate-900 dark:shadow-black/50"
         >
           {grouped.length === 0 ? (
             <div className="px-3 py-2 text-xs text-gray-400 dark:text-slate-500">
@@ -128,7 +166,7 @@ export function EventPicker({
                         choose(entry);
                       }}
                       className={cn(
-                        'flex w-full items-start gap-2 px-3 py-2 text-left transition-colors focus:outline-none',
+                        'flex w-full items-start gap-2 px-3 py-2 text-left transition-colors focus:outline-none cursor-pointer',
                         active
                           ? 'bg-primary-50 text-primary-700 dark:bg-primary-500/10 dark:text-primary-300'
                           : 'text-gray-700 hover:bg-gray-50 dark:text-slate-300 dark:hover:bg-slate-800',
@@ -164,7 +202,8 @@ export function EventPicker({
               </div>
             ))
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

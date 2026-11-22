@@ -1,30 +1,55 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Image, X, Search } from 'lucide-react';
 import { getLucideIcon, ICON_CATEGORIES } from '../../lib/iconUtils';
+import { useFloatingPopover } from '../../hooks/useFloatingPopover';
 import { DynamicIcon } from './DynamicIcon';
 
 interface IconPickerProps {
   value: string | undefined;
   onChange: (iconName: string | null) => void;
   className?: string;
+  ariaLabel?: string;
 }
 
-export function IconPicker({ value, onChange, className }: IconPickerProps) {
+export function IconPicker({
+  value,
+  onChange,
+  className,
+  ariaLabel = 'Choose form icon',
+}: IconPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  const floating = useFloatingPopover(open, triggerRef, {
+    width: 320,
+    estimatedHeight: 280,
+    maxHeight: 380,
+    align: 'left',
+  });
 
   // Close on click outside or Escape
   useEffect(() => {
     if (!open) return;
     const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
+      const target = e.target as Node;
+      if (
+        (triggerRef.current && triggerRef.current.contains(target)) ||
+        (popoverRef.current && popoverRef.current.contains(target))
+      ) {
+        return;
       }
+      setOpen(false);
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('keydown', handleKey);
@@ -37,11 +62,11 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
   // Focus search when opened
   useEffect(() => {
     if (open) {
-      setTimeout(() => searchRef.current?.focus(), 50);
-    } else {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset search draft synchronously when the picker closes (open state change)
-      setSearch('');
+      const id = window.setTimeout(() => searchRef.current?.focus(), 30);
+      return () => window.clearTimeout(id);
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset search draft synchronously when the picker closes (open state change)
+    setSearch('');
   }, [open]);
 
   // Filter icons by search
@@ -59,15 +84,20 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
   const hasResults = Object.keys(filteredCategories).length > 0;
 
   return (
-    <div className={`relative ${className || ''}`} ref={containerRef}>
+    <div className={`relative inline-flex ${className || ''}`}>
       {/* Trigger button */}
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen(!open)}
-        className="flex items-center justify-center min-h-[40px] min-w-[40px] rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`flex items-center justify-center min-h-[40px] min-w-[40px] rounded-lg transition-colors cursor-pointer border focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
+          open
+            ? 'bg-gray-100 dark:bg-slate-800 border-primary-400/70 dark:border-primary-500/60'
+            : 'hover:bg-gray-100 dark:hover:bg-slate-800 border-transparent hover:border-gray-200 dark:hover:border-slate-700'
+        }`}
         title={value ? `Icon: ${value}` : 'Choose icon'}
-        aria-label="Choose form icon"
-        aria-haspopup="true"
+        aria-label={ariaLabel}
+        aria-haspopup="dialog"
         aria-expanded={open}
       >
         {value ? (
@@ -77,19 +107,28 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
         )}
       </button>
 
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute left-0 top-full mt-1 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl shadow-gray-900/10 dark:shadow-black/30 border border-gray-200/80 dark:border-slate-700/60 z-50 overflow-hidden animate-scale-in origin-top-left">
+      {/* Portaled popover so it always renders above cards, CSS columns, sticky bars & modals */}
+      {open && floating && createPortal(
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label="Icon picker"
+          style={floating.style}
+          className={`flex flex-col bg-white dark:bg-slate-900 rounded-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/50 border border-gray-200/90 dark:border-slate-700/80 z-[200] overflow-hidden animate-scale-in ${
+            floating.placement === 'top' ? 'origin-bottom-left' : 'origin-top-left'
+          }`}
+        >
           {/* Search */}
-          <div className="p-2 border-b border-gray-100 dark:border-slate-800">
+          <div className="shrink-0 p-2 border-b border-gray-100 dark:border-slate-800">
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-slate-500" />
               <input
                 ref={searchRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search icons..."
+                aria-label="Search icons"
                 className="w-full pl-8 pr-3 py-2 text-sm bg-gray-50 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700 outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500"
               />
             </div>
@@ -97,10 +136,14 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
 
           {/* Clear button */}
           {value && (
-            <div className="px-2 pt-2">
+            <div className="shrink-0 px-2 pt-2">
               <button
                 type="button"
-                onClick={() => { onChange(null); setOpen(false); }}
+                onClick={() => {
+                  onChange(null);
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                }}
                 className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
@@ -110,7 +153,7 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
           )}
 
           {/* Icons grid */}
-          <div className="max-h-[320px] overflow-y-auto p-2">
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 scrollbar-thin">
             {!hasResults && (
               <p className="text-sm text-gray-400 dark:text-slate-500 text-center py-6">No icons found</p>
             )}
@@ -128,12 +171,18 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
                       <button
                         key={name}
                         type="button"
-                        onClick={() => { onChange(name); setOpen(false); }}
+                        onClick={() => {
+                          onChange(name);
+                          setOpen(false);
+                          triggerRef.current?.focus();
+                        }}
                         title={name}
-                        className={`p-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center ${
+                        aria-label={name}
+                        aria-pressed={isSelected}
+                        className={`p-2 rounded-lg transition-colors cursor-pointer flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 ${
                           isSelected
-                            ? 'bg-indigo-100 dark:bg-primary-500/20 text-indigo-600 dark:text-primary-400'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400'
+                            ? 'bg-primary-50 dark:bg-primary-500/20 text-primary-700 dark:text-primary-300 ring-1 ring-inset ring-primary-500/30'
+                            : 'hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-slate-200'
                         }`}
                       >
                         <Icon className="h-4.5 w-4.5" />
@@ -144,7 +193,8 @@ export function IconPicker({ value, onChange, className }: IconPickerProps) {
               </div>
             ))}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

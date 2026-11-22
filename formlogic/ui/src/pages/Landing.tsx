@@ -26,17 +26,17 @@ export function Landing() {
       <LandingNav />
       <main id="main-content">
         <LandingHero beta={beta} />
-        <div id="live-demo" className="lv2-band--alt lv2-demo-band">
+        <div id="live-demo" data-bot-showcase="live-demo" className="lv2-band--alt lv2-demo-band">
           <LiveDemoSection />
         </div>
-        <div className="lv2-band lv2-demo-band">
+        <div data-bot-showcase="form-examples" className="lv2-band lv2-demo-band">
           <FormExamplesSection />
         </div>
-        <PortableAppsSpotlight />
-        <div id="platform"><CapabilityBento /></div>
-        <AokieSpotlight />
-        <DesktopSpotlight />
-        <PricingSection beta={beta} />
+        <div data-bot-showcase="portable-apps"><PortableAppsSpotlight /></div>
+        <div id="platform" data-bot-showcase="platform"><CapabilityBento /></div>
+        <div data-bot-showcase="aokie"><AokieSpotlight /></div>
+        <div data-bot-showcase="desktop"><DesktopSpotlight /></div>
+        <div data-bot-showcase="pricing"><PricingSection beta={beta} /></div>
       </main>
       <LandingFooter />
     </div>

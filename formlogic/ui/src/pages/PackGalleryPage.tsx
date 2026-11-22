@@ -95,9 +95,27 @@ function PackCard({ pack, search }: { pack: CatalogPack; search: string }) {
   return (
     <Link to={{ pathname: `/packs/${pack.slug}`, search }} aria-label={pack.name}
       className="group flex min-w-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-left transition-all hover:border-primary-400 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-500 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-primary-400">
-      {shot && <div className="relative aspect-[16/8] overflow-hidden border-b border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
-        <img src={resolveFileUrl(shot)} alt="" loading="lazy" decoding="async" className="absolute inset-0 size-full object-cover object-top" />
-      </div>}
+      {shot ? (
+        <div className="relative aspect-[16/8] overflow-hidden border-b border-slate-200 bg-slate-100 dark:border-slate-700/80 dark:bg-slate-800/90">
+          <img
+            src={resolveFileUrl(shot)}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="absolute inset-0 size-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.02] dark:brightness-[0.92] dark:contrast-[1.03]"
+          />
+          <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-black/5 dark:ring-white/10" aria-hidden="true" />
+        </div>
+      ) : (
+        <div
+          aria-hidden="true"
+          className="relative flex aspect-[16/8] items-center justify-center overflow-hidden border-b border-slate-200 bg-gradient-to-br from-primary-50 via-slate-50 to-indigo-50/70 dark:border-slate-700/80 dark:from-primary-500/15 dark:via-slate-800/80 dark:to-slate-900"
+        >
+          <span className="grid size-12 place-items-center rounded-2xl border border-primary-200/70 bg-white/90 text-primary-700 shadow-sm dark:border-primary-500/30 dark:bg-slate-900/80 dark:text-primary-300">
+            <PackIcon icon={pack.icon} className="size-6" emojiClassName="text-2xl leading-none" />
+          </span>
+        </div>
+      )}
       <div className="flex min-w-0 flex-1 flex-col p-4">
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -385,7 +403,7 @@ export default function PackGalleryPage() {
       </div>
     )}
 
-    {activeTab === 'browse' && <>
+    {activeTab === 'browse' && <div data-bot-showcase="marketplace-catalog" className="space-y-6">
       {browse.error && <p role="status" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:text-slate-300">
         Browsing the bundled starter catalogue. Live marketplace details and installation need a connection.{' '}
         <button type="button" onClick={browse.retry} className="min-h-9 text-primary-700 underline dark:text-primary-300">Retry live catalogue</button>
@@ -497,7 +515,7 @@ export default function PackGalleryPage() {
           </div>
         </nav>}
       </section>
-    </>}
+    </div>}
 
     {/* My Plugins & Licenses Tab */}
     {activeTab === 'plugins' && (

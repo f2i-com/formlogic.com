@@ -5,6 +5,7 @@ import { FormLogicMark } from './shared';
 import { GITHUB_URL } from './stats';
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
+import { BotGuideToggle } from '../guide/BotGuideToggle';
 import '../../styles/landing-hero.css';
 
 /**
@@ -87,6 +88,7 @@ export function LandingNav({ onMenuOpen }: { onMenuOpen?: () => void } = {}) {
         </div>
 
         <div className="lv2-nav__actions">
+          <BotGuideToggle variant="landing" />
           <button
             type="button"
             className="lv2-nav__theme"
