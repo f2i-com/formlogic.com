@@ -32,7 +32,7 @@ test('workspace tools stay reachable when the sidebar gives way to the phone men
   await trigger.click();
   const panel = page.getByRole('region', { name: 'Workspace and account' });
   const tools = panel.getByRole('navigation', { name: 'More tools' });
-  await expect(tools.getByRole('link')).toHaveText(['Diagrams', 'Templates', 'Recycle bin']);
+  await expect(tools.getByRole('link')).toHaveText(['Import database', 'Diagrams', 'Templates', 'Recycle bin']);
   const theme = panel.getByRole('button', { name: /Switch to (light|dark) mode/ });
   const before = await theme.textContent();
   await theme.click();

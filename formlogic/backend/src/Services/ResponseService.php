@@ -4541,6 +4541,633 @@ class ResponseService
     }
 
     /**
+     * Structured JSON batch import for database migrations and bulk row uploads.
+     *
+     * Unlike importResponses() (CSV-only), this returns each created responseId keyed
+     * by index / clientKey so callers can remap legacy primary keys into linked_record
+     * references across tables, calls syncResponseLinks() so inverse links stay in sync,
+     * and supports forms bound to a Unified SQLite / Native SoftN table.
+     *
+     * Runs with no per-row webhooks, emails, or flow triggers to avoid notification storms.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @param array<int, array<string, mixed>> $fields
+     * @param array<int, string> $deferLinkFields Linked-record field IDs deferred to a Pass-2 cyclic patch
+     * @return array{created: int, failed: int, total: int, results: array<int, array<string, mixed>>}
+     */
+    public function batchImportResponses(
+        string $formId,
+        array $rows,
+        array $fields,
+        ?string $submittedByUserId = null,
+        ?string $ipAddress = null,
+        array $deferLinkFields = []
+    ): array {
+        $this->assertNotPrivate($formId);
+        if (count($rows) === 0) {
+            throw new \RuntimeException('At least one row is required');
+        }
+        if (count($rows) > 500) {
+            throw new \RuntimeException('Maximum 500 rows allowed per batch');
+        }
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
+        }
+
+        $fieldTypeMap = [];
+        $fieldLabelMap = [];
+        $choiceCells = [];
+        $linkedFieldIds = [];
+        foreach ($fields as $field) {
+            if (!isset($field['id'], $field['type'])) {
+                continue;
+            }
+            $fid = (string) $field['id'];
+            $ftype = (string) $field['type'];
+            $fieldTypeMap[$fid] = $ftype;
+            $fieldLabelMap[$fid] = (string) ($field['label'] ?? $fid);
+            if (in_array($ftype, ['dropdown', 'multiple_choice', 'checkboxes'], true)) {
+                $choiceCells[$fid] = self::choiceCellMap($field);
+            }
+            if ($ftype === 'linked_record') {
+                $linkedFieldIds[$fid] = true;
+            }
+        }
+
+        // Only allow deferring required checks on verified linked_record fields (for cyclic/self FKs).
+        $deferredSet = [];
+        foreach ($deferLinkFields as $df) {
+            if (is_string($df) && isset($linkedFieldIds[$df])) {
+                $deferredSet[$df] = true;
+            }
+        }
+        $validationFields = $fields;
+        if ($deferredSet !== []) {
+            $validationFields = array_map(static function (array $f) use ($deferredSet): array {
+                $fid = (string) ($f['id'] ?? '');
+                if ($fid !== '' && isset($deferredSet[$fid])) {
+                    $f['required'] = false;
+                }
+                return $f;
+            }, $fields);
+        }
+
+        $allowedStatuses = ['submitted', 'reviewed', 'archived'];
+        $now = date('Y-m-d H:i:s');
+        $results = [];
+        $ready = [];
+        $failed = 0;
+
+        foreach ($rows as $rowIndex => $row) {
+            $clientKey = isset($row['clientKey']) && (is_string($row['clientKey']) || is_int($row['clientKey']))
+                ? mb_substr((string) $row['clientKey'], 0, 128)
+                : null;
+            $rawAnswers = $row['answers'] ?? null;
+            if (!is_array($rawAnswers)) {
+                $failed++;
+                $results[$rowIndex] = [
+                    'index' => $rowIndex,
+                    'clientKey' => $clientKey,
+                    'error' => 'Row answers must be an object',
+                ];
+                continue;
+            }
+
+            // Friendly migration coercion while preserving strict validation below.
+            $coerced = [];
+            foreach ($rawAnswers as $fieldId => $val) {
+                $fid = (string) $fieldId;
+                if (!isset($fieldTypeMap[$fid])) {
+                    continue;
+                }
+                if ($val === null || $val === '') {
+                    continue;
+                }
+                $ftype = $fieldTypeMap[$fid];
+                switch ($ftype) {
+                    case 'number':
+                        if (is_bool($val)) {
+                            $coerced[$fid] = $val ? 1 : 0;
+                        } elseif (is_string($val)) {
+                            $trimmed = trim($val);
+                            $coerced[$fid] = is_numeric($trimmed) ? (float) $trimmed : $val;
+                        } else {
+                            $coerced[$fid] = $val;
+                        }
+                        break;
+                    case 'rating':
+                    case 'scale':
+                        if (is_string($val) && is_numeric(trim($val))) {
+                            $coerced[$fid] = (int) round((float) trim($val));
+                        } elseif (is_float($val)) {
+                            $coerced[$fid] = (int) round($val);
+                        } else {
+                            $coerced[$fid] = $val;
+                        }
+                        break;
+                    case 'dropdown':
+                    case 'multiple_choice':
+                        if (is_bool($val)) {
+                            $str = $val ? 'true' : 'false';
+                            $coerced[$fid] = $choiceCells[$fid][$str] ?? $choiceCells[$fid][$val ? 'Yes' : 'No'] ?? $str;
+                        } elseif (is_scalar($val)) {
+                            $str = trim((string) $val);
+                            $coerced[$fid] = $choiceCells[$fid][$str] ?? $choiceCells[$fid][strtolower($str)] ?? $str;
+                        } else {
+                            $coerced[$fid] = $val;
+                        }
+                        break;
+                    case 'checkboxes':
+                        $cellMap = $choiceCells[$fid] ?? [];
+                        if (is_bool($val)) {
+                            if ($val) {
+                                $first = $cellMap['yes'] ?? $cellMap['Yes'] ?? $cellMap['true'] ?? (count($cellMap) > 0 ? reset($cellMap) : 'yes');
+                                $coerced[$fid] = [(string) $first];
+                            } else {
+                                $coerced[$fid] = [];
+                            }
+                        } elseif (is_array($val)) {
+                            $mapped = [];
+                            foreach ($val as $item) {
+                                if (!is_scalar($item)) {
+                                    continue;
+                                }
+                                $s = trim((string) $item);
+                                if ($s === '') {
+                                    continue;
+                                }
+                                $mapped[] = $cellMap[$s] ?? $cellMap[strtolower($s)] ?? $s;
+                            }
+                            $coerced[$fid] = array_values(array_unique($mapped));
+                        } elseif (is_scalar($val)) {
+                            $str = strtolower(trim((string) $val));
+                            if (in_array($str, ['1', 'true', 't', 'yes', 'y', 'on'], true) && count($cellMap) <= 2) {
+                                $first = $cellMap['yes'] ?? $cellMap['Yes'] ?? $cellMap['true'] ?? (count($cellMap) > 0 ? reset($cellMap) : 'yes');
+                                $coerced[$fid] = [(string) $first];
+                            } elseif (in_array($str, ['0', 'false', 'f', 'no', 'n', 'off'], true) && count($cellMap) <= 2) {
+                                $coerced[$fid] = [];
+                            } else {
+                                $coerced[$fid] = self::choicesInCell((string) $val, $cellMap);
+                            }
+                        }
+                        break;
+                    case 'short_text':
+                    case 'long_text':
+                    case 'email':
+                    case 'phone':
+                    case 'url':
+                    case 'date':
+                    case 'time':
+                    case 'datetime':
+                        if (is_bool($val)) {
+                            $coerced[$fid] = $val ? 'true' : 'false';
+                        } elseif (is_array($val)) {
+                            $encoded = json_encode($val, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                            $coerced[$fid] = $encoded !== false ? $encoded : '';
+                        } else {
+                            $coerced[$fid] = (string) $val;
+                        }
+                        break;
+                    case 'file_upload':
+                        // Raw file bytes are not migrated inline.
+                        break;
+                    default:
+                        $coerced[$fid] = $val;
+                        break;
+                }
+            }
+
+            $problems = self::answerShapeProblems($coerced);
+            if ($problems !== []) {
+                $failed++;
+                $results[$rowIndex] = [
+                    'index' => $rowIndex,
+                    'clientKey' => $clientKey,
+                    'error' => 'Row payload exceeds nesting or value limits',
+                ];
+                continue;
+            }
+
+            $answers = $this->sanitizeSubmittedAnswers($fields, $coerced);
+            $validationErrors = $this->validateSubmittedAnswers($validationFields, $answers);
+            if ($validationErrors !== []) {
+                $parts = [];
+                foreach ($validationErrors as $errFieldId => $msg) {
+                    $parts[] = "Field '" . ($fieldLabelMap[$errFieldId] ?? $errFieldId) . "': {$msg}";
+                }
+                $failed++;
+                $results[$rowIndex] = [
+                    'index' => $rowIndex,
+                    'clientKey' => $clientKey,
+                    'error' => implode('; ', $parts),
+                ];
+                continue;
+            }
+            $answers = $this->normalizeAnswers($fields, $answers, $formId);
+
+            $answersJson = json_encode($answers, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($answersJson === false || strlen($answersJson) > 2_000_000) {
+                $failed++;
+                $results[$rowIndex] = [
+                    'index' => $rowIndex,
+                    'clientKey' => $clientKey,
+                    'error' => 'Row could not be encoded or exceeds 2 MB limit',
+                ];
+                continue;
+            }
+
+            $status = isset($row['status']) && is_string($row['status']) && in_array($row['status'], $allowedStatuses, true)
+                ? $row['status']
+                : 'submitted';
+            $submittedAt = $now;
+            if (isset($row['submittedAt']) && is_string($row['submittedAt']) && trim($row['submittedAt']) !== '') {
+                $ts = strtotime(trim($row['submittedAt']));
+                if ($ts !== false) {
+                    $submittedAt = gmdate('Y-m-d H:i:s', $ts);
+                }
+            }
+
+            $ready[] = [
+                'index' => $rowIndex,
+                'clientKey' => $clientKey,
+                'answers' => $answers,
+                'answersJson' => $answersJson,
+                'status' => $status,
+                'submittedAt' => $submittedAt,
+            ];
+        }
+
+        $created = 0;
+        $linkQueue = [];
+
+        // Unified SQLite / Native SoftN table binding path.
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            foreach ($ready as $item) {
+                try {
+                    $createdRow = $this->nativeTableBridge->createResponse($binding, [
+                        'answers' => $item['answers'],
+                        'status' => $item['status'],
+                        'submittedAt' => $item['submittedAt'],
+                        'metadata' => [
+                            'source' => 'database_import',
+                            'importedAt' => $now,
+                            'submittedByUserId' => $submittedByUserId,
+                        ],
+                    ]);
+                    $newId = (string) ($createdRow['id'] ?? '');
+                    if ($newId !== '') {
+                        $created++;
+                        $results[$item['index']] = [
+                            'index' => $item['index'],
+                            'clientKey' => $item['clientKey'],
+                            'responseId' => $newId,
+                        ];
+                        if ($linkedFieldIds !== []) {
+                            $linkQueue[] = [$newId, $item['answers']];
+                        }
+                    } else {
+                        $failed++;
+                        $results[$item['index']] = [
+                            'index' => $item['index'],
+                            'clientKey' => $item['clientKey'],
+                            'error' => 'Native table insert did not return a record ID',
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    $failed++;
+                    $results[$item['index']] = [
+                        'index' => $item['index'],
+                        'clientKey' => $item['clientKey'],
+                        'error' => $e->getMessage(),
+                    ];
+                }
+            }
+
+            foreach ($linkQueue as [$newId, $ans]) {
+                $this->syncResponseLinks($formId, $newId, $fields, $ans);
+            }
+            if ($created > 0) {
+                $this->syncResponseCount($formId);
+            }
+            ksort($results);
+            return [
+                'created' => $created,
+                'failed' => $failed,
+                'total' => count($rows),
+                'results' => array_values($results),
+            ];
+        }
+
+        if ($ready === []) {
+            ksort($results);
+            return [
+                'created' => 0,
+                'failed' => $failed,
+                'total' => count($rows),
+                'results' => array_values($results),
+            ];
+        }
+
+        $db = $this->sqlite->getFormDatabase($formId);
+        $this->sqlite->migrateFormDatabase($db);
+        $mysqlInsertedIds = [];
+
+        try {
+            $db->beginTransaction();
+            $sqliteStmt = $db->prepare("
+                INSERT INTO responses (id, answers, metadata, status, submitted_at, updated_at)
+                VALUES (:id, :answers, :metadata, :status, :submitted_at, :updated_at)
+            ");
+            $mysqlStmt = $this->mysql->prepare("
+                INSERT INTO response_metadata (id, form_id, status, submitted_at)
+                VALUES (:id, :form_id, :status, :submitted_at)
+            ");
+
+            foreach ($ready as $item) {
+                try {
+                    $id = $this->generateUuid();
+                    $meta = [
+                        'source' => 'database_import',
+                        'importedAt' => $now,
+                    ];
+                    if ($submittedByUserId !== null && $submittedByUserId !== '') {
+                        $meta['submittedByUserId'] = $submittedByUserId;
+                    }
+                    if ($ipAddress !== null && $ipAddress !== '') {
+                        $meta['ipAddress'] = $ipAddress;
+                    }
+
+                    $sqliteStmt->execute([
+                        'id' => $id,
+                        'answers' => $item['answersJson'],
+                        'metadata' => json_encode($meta),
+                        'status' => $item['status'],
+                        'submitted_at' => $item['submittedAt'],
+                        'updated_at' => $now,
+                    ]);
+
+                    try {
+                        $mysqlStmt->execute([
+                            'id' => $id,
+                            'form_id' => $formId,
+                            'status' => $item['status'],
+                            'submitted_at' => $item['submittedAt'],
+                        ]);
+                        $mysqlInsertedIds[] = $id;
+                    } catch (\Throwable $mysqlErr) {
+                        $db->exec('DELETE FROM responses WHERE id = ' . $db->quote($id));
+                        throw $mysqlErr;
+                    }
+
+                    $created++;
+                    $results[$item['index']] = [
+                        'index' => $item['index'],
+                        'clientKey' => $item['clientKey'],
+                        'responseId' => $id,
+                    ];
+                    if ($linkedFieldIds !== []) {
+                        $linkQueue[] = [$id, $item['answers']];
+                    }
+                } catch (\Throwable $e) {
+                    $failed++;
+                    $results[$item['index']] = [
+                        'index' => $item['index'],
+                        'clientKey' => $item['clientKey'],
+                        'error' => $e->getMessage(),
+                    ];
+                }
+            }
+
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            if ($mysqlInsertedIds !== []) {
+                try {
+                    $placeholders = implode(',', array_fill(0, count($mysqlInsertedIds), '?'));
+                    $cleanupStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id IN ($placeholders)");
+                    $cleanupStmt->execute($mysqlInsertedIds);
+                } catch (\Throwable $cleanupErr) {
+                    $this->logger->warning('Failed to clean up MySQL rows after batch import rollback', [
+                        'formId' => $formId,
+                        'orphanedIds' => count($mysqlInsertedIds),
+                        'error' => $cleanupErr->getMessage(),
+                    ]);
+                }
+            }
+            $this->logger->error('Batch import failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+            throw new \RuntimeException('Batch import failed. Please try again.');
+        }
+
+        foreach ($linkQueue as [$newId, $ans]) {
+            $this->syncResponseLinks($formId, $newId, $fields, $ans);
+        }
+        if ($created > 0) {
+            $this->syncResponseCount($formId);
+        }
+
+        ksort($results);
+        return [
+            'created' => $created,
+            'failed' => $failed,
+            'total' => count($rows),
+            'results' => array_values($results),
+        ];
+    }
+
+    /**
+     * Pass-2 batch patch for linked_record fields (self-referencing or circular FKs).
+     * Only touches verified linked_record fields on the target form and refreshes response_links.
+     *
+     * @param array<int, array<string, mixed>> $updates
+     * @param array<int, array<string, mixed>> $fields
+     * @return array{updated: int, failed: int, total: int, errors: array<int, array{responseId: string, error: string}>}
+     */
+    public function batchPatchResponseLinks(string $formId, array $updates, array $fields): array
+    {
+        $this->assertNotPrivate($formId);
+        if (count($updates) === 0) {
+            throw new \RuntimeException('At least one link update is required');
+        }
+        if (count($updates) > 500) {
+            throw new \RuntimeException('Maximum 500 link updates allowed per batch');
+        }
+        if (!$this->formExists($formId)) {
+            throw new \RuntimeException('Form not found');
+        }
+
+        $linkedFieldsById = [];
+        foreach ($fields as $field) {
+            if (($field['type'] ?? '') === 'linked_record' && isset($field['id'])) {
+                $linkedFieldsById[(string) $field['id']] = $field;
+            }
+        }
+        if ($linkedFieldsById === []) {
+            throw new \RuntimeException('This form has no linked_record fields');
+        }
+
+        $updated = 0;
+        $failed = 0;
+        $errors = [];
+        $now = date('Y-m-d H:i:s');
+        $binding = $this->nativeTableBridge?->resolveBinding($formId);
+
+        if ($binding !== null && $this->nativeTableBridge !== null) {
+            foreach ($updates as $item) {
+                $responseId = isset($item['responseId']) && is_string($item['responseId']) ? trim($item['responseId']) : '';
+                $links = $item['links'] ?? null;
+                if ($responseId === '' || !is_array($links)) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Invalid responseId or links payload'];
+                    continue;
+                }
+                $validated = $this->validateLinkPatch($links, $linkedFieldsById);
+                if (isset($validated['error'])) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => $validated['error']];
+                    continue;
+                }
+                $existing = $this->nativeTableBridge->getResponse($binding, $responseId);
+                if ($existing === null) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Record not found'];
+                    continue;
+                }
+                $merged = array_merge(is_array($existing['answers'] ?? null) ? $existing['answers'] : [], $validated['links']);
+                $res = $this->nativeTableBridge->updateResponse($binding, $responseId, ['answers' => $merged]);
+                if ($res === null) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Could not update record'];
+                    continue;
+                }
+                $this->syncResponseLinks($formId, $responseId, $fields, $merged);
+                $updated++;
+            }
+            return ['updated' => $updated, 'failed' => $failed, 'total' => count($updates), 'errors' => $errors];
+        }
+
+        if (!$this->sqlite->formDatabaseExists($formId)) {
+            throw new \RuntimeException('Form has no records yet');
+        }
+        $db = $this->sqlite->getFormDatabase($formId);
+        $this->sqlite->migrateFormDatabase($db);
+        $linkQueue = [];
+
+        $selectStmt = $db->prepare('SELECT answers FROM responses WHERE id = :id');
+        $updateStmt = $db->prepare('UPDATE responses SET answers = :answers, updated_at = :updated_at WHERE id = :id');
+
+        $db->beginTransaction();
+        try {
+            foreach ($updates as $item) {
+                $responseId = isset($item['responseId']) && is_string($item['responseId']) ? trim($item['responseId']) : '';
+                $links = $item['links'] ?? null;
+                if ($responseId === '' || !is_array($links)) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Invalid responseId or links payload'];
+                    continue;
+                }
+                $validated = $this->validateLinkPatch($links, $linkedFieldsById);
+                if (isset($validated['error'])) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => $validated['error']];
+                    continue;
+                }
+                $selectStmt->execute(['id' => $responseId]);
+                $raw = $selectStmt->fetchColumn();
+                if ($raw === false) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Record not found'];
+                    continue;
+                }
+                $current = is_string($raw) ? json_decode($raw, true) : [];
+                if (!is_array($current)) {
+                    $current = [];
+                }
+                $merged = array_merge($current, $validated['links']);
+                $encoded = json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if ($encoded === false) {
+                    $failed++;
+                    $errors[] = ['responseId' => $responseId, 'error' => 'Failed to encode updated answers'];
+                    continue;
+                }
+                $updateStmt->execute([
+                    'answers' => $encoded,
+                    'updated_at' => $now,
+                    'id' => $responseId,
+                ]);
+                $linkQueue[] = [$responseId, $merged];
+                $updated++;
+            }
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $this->logger->error('Batch link patch failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+            throw new \RuntimeException('Batch link patch failed.');
+        }
+
+        foreach ($linkQueue as [$rid, $merged]) {
+            $this->syncResponseLinks($formId, $rid, $fields, $merged);
+        }
+
+        return [
+            'updated' => $updated,
+            'failed' => $failed,
+            'total' => count($updates),
+            'errors' => $errors,
+        ];
+    }
+
+    /**
+     * Validate a map of linked_record field updates against the form's linked_record definitions.
+     *
+     * @param array<string, mixed> $links
+     * @param array<string, array<string, mixed>> $linkedFieldsById
+     * @return array{links?: array<string, mixed>, error?: string}
+     */
+    private function validateLinkPatch(array $links, array $linkedFieldsById): array
+    {
+        $clean = [];
+        foreach ($links as $fieldId => $value) {
+            $fid = (string) $fieldId;
+            if (!isset($linkedFieldsById[$fid])) {
+                return ['error' => "Field '{$fid}' is not a linked_record field on this form"];
+            }
+            if ($value === null || $value === '') {
+                $clean[$fid] = null;
+                continue;
+            }
+            $allowMultiple = !empty($linkedFieldsById[$fid]['properties']['allowMultiple']);
+            if (is_array($value)) {
+                if (!$allowMultiple && count($value) > 1) {
+                    return ['error' => "Field '{$fid}' accepts a single linked record"];
+                }
+                if (count($value) > 200) {
+                    return ['error' => "Field '{$fid}' exceeds 200 linked records"];
+                }
+                $refs = [];
+                foreach ($value as $ref) {
+                    if (!is_string($ref) || $ref === '' || strlen($ref) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $ref)) {
+                        return ['error' => "Invalid linked record reference in '{$fid}'"];
+                    }
+                    $refs[] = $ref;
+                }
+                $clean[$fid] = $allowMultiple ? $refs : ($refs[0] ?? null);
+            } elseif (is_string($value)) {
+                if (strlen($value) > 64 || !preg_match('/^[A-Za-z0-9_-]+$/', $value)) {
+                    return ['error' => "Invalid linked record reference in '{$fid}'"];
+                }
+                $clean[$fid] = $allowMultiple ? [$value] : $value;
+            } else {
+                return ['error' => "Invalid linked record value in '{$fid}'"];
+            }
+        }
+        return ['links' => $clean];
+    }
+
+    /**
      * Account-backup restore: insert fully-formed response rows into a form's
      * stores with ids/timestamps/status/metadata/computed/tags PRESERVED, and
      * with NO side effects — no onSubmit script, webhooks, flow enqueue,

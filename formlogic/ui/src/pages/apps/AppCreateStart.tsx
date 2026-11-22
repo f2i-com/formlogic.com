@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AppWindow, ArrowRight, Boxes, Check, ChevronDown, ClipboardList, FileUp, HardDrive, Package, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { AppWindow, ArrowRight, Boxes, Check, ChevronDown, ClipboardList, Database, FileUp, HardDrive, Package, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { Header } from '../../components/layout/Header';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -312,7 +312,10 @@ export function AppCreateStart() {
               </form>}
         </section>
         <div className="flex flex-wrap items-start justify-between gap-3 text-sm text-slate-600 @3xl/create:col-start-2 dark:text-slate-400">
-          <Link to="/packs" className="inline-flex min-h-10 items-center gap-2 hover:underline"><Package className="size-4" />Browse the Marketplace</Link>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Link to="/import" className="inline-flex min-h-10 items-center gap-2 font-medium text-primary-700 hover:underline dark:text-primary-300"><Database className="size-4" />Import from database</Link>
+            <Link to="/packs" className="inline-flex min-h-10 items-center gap-2 hover:underline"><Package className="size-4" />Browse the Marketplace</Link>
+          </div>
           {aiReady && !isDemo && <Link to="?type=chat" className="inline-flex min-h-10 items-center gap-1.5 text-sm font-medium text-primary-700 hover:underline dark:text-primary-300"><Sparkles className="size-4" />Create with AI</Link>}
           {ai && !aiReady && !isDemo && build !== 'upload' && <details className="group min-w-0 open:basis-full">
             <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2 hover:underline"><Sparkles className="size-4" />Connect AI</summary>

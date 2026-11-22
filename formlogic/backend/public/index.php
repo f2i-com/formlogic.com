@@ -2496,9 +2496,11 @@ $submissionRateLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'submissi
 // Running sandboxed user scripts (script test / recompute) spawns the ZIPP
 // runtime subprocess and can make ctx.http calls, so cap it per user like the AI endpoints.
 $scriptTestRateLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'script_test', true);
+// Structured batch import for Database Import / Migration (up to 500 rows/req × 120 req/min).
+$batchImportRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'batch_import', true);
 
 // Response routes (protected - require authentication)
-$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $scriptTestRateLimiter) {
+$app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $group) use ($container, $getArgs, $authRequired, $cloudWriteGate, $scriptTestRateLimiter, $batchImportRateLimiter) {
     // List responses (requires auth)
     $group->get('', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->index($request, $response, $getArgs($request));
@@ -2513,6 +2515,16 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     $group->post('/import', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->importCsv($request, $response, $getArgs($request));
     })->add($authRequired);
+
+    // Batch import structured JSON rows with created IDs & linked_record syncing (requires auth)
+    $group->post('/batch-import', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ResponseController::class)->batchImport($request, $response, $getArgs($request));
+    })->add($cloudWriteGate)->add($batchImportRateLimiter)->add($authRequired);
+
+    // Pass-2 batch patch for cyclic/self-referencing linked_record fields (requires auth)
+    $group->patch('/batch-links', function ($request, $response) use ($container, $getArgs) {
+        return $container->get(ResponseController::class)->batchPatchLinks($request, $response, $getArgs($request));
+    })->add($cloudWriteGate)->add($batchImportRateLimiter)->add($authRequired);
 
     // Single response operations
     $group->get('/{id}', function ($request, $response) use ($container, $getArgs) {

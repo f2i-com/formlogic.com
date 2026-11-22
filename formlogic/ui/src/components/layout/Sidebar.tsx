@@ -75,7 +75,7 @@ export function Sidebar({ floating = false, placementControl }: { floating?: boo
 
   // Advanced tools start expanded when you're ON one of them (deep links stay
   // oriented); the explicit toggle persists across sessions.
-  const onToolRoute = ['/diagrams', '/packs', '/trash'].some(
+  const onToolRoute = ['/import', '/diagrams', '/packs', '/trash'].some(
     (p) => location.pathname === p || location.pathname.startsWith(p + '/')
   );
   const [toolsOpen, setToolsOpen] = useState<boolean>(() => {

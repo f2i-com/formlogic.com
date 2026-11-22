@@ -5482,6 +5482,35 @@ class ApiClient {
     }
   }
 
+  /**
+   * Batch-import structured JSON rows into an owned form (up to 500 rows/request),
+   * returning created responseIds keyed by index / clientKey and syncing linked_record links.
+   */
+  async batchImportResponses(
+    formId: string,
+    rows: BatchImportRowInput[],
+    options?: { deferLinkFields?: string[] },
+  ): Promise<ApiResponse<BatchImportResult>> {
+    return this.request<BatchImportResult>(`/forms/${seg(formId)}/responses/batch-import`, {
+      method: 'POST',
+      body: JSON.stringify({
+        rows,
+        ...(options?.deferLinkFields?.length ? { deferLinkFields: options.deferLinkFields } : {}),
+      }),
+    });
+  }
+
+  /** Pass-2 batch patch for cyclic / self-referencing linked_record fields after migration import. */
+  async batchPatchResponseLinks(
+    formId: string,
+    updates: Array<{ responseId: string; links: Record<string, string | string[] | null> }>,
+  ): Promise<ApiResponse<BatchPatchLinksResult>> {
+    return this.request<BatchPatchLinksResult>(`/forms/${seg(formId)}/responses/batch-links`, {
+      method: 'PATCH',
+      body: JSON.stringify({ updates }),
+    });
+  }
+
   // Audit verification
   async verifyAuditIntegrity(): Promise<ApiResponse<AuditVerifyResult>> {
     return this.request('/admin/audit/verify');
@@ -6725,6 +6754,34 @@ interface CsvImportResult {
   skipped: number;
   total: number;
   errors: Array<{ row: number; errors: string[] }>;
+}
+
+export interface BatchImportRowInput {
+  clientKey?: string;
+  answers: Record<string, unknown>;
+  status?: 'submitted' | 'reviewed' | 'archived';
+  submittedAt?: string;
+}
+
+export interface BatchImportRowResult {
+  index: number;
+  clientKey?: string | null;
+  responseId?: string;
+  error?: string;
+}
+
+export interface BatchImportResult {
+  created: number;
+  failed: number;
+  total: number;
+  results: BatchImportRowResult[];
+}
+
+export interface BatchPatchLinksResult {
+  updated: number;
+  failed: number;
+  total: number;
+  errors: Array<{ responseId: string; error: string }>;
 }
 
 interface AuditVerifyResult {

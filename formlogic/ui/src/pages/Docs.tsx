@@ -48,7 +48,7 @@ const SECTIONS = [
   { id: 'scripts', title: 'Backend scripts', icon: Code2 },
   { id: 'publishing', title: 'Publishing & sharing', icon: Share2 },
   { id: 'responses', title: 'Viewing responses', icon: Inbox },
-  { id: 'exporting', title: 'Exporting data', icon: Download },
+  { id: 'exporting', title: 'Importing & exporting', icon: Download },
   { id: 'analytics', title: 'Analytics', icon: BarChart3 },
   { id: 'api', title: 'API access', icon: Terminal },
   { id: 'mcp', title: 'Build with your AI (MCP)', icon: Plug },
@@ -459,14 +459,19 @@ export function Docs() {
 
             </section>
 
-            {/* Exporting */}
+            {/* Exporting & Importing */}
             <section className="mb-14">
-              <H2 id="exporting" icon={Download}>Exporting your data</H2>
-              <P>Your data is always yours. From the form's analytics / responses you can export to:</P>
+              <H2 id="exporting" icon={Download}>Importing &amp; exporting your data</H2>
+              <P>Your data is always yours — both coming in and going out. Use <C>Import database</C> (<C>/import</C>) in the workspace sidebar to bring existing <strong className="text-gray-900 dark:text-white">MySQL, PostgreSQL, SQL Server (MSSQL), SQLite, Oracle, or Prisma</strong> schemas directly into linked FormLogic CRUD forms:</P>
+              <Bullets items={[
+                <><strong className="text-gray-900 dark:text-white">Strictly local schema &amp; connections</strong> — paste or drop <C>.sql</C>, <C>.sqlite / .db</C>, <C>.prisma</C>, <C>.csv</C>, <C>.json</C>, or <C>.zip</C> dumps parsed in your browser, or connect through a tiny local <C>127.0.0.1</C> loopback bridge so database credentials never touch FormLogic&apos;s server.</>,
+                <><strong className="text-gray-900 dark:text-white">Automatic CRUD generation &amp; FK batch import</strong> — tables become forms, foreign keys become <C>linked_record</C> relations, and existing rows upload in pauseable batches (parents first, with Pass-2 linking for self-referencing tables).</>,
+              ]} />
+              <P>From any form&apos;s analytics or responses view you can export back out to:</P>
               <Bullets items={[
                 <><strong className="text-gray-900 dark:text-white">CSV</strong> — for spreadsheets (choice labels resolved, formula-injection safe).</>,
                 <><strong className="text-gray-900 dark:text-white">JSON</strong> — for programmatic use.</>,
-                <><strong className="text-gray-900 dark:text-white">SQLite</strong> — the form's entire database file, queryable with any SQLite tool.</>,
+                <><strong className="text-gray-900 dark:text-white">SQLite</strong> — the form&apos;s entire database file, queryable with any SQLite tool.</>,
               ]} />
               <Tip>Each form has its own SQLite database. For an encrypted private form, that database contains encrypted envelopes, not readable answers. Plaintext CSV/JSON downloads in Analytics are unavailable; use the decrypted spreadsheet export in Responses after unlocking the form.</Tip>
             </section>

@@ -94,6 +94,7 @@ const AppRuntimeRoot = lazyWithRetry(() => import('./components/app-runtime/AppE
 // Lazy load pack marketplace pages
 const PackGalleryPage = lazyWithRetry(() => import('./pages/PackGalleryPage'));
 const PackDetailPage = lazyWithRetry(() => import('./pages/PackDetailPage'));
+const DatabaseImportPage = lazyWithRetry(() => import('./pages/DatabaseImportPage'));
 const AiSetupPage = lazyWithRetry(() => import('./pages/AiSetupPage'));
 const Docs = lazyWithRetry(() => import('./pages/Docs').then(m => ({ default: m.Docs })));
 // Aokie setup guide — the landing "Explore Aokie" CTA's tutorial page (public).
@@ -290,6 +291,7 @@ function LegacyAppAddress() {
 // The sign-in guard and both workspace layouts match the same bookmarks.
 const workspacePages = <>
   <Route path="/forms" element={<FormsList />} />
+  <Route path="/import" element={<DatabaseImportPage />} />
   <Route path="/settings" element={<Settings />} />
   <Route path="/flows" element={<FlowsWorkspace />} />
   <Route path="/diagrams/all" element={<DiagramsIndex />} />

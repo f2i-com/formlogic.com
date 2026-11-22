@@ -2162,6 +2162,158 @@ class ResponseController
         }
     }
 
+    /**
+     * Batch import structured JSON rows into an owned form (used by Database Import & Migration).
+     * POST /api/forms/{formId}/responses/batch-import
+     */
+    public function batchImport(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
+        }
+
+        $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            $raw = (string) $request->getBody();
+            $body = json_decode($raw, true);
+        }
+        if (!is_array($body) || !isset($body['rows']) || !is_array($body['rows'])) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Request body must include a rows array',
+            ], 400);
+        }
+
+        $rows = $body['rows'];
+        if (count($rows) === 0) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'rows array cannot be empty',
+            ], 400);
+        }
+        if (count($rows) > 500) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Maximum 500 rows allowed per batch',
+            ], 400);
+        }
+
+        $deferLinkFields = isset($body['deferLinkFields']) && is_array($body['deferLinkFields'])
+            ? array_values(array_filter($body['deferLinkFields'], 'is_string'))
+            : [];
+
+        $userId = $request->getAttribute('userId');
+        $ip = $this->ipResolver->getClientIp($request);
+
+        try {
+            $result = $this->responseService->batchImportResponses(
+                $formId,
+                $rows,
+                $form['fields'] ?? [],
+                is_string($userId) ? $userId : null,
+                $ip,
+                $deferLinkFields
+            );
+
+            $this->audit($request, 'response.batch_import', 'form', $formId, [
+                'created' => $result['created'],
+                'failed' => $result['failed'],
+                'total' => $result['total'],
+            ]);
+
+            return $this->jsonResponse($response, $result);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Throwable $e) {
+            $this->logger->error('Batch import error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred during batch import',
+            ], 500);
+        }
+    }
+
+    /**
+     * Pass-2 batch patch for cyclic / self-referencing linked_record fields after migration import.
+     * PATCH /api/forms/{formId}/responses/batch-links
+     */
+    public function batchPatchLinks(Request $request, Response $response, array $args): Response
+    {
+        $formId = $args['formId'];
+
+        $form = $this->authorizeFormAccess($request, $formId);
+        if (!$form) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Form not found or access denied',
+            ], 404);
+        }
+
+        if ($this->isPrivateForm($formId)) {
+            return $this->privateFormError($response, new PrivateFormEncryptedException());
+        }
+
+        $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            $raw = (string) $request->getBody();
+            $body = json_decode($raw, true);
+        }
+        if (!is_array($body) || !isset($body['updates']) || !is_array($body['updates'])) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Request body must include an updates array',
+            ], 400);
+        }
+
+        $updates = $body['updates'];
+        if (count($updates) === 0 || count($updates) > 500) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'updates must contain between 1 and 500 items',
+            ], 400);
+        }
+
+        try {
+            $result = $this->responseService->batchPatchResponseLinks(
+                $formId,
+                $updates,
+                $form['fields'] ?? []
+            );
+
+            $this->audit($request, 'response.batch_patch_links', 'form', $formId, [
+                'updated' => $result['updated'],
+                'failed' => $result['failed'],
+                'total' => $result['total'],
+            ]);
+
+            return $this->jsonResponse($response, $result);
+        } catch (\RuntimeException $e) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $e->getMessage(),
+            ], 400);
+        } catch (\Throwable $e) {
+            $this->logger->error('Batch link patch error', ['exception' => $e->getMessage()]);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'An unexpected error occurred while updating record links',
+            ], 500);
+        }
+    }
+
     private function audit(Request $request, string $action, string $resourceType, string $resourceId, array $details = []): void
     {
         if ($this->auditService === null) return;

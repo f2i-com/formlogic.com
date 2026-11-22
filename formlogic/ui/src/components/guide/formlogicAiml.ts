@@ -21,6 +21,7 @@ export type GuideRouteSection =
   | 'flows'
   | 'settings'
   | 'docs'
+  | 'db-import'
   | 'workspace';
 
 export interface FormLogicGuideContext {
@@ -42,6 +43,7 @@ export function classifyGuideRoute(pathname: string, signedIn: boolean): GuideRo
   if (pathname.startsWith('/builder') || pathname.startsWith('/admin/builder')) return 'form-builder';
   if (pathname.startsWith('/responses') || pathname.startsWith('/analytics')) return 'responses';
   if (pathname.startsWith('/forms')) return 'forms';
+  if (pathname.startsWith('/import')) return 'db-import';
   if (pathname.startsWith('/flows') || pathname.startsWith('/diagrams')) return 'flows';
   if (pathname.startsWith('/settings')) return 'settings';
   return 'workspace';
@@ -134,9 +136,16 @@ function chipsForSection(section: GuideRouteSection): string[] {
     case 'docs':
       return [
         'Take me on a tour',
+        'How do I import an existing database?',
         'How do API keys and MCP work?',
-        'How do SoftN apps and forms work together?',
         'How do I self-host FormLogic?',
+      ];
+    case 'db-import':
+      return [
+        'Take me on a tour',
+        'How do I import an existing database?',
+        'How do foreign keys and batch imports work?',
+        'How does the local 127.0.0.1 bridge stay private?',
       ];
     default:
       return [
@@ -169,7 +178,9 @@ function greetingForSection(section: GuideRouteSection, botName: string): string
     case 'settings':
       return `[smile] Welcome to Settings! You can customize my avatar, framing, voice, and AIML right here — or ask about API keys, MCP, vaults, and backups.`;
     case 'docs':
-      return `[wave] Welcome to the FormLogic Docs! I'm ${botName}. Search sections on the left or ask me directly about forms, SoftN apps, API keys, MCP, Flows, or self-hosting.`;
+      return `[wave] Welcome to the FormLogic Docs! I'm ${botName}. Search sections on the left or ask me directly about forms, database import, SoftN apps, API keys, MCP, Flows, or self-hosting.`;
+    case 'db-import':
+      return `[cheerful] Welcome to Database Import! I'm ${botName}. Drop or paste MySQL, PostgreSQL, MSSQL, SQLite, Oracle, or Prisma schemas — or connect strictly locally on 127.0.0.1 — to generate linked CRUD forms and batch-import your data.`;
     default:
       return `[wave] Hi, I'm ${botName}, your FormLogic guide. Drag me anywhere if I'm in your way, or ask for a guided tour and I'll walk you through this page!`;
   }
@@ -232,8 +243,13 @@ function tourStopsForSection(section: GuideRouteSection): string {
       `;
     case 'docs':
       return `
-      <stop target="docs-toc">[wave] Use this table of contents and quick search filter to jump to any guide — from Quick Start and Backend Scripts to External APIs, MCP, Interactive Guide, and Self-Hosting.</stop>
+      <stop target="docs-toc">[wave] Use this table of contents and quick search filter to jump to any guide — from Quick Start and Backend Scripts to Database Import, External APIs, MCP, and Self-Hosting.</stop>
       <stop target="docs-content">[thumbsup] Every guide includes real copy-paste code examples, visual walkthroughs, and links to deeper developer references in the repository.</stop>
+      `;
+    case 'db-import':
+      return `
+      <stop target="db-import-steps">[wave] Follow these four steps: connect locally or upload your schema, customize table and field mappings, generate linked CRUD forms or a full App, and then batch-import your existing rows.</stop>
+      <stop target="db-import-workspace">[thumbsup] Everything parses right inside your browser — MySQL, PostgreSQL, SQL Server, SQLite files, Oracle, Prisma, CSV, or a strictly local 127.0.0.1 bridge so credentials never touch the server!</stop>
       `;
     default:
       return `
@@ -576,6 +592,16 @@ ${tourStops}
     <template>
       <showcase target="pricing"/>[thumbsup] FormLogic is free to start in the cloud and completely self-hostable on standard Linux servers with PHP 8.2+, MySQL, and Node.js 24+ behind Apache or Nginx! Platform admins get a built-in Doctor health dashboard checking encryption, sealed backups, LibreOffice conversion, cron workers, and dual-store SQLite consistency.
       <reply>How do backups and encryption work?</reply>
+      <reply>Take me on a tour</reply>
+    </template>
+  </category>
+
+  <!-- 9b. Database Schema & Batch Data Import -->
+  <category>
+    <pattern># IMPORT DATABASE # | # IMPORT AN EXISTING DATABASE # | # MIGRATE DATABASE # | # MYSQL # | # POSTGRES # | # POSTGRESQL # | # MSSQL # | # SQL SERVER # | # PRISMA # | # LOCAL BRIDGE # | # BATCH IMPORT # | # BRING DATA #</pattern>
+    <template>
+      <showcase target="db-import-workspace"/>[thumbsup] Open Import database under More tools in the sidebar to bring existing MySQL, PostgreSQL, SQL Server (MSSQL), SQLite, Oracle, or Prisma schemas into FormLogic CRUD forms! You can paste or drop SQL dumps, .sqlite/.db files, CSVs, or ZIPs parsed 100 percent in your browser — or run our tiny 127.0.0.1 local bridge so your database credentials stay strictly on your own computer. Foreign keys become linked_record relations, and rows upload in pauseable batches with automatic parent-first ID remapping!
+      <reply>How do linked records work?</reply>
       <reply>Take me on a tour</reply>
     </template>
   </category>

@@ -559,7 +559,7 @@ const FormListRow = memo(function FormListRow({
       </div>
       <StatusPill status={form.status} />
       <div className="flex flex-none items-center gap-0.5 sm:gap-1" onClick={(e) => e.stopPropagation()}>
-        <button type="button" onClick={() => onRename(form)} title="Rename form" aria-label={`Rename ${title}`} className="hidden sm:inline-flex min-h-10 items-center rounded-lg px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 cursor-pointer dark:text-primary-400 dark:hover:bg-primary-500/10">Rename</button>
+        <button type="button" onClick={() => onRename(form)} title="Rename form" aria-label={`Rename ${title}`} className="inline-flex min-h-10 items-center rounded-lg px-1.5 sm:px-2 text-xs font-medium text-primary-600 hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 cursor-pointer dark:text-primary-400 dark:hover:bg-primary-500/10">Rename</button>
         <button
           type="button"
           onClick={() => onNavigate(`/responses/${form.id}`)}

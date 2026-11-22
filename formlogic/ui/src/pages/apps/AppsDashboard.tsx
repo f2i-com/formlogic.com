@@ -148,7 +148,10 @@ export function AppsDashboard() {
               aria-label="More app actions" aria-haspopup="dialog" aria-expanded={showActions} title="More app actions">
               <MoreHorizontal className="size-5" aria-hidden="true" />
             </Button>
-            <Popover isOpen={showActions} onClose={() => setShowActions(false)} anchorRef={actionsRef} placement="bottom-end" ariaLabel="More app actions" className="w-52 p-1.5">
+            <Popover isOpen={showActions} onClose={() => setShowActions(false)} anchorRef={actionsRef} placement="bottom-end" ariaLabel="More app actions" className="w-56 p-1.5">
+              <button type="button" className={menuItem} onClick={() => { setShowActions(false); navigate('/import'); }}>
+                <Database className="size-4" aria-hidden="true" />Import from database
+              </button>
               <button type="button" className={menuItem} onClick={() => openAction('import')}>
                 <Upload className="size-4" aria-hidden="true" />Import an app
               </button>
