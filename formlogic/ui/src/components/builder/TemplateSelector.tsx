@@ -1,18 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText, Check, Lock } from 'lucide-react';
+import { X, Plus, Clock, LayoutGrid, Building, MessageCircle, CalendarDays, Users, GraduationCap, Mail, Briefcase, Newspaper, Bug, PartyPopper, FileText, Check, Lock, Stethoscope, Palette } from 'lucide-react';
 import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TITLE, GROUP_TITLE } from './builderDialog';
 import { Button } from '../ui/Button';
 import { EmptyState } from '../ui/EmptyState';
 import { cn } from '../../lib/utils';
 import type { FormTemplate } from '../../data/formTemplates';
+import type { FormTheme } from '../../types/form';
+import { FORM_STYLE_PRESETS, suggestedPresetIdForTemplate } from '../../lib/formThemeStyles';
 import { useFormTemplates } from '../../hooks/useFormTemplates';
 
 interface TemplateSelectorProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelectTemplate: (template: FormTemplate | null, makePrivate?: boolean, name?: string) => void;
+  onSelectTemplate: (template: FormTemplate | null, makePrivate?: boolean, name?: string, theme?: FormTheme) => void;
   isCreating?: boolean;
   /** Offer the "Private (end-to-end encrypted)" opt-in (requires an unlocked vault). */
   canMakePrivate?: boolean;
@@ -28,6 +30,7 @@ const iconMap: Record<string, React.ReactNode> = {
   GraduationCap: <GraduationCap className="h-6 w-6" />,
   PartyPopper: <PartyPopper className="h-6 w-6" />,
   FileText: <FileText className="h-6 w-6" />,
+  Stethoscope: <Stethoscope className="h-6 w-6" />,
 };
 
 const categoryIconMap: Record<string, React.ReactNode> = {
@@ -37,6 +40,7 @@ const categoryIconMap: Record<string, React.ReactNode> = {
   CalendarDays: <CalendarDays className="h-4 w-4" />,
   Users: <Users className="h-4 w-4" />,
   GraduationCap: <GraduationCap className="h-4 w-4" />,
+  Stethoscope: <Stethoscope className="h-4 w-4" />,
 };
 
 // A template's picture: plain, and the accent when it is the one chosen. A colour for each
@@ -51,6 +55,10 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<FormTemplate | null>(null);
+  const [stylePresetId, setStylePresetId] = useState<string>('modern');
+  const [userPickedStyle, setUserPickedStyle] = useState(false);
+
+  const selectedStylePreset = FORM_STYLE_PRESETS.find((p) => p.id === stylePresetId) ?? FORM_STYLE_PRESETS[0];
 
   useEffect(() => {
     if (!isOpen) return;
@@ -144,6 +152,94 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                 <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search templates" className="mt-1 block w-full min-h-11 rounded-lg border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-800 p-3 text-base" />
               </label>
             </div>
+            {/* Form style picker — choose a distinct look right when creating a form */}
+            <div className="mb-5">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className={cn(GROUP_TITLE, 'flex items-center gap-1.5')}>
+                  <Palette className="h-3.5 w-3.5 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                  Form style
+                </h3>
+                <span className="text-xs text-gray-500 dark:text-slate-400">
+                  {selectedStylePreset.name} · {selectedStylePreset.tagline}
+                </span>
+              </div>
+              <div
+                role="radiogroup"
+                aria-label="Form style"
+                className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+              >
+                {FORM_STYLE_PRESETS.map((preset) => {
+                  const active = preset.id === selectedStylePreset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={isCreating}
+                      onClick={() => {
+                        setStylePresetId(preset.id);
+                        setUserPickedStyle(true);
+                      }}
+                      className={cn(
+                        'group flex items-center gap-2.5 rounded-xl border p-2 text-left transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                        active
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50/70 dark:bg-primary-500/15'
+                          : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 hover:border-primary-300 dark:hover:border-primary-500/50',
+                      )}
+                    >
+                      {/* Mini visual thumbnail of the form surface, header, and inputs */}
+                      <div
+                        className="relative h-10 w-12 shrink-0 overflow-hidden rounded-md border border-black/10 p-1"
+                        style={{ backgroundColor: preset.preview.canvas }}
+                      >
+                        <div
+                          className={cn(
+                            'h-full w-full overflow-hidden border',
+                            preset.theme.borderRadius === 'none' ? 'rounded-none' : preset.theme.borderRadius === 'small' ? 'rounded-[2px]' : 'rounded-[4px]',
+                          )}
+                          style={{
+                            backgroundColor: preset.preview.surface,
+                            borderColor: preset.preview.isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)',
+                          }}
+                        >
+                          {preset.theme.headerStyle === 'hero' ? (
+                            <div className="h-2.5 w-full" style={{ backgroundColor: preset.preview.primary }} />
+                          ) : preset.theme.headerStyle === 'accent_bar' ? (
+                            <div className="h-1 w-full" style={{ backgroundColor: preset.preview.primary }} />
+                          ) : null}
+                          <div className="space-y-1 p-1">
+                            <div className="h-1 w-6 rounded-full opacity-70" style={{ backgroundColor: preset.preview.text }} />
+                            <div
+                              className={cn(
+                                'h-1.5 w-full',
+                                preset.theme.inputStyle === 'underline' ? 'border-b' : 'rounded-[2px] border',
+                              )}
+                              style={{
+                                borderColor: preset.preview.primary,
+                                backgroundColor: preset.theme.inputStyle === 'filled' ? preset.preview.accent : 'transparent',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="truncate text-xs font-semibold text-gray-900 dark:text-white">
+                            {preset.name}
+                          </span>
+                          {active && <Check className="h-3.5 w-3.5 shrink-0 text-primary-600 dark:text-primary-400" aria-hidden="true" />}
+                        </div>
+                        <span className="block truncate text-[11px] text-gray-500 dark:text-slate-400">
+                          {preset.theme.surfaceStyle === 'clean' ? 'Open' : preset.theme.surfaceStyle === 'paper' ? 'Paper' : preset.theme.surfaceStyle === 'glass' ? 'Glass' : 'Card'} · {preset.theme.inputStyle}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {canMakePrivate && <div className="mb-5 rounded-xl bg-gray-50 dark:bg-slate-800/50 p-3">
             {canMakePrivate && (
               <label className="flex min-h-11 items-center gap-2 text-sm text-gray-600 dark:text-slate-300 cursor-pointer">
@@ -173,7 +269,10 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
             <div className="mb-5">
               <button
                 type="button"
-                onClick={() => setSelected(null)}
+                onClick={() => {
+                  setSelected(null);
+                  if (!userPickedStyle) setStylePresetId('modern');
+                }}
                 disabled={isCreating}
                 aria-pressed={currentTemplate === null}
                 className={cn(
@@ -216,7 +315,11 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
                     <button
                       key={template.id}
                       type="button"
-                      onClick={() => { setSelected(template); if (!name.trim() || name === selected?.name) setName(template.name); }}
+                      onClick={() => {
+                        setSelected(template);
+                        if (!name.trim() || name === selected?.name) setName(template.name);
+                        if (!userPickedStyle) setStylePresetId(suggestedPresetIdForTemplate(template.category));
+                      }}
                       disabled={isCreating}
                       aria-pressed={currentTemplate?.id === template.id}
                       className={cn(
@@ -261,7 +364,7 @@ export function TemplateSelector({ isOpen, onClose, onSelectTemplate, canMakePri
             <Button variant="outline" onClick={onClose} disabled={isCreating} className="max-sm:min-h-11">
               Cancel
             </Button>
-            <Button onClick={() => onSelectTemplate(currentTemplate, makePrivate, name.trim())} disabled={isCreating || (loading && selected !== null)} isLoading={isCreating} className="max-sm:min-h-11">Create form</Button>
+            <Button onClick={() => onSelectTemplate(currentTemplate, makePrivate, name.trim(), selectedStylePreset.theme)} disabled={isCreating || (loading && selected !== null)} isLoading={isCreating} className="max-sm:min-h-11">Create form</Button>
           </div>
         </div>
       </div>

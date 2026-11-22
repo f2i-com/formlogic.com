@@ -386,13 +386,15 @@ export function Docs() {
 
             {/* Theming */}
             <section className="mb-14">
-              <H2 id="theming" icon={Palette}>Theming</H2>
-              <P>Click <C>Theme</C> in the builder to match your brand. You can set:</P>
+              <H2 id="theming" icon={Palette}>Theming &amp; form styles</H2>
+              <P>Choose a visual style right when you create a form — or click <C>Theme</C> anytime in the builder to customize every detail with a live preview:</P>
               <Bullets items={[
-                <>Primary, background, and text <strong className="text-gray-900 dark:text-white">colours</strong>, plus the <strong className="text-gray-900 dark:text-white">font</strong>.</>,
-                <>A <strong className="text-gray-900 dark:text-white">logo</strong> shown above the form and a full-page <strong className="text-gray-900 dark:text-white">background image</strong>.</>,
+                <><strong className="text-gray-900 dark:text-white">8 style presets</strong> — Modern Clean, Clinical Paper (ideal for multi-section medical &amp; intake forms), Elevated Card, Editorial Serif, Midnight Studio, Ocean Glass, Botanical, and High Contrast.</>,
+                <><strong className="text-gray-900 dark:text-white">Page surface &amp; header banner</strong> — switch between Clean open canvas, Elevated Card, Structured Paper sheet, or frosted Glass, with Minimal, Accent bar, or full-width Hero headers.</>,
+                <><strong className="text-gray-900 dark:text-white">Field inputs, spacing &amp; corners</strong> — pick Outlined, Filled, or Underline inputs; Compact, Comfortable, or Spacious density; Sharp to Large corners; plus Solid, Soft glow, Dot grid, or Fine grid backgrounds.</>,
+                <><strong className="text-gray-900 dark:text-white">Colors, typography &amp; branding</strong> — custom accent, page, card, and text colors, crisp font stacks (DM Sans, Plus Jakarta Sans, System Sans, Georgia serif, Monospace), plus a logo and background image.</>,
               ]} />
-              <P>To change the layout, open <C>Settings → Presentation → Presentation mode</C>. Choose <strong>Focused</strong> for one question at a time, <strong>Classic</strong> for all questions on one page, or <strong>Both</strong> to let the respondent switch.</P>
+              <P>To change how questions step through the form, open <C>Settings → Presentation → Presentation mode</C>. Choose <strong>Focused</strong> for one question at a time, <strong>Classic</strong> for all questions / multi-section view, or <strong>Both</strong> to let the respondent switch.</P>
 
             </section>
 

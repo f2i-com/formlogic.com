@@ -200,6 +200,16 @@
     letter-spacing: -0.01em;
   }
 
+  /* Inside a user-themed form (Editorial Serif, Monospace, etc.), headings inherit the form's chosen font. */
+  .fl-themed-form h1,
+  .fl-themed-form h2,
+  .fl-themed-form h3,
+  .fl-themed-form h4,
+  .fl-themed-form h5,
+  .fl-themed-form h6 {
+    font-family: inherit;
+  }
+
   /* Light mode: subtle accent-tinted atmosphere (parity with the dark canvas) */
   :root:not(.dark) body {
     background:

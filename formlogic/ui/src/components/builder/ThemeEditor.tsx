@@ -1,18 +1,32 @@
 import { useState, useRef, useEffect } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { X, RotateCcw, Upload, Image, Trash2 } from 'lucide-react';
+import { X, RotateCcw, Upload, Image, Trash2, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { DIALOG_CLOSE, DIALOG_DESCRIPTION, DIALOG_FOOTER, DIALOG_HEADER, DIALOG_OVERLAY, DIALOG_PANEL, DIALOG_TITLE, GROUP_TITLE } from './builderDialog';
 import { toast } from '../../stores/toastStore';
 import { cn } from '../../lib/utils';
-import { readableForegroundColor } from '../../lib/color';
 import { shrinkImageToDataUrl } from '../../lib/shrinkImage';
+import {
+  FORM_DENSITY_OPTIONS,
+  FORM_FONT_OPTIONS,
+  FORM_HEADER_OPTIONS,
+  FORM_INPUT_OPTIONS,
+  FORM_PATTERN_OPTIONS,
+  FORM_STYLE_PRESETS,
+  FORM_SURFACE_OPTIONS,
+  getFormThemeTokens,
+  resolveFormFontStack,
+  type FormStylePreset,
+} from '../../lib/formThemeStyles';
 import type { FormTheme } from '../../types/form';
 
 interface ThemeEditorProps {
   isOpen: boolean;
   onClose: () => void;
   theme: FormTheme;
+  /** Optional live form title & section labels so the Theme Live Preview mirrors the designer's actual form. */
+  formTitle?: string;
+  sectionTitles?: string[];
   /** Resolves false when the theme did not reach the server (the store says why). */
   onSave: (theme: FormTheme) => Promise<boolean>;
 }
@@ -29,135 +43,29 @@ const THEME_IMAGE_LIMITS: Record<ThemeImage, { maxPx: number; maxChars: number }
 };
 const THEME_MAX_CHARS = 250 * 1024;
 
-interface ThemePreset {
-  id: string;
-  name: string;
-  theme: FormTheme;
-  preview: {
-    primary: string;
-    background: string;
-    accent: string;
-  };
-}
-
-const THEME_PRESETS: ThemePreset[] = [
-  {
-    id: 'default',
-    name: 'Default',
-    theme: {
-      primaryColor: '#4f46e5',
-      backgroundColor: '#ffffff',
-      textColor: '#1f2937',
-      fontFamily: 'DM Sans',
-      borderRadius: 'medium',
-    },
-    preview: {
-      primary: '#6366f1',
-      background: '#ffffff',
-      accent: '#e0e7ff',
-    },
-  },
-  {
-    id: 'dark',
-    name: 'Dark',
-    theme: {
-      primaryColor: '#7c3aed',
-      backgroundColor: '#1f2937',
-      textColor: '#f9fafb',
-      fontFamily: 'DM Sans',
-      borderRadius: 'medium',
-    },
-    preview: {
-      primary: '#8b5cf6',
-      background: '#1f2937',
-      accent: '#374151',
-    },
-  },
-  {
-    id: 'ocean',
-    name: 'Ocean',
-    theme: {
-      primaryColor: '#0ea5e9',
-      backgroundColor: '#f0f9ff',
-      textColor: '#0c4a6e',
-      fontFamily: 'DM Sans',
-      borderRadius: 'large',
-    },
-    preview: {
-      primary: '#0ea5e9',
-      background: '#f0f9ff',
-      accent: '#bae6fd',
-    },
-  },
-  {
-    id: 'sunset',
-    name: 'Sunset',
-    theme: {
-      primaryColor: '#f97316',
-      backgroundColor: '#fffbeb',
-      textColor: '#78350f',
-      fontFamily: 'DM Sans',
-      borderRadius: 'medium',
-    },
-    preview: {
-      primary: '#f97316',
-      background: '#fffbeb',
-      accent: '#fed7aa',
-    },
-  },
-  {
-    id: 'forest',
-    name: 'Forest',
-    theme: {
-      primaryColor: '#22c55e',
-      backgroundColor: '#f0fdf4',
-      textColor: '#14532d',
-      fontFamily: 'DM Sans',
-      borderRadius: 'medium',
-    },
-    preview: {
-      primary: '#22c55e',
-      background: '#f0fdf4',
-      accent: '#bbf7d0',
-    },
-  },
-  {
-    id: 'rose',
-    name: 'Rose',
-    theme: {
-      primaryColor: '#f43f5e',
-      backgroundColor: '#fff1f2',
-      textColor: '#881337',
-      fontFamily: 'DM Sans',
-      borderRadius: 'large',
-    },
-    preview: {
-      primary: '#f43f5e',
-      background: '#fff1f2',
-      accent: '#fecdd3',
-    },
-  },
-];
-
-// Only fonts that are actually loaded (DM Sans / Plus Jakarta Sans via
-// index.html) or universally web-safe — anything else silently falls back.
-const FONT_OPTIONS = [
-  { value: 'DM Sans', label: 'DM Sans' },
-  { value: 'Plus Jakarta Sans', label: 'Plus Jakarta Sans' },
-  { value: 'system-ui', label: 'System default' },
-  { value: 'Georgia', label: 'Georgia (serif)' },
-  { value: 'monospace', label: 'Monospace' },
-];
-
 const BORDER_RADIUS_OPTIONS = [
-  { value: 'none', label: 'None', class: 'rounded-none' },
-  { value: 'small', label: 'Small', class: 'rounded' },
+  { value: 'none', label: 'Sharp', class: 'rounded-none' },
+  { value: 'small', label: 'Small', class: 'rounded-md' },
   { value: 'medium', label: 'Medium', class: 'rounded-lg' },
   { value: 'large', label: 'Large', class: 'rounded-xl' },
 ] as const;
 
-export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps) {
-  const [editedTheme, setEditedTheme] = useState<FormTheme>(theme);
+function normalizeDraftTheme(theme: FormTheme): FormTheme {
+  const font = !theme.fontFamily || theme.fontFamily === 'Inter' ? 'DM Sans' : theme.fontFamily;
+  return {
+    ...theme,
+    fontFamily: font,
+    borderRadius: theme.borderRadius || 'medium',
+    surfaceStyle: theme.surfaceStyle || 'clean',
+    inputStyle: theme.inputStyle || 'outlined',
+    headerStyle: theme.headerStyle || 'minimal',
+    density: theme.density || 'comfortable',
+    backgroundPattern: theme.backgroundPattern || 'none',
+  };
+}
+
+export function ThemeEditor({ isOpen, onClose, theme, formTitle, sectionTitles = [], onSave }: ThemeEditorProps) {
+  const [editedTheme, setEditedTheme] = useState<FormTheme>(() => normalizeDraftTheme(theme));
   const [activePreset, setActivePreset] = useState<string | null>(null);
   // Why the last picked image was not taken, shown beside its upload control.
   const [imageErrors, setImageErrors] = useState<Partial<Record<ThemeImage, string>>>({});
@@ -172,7 +80,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
   useEffect(() => {
     if (isOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- prop->draft re-sync: reset edited theme when modal opens or theme prop changes underneath
-      setEditedTheme(theme);
+      setEditedTheme(normalizeDraftTheme(theme));
       setActivePreset(null);
       setImageErrors({});
       setSaveError(null);
@@ -200,25 +108,32 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     setActivePreset(null); // Clear active preset when manually changing
   };
 
-  const applyPreset = (preset: ThemePreset) => {
-    setEditedTheme({ ...preset.theme, logo: editedTheme.logo, backgroundImage: editedTheme.backgroundImage });
+  const applyPreset = (preset: FormStylePreset) => {
+    setEditedTheme({
+      ...preset.theme,
+      logo: editedTheme.logo,
+      backgroundImage: editedTheme.backgroundImage,
+    });
     setActivePreset(preset.id);
   };
 
   const handleReset = () => {
-    const defaultPreset = THEME_PRESETS.find((p) => p.id === 'default');
-    if (defaultPreset) {
-      setEditedTheme({ ...defaultPreset.theme, logo: editedTheme.logo, backgroundImage: editedTheme.backgroundImage });
-      setActivePreset('default');
-    }
+    const defaultPreset = FORM_STYLE_PRESETS[0];
+    setEditedTheme({
+      ...defaultPreset.theme,
+      logo: editedTheme.logo,
+      backgroundImage: editedTheme.backgroundImage,
+    });
+    setActivePreset(defaultPreset.id);
   };
 
   const handleSave = async () => {
     // Validate color values before saving
-    const colorKeys = ['primaryColor', 'backgroundColor', 'textColor'] as const;
+    const colorKeys = ['primaryColor', 'backgroundColor', 'textColor', 'cardColor'] as const;
     for (const key of colorKeys) {
-      if (editedTheme[key] && !isValidColor(editedTheme[key])) {
-        toast.error('Invalid color', `${key} must be a valid hex color (e.g., #6366f1)`);
+      const val = editedTheme[key];
+      if (val && !isValidColor(val)) {
+        toast.error('Invalid color', `${key} must be a valid hex color (e.g., #4f46e5)`);
         return;
       }
     }
@@ -238,7 +153,7 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
       setSaveError('The theme was not saved. Try again, or check your connection.');
       return;
     }
-    toast.success('Theme saved', 'Your theme changes have been applied');
+    toast.success('Theme saved', 'Your form style changes have been applied');
     onClose();
   };
 
@@ -290,6 +205,11 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
     <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">{imageErrors[type]}</p>
   );
 
+  const tokens = getFormThemeTokens(editedTheme);
+  const surfaceShowsCardColor = tokens.surfaceStyle !== 'clean';
+  const safeColorPicker = (val: string | undefined, fallback: string) =>
+    val && /^#[A-Fa-f0-9]{6}$/.test(val) ? val : fallback;
+
   return (
     <div className={DIALOG_OVERLAY}>
       <div className="absolute inset-0" onClick={onClose} aria-hidden="true" />
@@ -297,8 +217,8 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
         {/* Header */}
         <div className={DIALOG_HEADER}>
           <div className="min-w-0 flex-1 pr-2">
-            <h2 id="theme-editor-title" className={DIALOG_TITLE}>Theme</h2>
-            <p className={DIALOG_DESCRIPTION}>The colors, type and pictures of the form people fill in.</p>
+            <h2 id="theme-editor-title" className={DIALOG_TITLE}>Form style &amp; theme</h2>
+            <p className={DIALOG_DESCRIPTION}>Pick a style preset or customize layout, inputs, headers, typography, colors, and branding.</p>
           </div>
           <button
             type="button"
@@ -311,341 +231,607 @@ export function ThemeEditor({ isOpen, onClose, theme, onSave }: ThemeEditorProps
           </button>
         </div>
 
-        {/* Content. With room, the settings scroll at the left and the preview stays in sight at
-            the right: at one column the preview was under everything, and a color was changed
-            without seeing what it did. On a narrow screen it follows the settings as before. */}
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:grid lg:grid-cols-[minmax(0,1fr)_24rem] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
-         <div className="space-y-6 p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
-          {/* Presets */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Presets</h3>
-            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3">
-              {THEME_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  aria-pressed={activePreset === preset.id}
-                  className={cn(
-                    'relative p-2 rounded-xl border transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
-                    activePreset === preset.id
-                      ? 'border-primary-500 ring-1 ring-primary-500'
-                      : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
-                  )}
-                >
-                  <div
-                    className="h-12 rounded-md mb-2 relative overflow-hidden"
-                    style={{ backgroundColor: preset.preview.background }}
-                  >
-                    <div
-                      className="absolute bottom-0 left-0 right-0 h-4"
-                      style={{ backgroundColor: preset.preview.accent }}
-                    />
-                    <div
-                      className="absolute top-2 left-2 w-4 h-4 rounded-full"
-                      style={{ backgroundColor: preset.preview.primary }}
-                    />
-                  </div>
-                  <span className="text-xs font-medium text-gray-700 dark:text-slate-300">{preset.name}</span>
-                </button>
-              ))}
+        {/* Two-column layout: scrollable controls on left, live sticky preview on right */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:grid lg:grid-cols-[minmax(0,1fr)_25rem] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
+          <div className="space-y-6 p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+            {/* Style Presets */}
+            <div>
+              <h3 className={cn(GROUP_TITLE, 'mb-3')}>Style presets</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {FORM_STYLE_PRESETS.map((preset) => {
+                  const isSelected = activePreset === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      aria-pressed={isSelected}
+                      className={cn(
+                        'relative p-2 rounded-xl border text-left transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                        isSelected
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50/50 dark:bg-primary-500/10'
+                          : 'border-gray-200 dark:border-slate-700 hover:border-gray-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      <div
+                        className="h-14 rounded-lg mb-2 p-1.5 relative overflow-hidden border border-black/10"
+                        style={{ backgroundColor: preset.preview.canvas }}
+                      >
+                        <div
+                          className={cn(
+                            'h-full w-full overflow-hidden border',
+                            preset.theme.borderRadius === 'none' ? 'rounded-none' : preset.theme.borderRadius === 'small' ? 'rounded-xs' : 'rounded-md',
+                          )}
+                          style={{
+                            backgroundColor: preset.preview.surface,
+                            borderColor: preset.preview.isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.12)',
+                          }}
+                        >
+                          {preset.theme.headerStyle === 'hero' ? (
+                            <div className="h-3.5 w-full" style={{ backgroundColor: preset.preview.primary }} />
+                          ) : preset.theme.headerStyle === 'accent_bar' ? (
+                            <div className="h-1.5 w-full" style={{ backgroundColor: preset.preview.primary }} />
+                          ) : null}
+                          <div className="p-1.5 space-y-1">
+                            <div className="h-1.5 w-10 rounded-full opacity-75" style={{ backgroundColor: preset.preview.text }} />
+                            <div
+                              className={cn(
+                                'h-2.5 w-full',
+                                preset.theme.inputStyle === 'underline' ? 'border-b-2' : 'rounded-xs border',
+                              )}
+                              style={{
+                                borderColor: preset.preview.primary,
+                                backgroundColor: preset.theme.inputStyle === 'filled' ? preset.preview.accent : 'transparent',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate text-xs font-semibold text-gray-800 dark:text-slate-200">{preset.name}</span>
+                        {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-primary-600 dark:text-primary-400" />}
+                      </div>
+                      <span className="block truncate text-[10px] text-gray-500 dark:text-slate-400 mt-0.5">
+                        {preset.tagline}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
 
-          {/* Colors */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Colors</h3>
+            {/* Layout & Structure */}
             <div className="space-y-4">
-              {/* Primary Color */}
+              <h3 className={cn(GROUP_TITLE, 'mb-1')}>Layout &amp; structure</h3>
+
+              {/* Surface Style */}
               <div>
-                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Primary color</label>
-                <div className="flex gap-3">
-                  <div className="flex-1 relative">
+                <p id="theme-surface" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Page surface</p>
+                <div role="group" aria-labelledby="theme-surface" className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {FORM_SURFACE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => updateTheme({ surfaceStyle: opt.value })}
+                      aria-pressed={tokens.surfaceStyle === opt.value}
+                      className={cn(
+                        'p-2.5 rounded-xl border text-left transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                        tokens.surfaceStyle === opt.value
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                          : 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      <span className="block text-xs font-semibold">{opt.label}</span>
+                      <span className="block text-[11px] opacity-70">{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Input Style */}
+              <div>
+                <p id="theme-inputs" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Field inputs</p>
+                <div role="group" aria-labelledby="theme-inputs" className="grid grid-cols-3 gap-2">
+                  {FORM_INPUT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => updateTheme({ inputStyle: opt.value })}
+                      aria-pressed={tokens.inputStyle === opt.value}
+                      className={cn(
+                        'p-2.5 rounded-xl border text-left transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                        tokens.inputStyle === opt.value
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                          : 'border-gray-200 dark:border-slate-700 text-gray-700 dark:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      <span className="block text-xs font-semibold">{opt.label}</span>
+                      <span className="block text-[11px] opacity-70">{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Header Style + Density side-by-side */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <p id="theme-header" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Header banner</p>
+                  <div role="group" aria-labelledby="theme-header" className="flex gap-1.5">
+                    {FORM_HEADER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => updateTheme({ headerStyle: opt.value })}
+                        aria-pressed={tokens.headerStyle === opt.value}
+                        className={cn(
+                          'flex-1 py-2 px-2 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                          tokens.headerStyle === opt.value
+                            ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                            : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p id="theme-density" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Spacing density</p>
+                  <div role="group" aria-labelledby="theme-density" className="flex gap-1.5">
+                    {FORM_DENSITY_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => updateTheme({ density: opt.value })}
+                        aria-pressed={tokens.density === opt.value}
+                        className={cn(
+                          'flex-1 py-2 px-2 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                          tokens.density === opt.value
+                            ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                            : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Background Texture */}
+              <div>
+                <p id="theme-pattern" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Background texture</p>
+                <div role="group" aria-labelledby="theme-pattern" className="grid grid-cols-4 gap-2">
+                  {FORM_PATTERN_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => updateTheme({ backgroundPattern: opt.value })}
+                      aria-pressed={tokens.backgroundPattern === opt.value}
+                      className={cn(
+                        'py-2 px-2 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500',
+                        tokens.backgroundPattern === opt.value
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-300'
+                          : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Colors */}
+            <div>
+              <h3 className={cn(GROUP_TITLE, 'mb-3')}>Colors</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Primary Color */}
+                <div>
+                  <label className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Primary accent</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={editedTheme.primaryColor}
+                        onChange={(e) => updateTheme({ primaryColor: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-10 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="#4f46e5"
+                      />
+                      <div
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-gray-300 dark:border-slate-700"
+                        style={{ backgroundColor: editedTheme.primaryColor }}
+                      />
+                    </div>
                     <input
-                      type="text"
-                      value={editedTheme.primaryColor}
+                      type="color"
+                      aria-label="Primary color picker"
+                      value={safeColorPicker(editedTheme.primaryColor, '#4f46e5')}
                       onChange={(e) => updateTheme({ primaryColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      placeholder="#6366f1"
-                    />
-                    <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
-                      style={{ backgroundColor: editedTheme.primaryColor }}
+                      className="w-11 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
                     />
                   </div>
-                  <input
-                    type="color"
-                    aria-label="Primary color picker"
-                    value={editedTheme.primaryColor}
-                    onChange={(e) => updateTheme({ primaryColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
-                  />
                 </div>
-              </div>
 
-              {/* Background Color */}
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Background color</label>
-                <div className="flex gap-3">
-                  <div className="flex-1 relative">
+                {/* Page Background Color */}
+                <div>
+                  <label className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Page background</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={editedTheme.backgroundColor}
+                        onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-10 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="#ffffff"
+                      />
+                      <div
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-gray-300 dark:border-slate-700"
+                        style={{ backgroundColor: editedTheme.backgroundColor }}
+                      />
+                    </div>
                     <input
-                      type="text"
-                      value={editedTheme.backgroundColor}
+                      type="color"
+                      aria-label="Background color picker"
+                      value={safeColorPicker(editedTheme.backgroundColor, '#ffffff')}
                       onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      placeholder="#ffffff"
-                    />
-                    <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
-                      style={{ backgroundColor: editedTheme.backgroundColor }}
+                      className="w-11 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
                     />
                   </div>
-                  <input
-                    type="color"
-                    aria-label="Background color picker"
-                    value={editedTheme.backgroundColor}
-                    onChange={(e) => updateTheme({ backgroundColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
-                  />
                 </div>
-              </div>
 
-              {/* Text Color */}
-              <div>
-                <label className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Text color</label>
-                <div className="flex gap-3">
-                  <div className="flex-1 relative">
-                    <input
-                      type="text"
-                      value={editedTheme.textColor}
-                      onChange={(e) => updateTheme({ textColor: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-12 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                      placeholder="#1f2937"
-                    />
-                    <div
-                      className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded border border-gray-300 dark:border-slate-700"
-                      style={{ backgroundColor: editedTheme.textColor }}
-                    />
+                {/* Card / Sheet Color (when using Card, Paper, or Glass surface) */}
+                {surfaceShowsCardColor && (
+                  <div>
+                    <label className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Card / sheet color</label>
+                    <div className="flex gap-2">
+                      <div className="flex-1 relative">
+                        <input
+                          type="text"
+                          value={editedTheme.cardColor || tokens.surfaceBgColor}
+                          onChange={(e) => updateTheme({ cardColor: e.target.value })}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-10 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                          placeholder="#ffffff"
+                        />
+                        <div
+                          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-gray-300 dark:border-slate-700"
+                          style={{ backgroundColor: editedTheme.cardColor || tokens.surfaceBgColor }}
+                        />
+                      </div>
+                      <input
+                        type="color"
+                        aria-label="Card color picker"
+                        value={safeColorPicker(editedTheme.cardColor || tokens.surfaceBgColor, '#ffffff')}
+                        onChange={(e) => updateTheme({ cardColor: e.target.value })}
+                        className="w-11 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
+                      />
+                    </div>
                   </div>
-                  <input
-                    type="color"
-                    aria-label="Text color picker"
-                    value={editedTheme.textColor}
-                    onChange={(e) => updateTheme({ textColor: e.target.value })}
-                    className="w-12 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Typography */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Type</h3>
-            <div>
-              <label htmlFor="theme-font" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Font</label>
-              <select
-                id="theme-font"
-                value={editedTheme.fontFamily}
-                onChange={(e) => updateTheme({ fontFamily: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11"
-                style={{ fontFamily: editedTheme.fontFamily }}
-              >
-                {FONT_OPTIONS.map((font) => (
-                  <option key={font.value} value={font.value} style={{ fontFamily: font.value }}>
-                    {font.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Appearance */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Shape</h3>
-            <div>
-              <p id="theme-corners" className="block text-sm text-gray-600 dark:text-slate-400 mb-2">Corners</p>
-              <div role="group" aria-labelledby="theme-corners" className="flex gap-2 sm:gap-3">
-                {BORDER_RADIUS_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => updateTheme({ borderRadius: option.value })}
-                    aria-pressed={editedTheme.borderRadius === option.value}
-                    className={cn(
-                      'flex-1 py-2 px-2 border transition-colors text-sm cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11',
-                      option.class,
-                      editedTheme.borderRadius === option.value
-                        ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400'
-                        : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
-                    )}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Background Image */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Background image</h3>
-            {editedTheme.backgroundImage ? (
-              <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
-                <img
-                  src={editedTheme.backgroundImage}
-                  alt="Background"
-                  className="w-full h-32 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeImage('backgroundImage')}
-                  className="absolute top-2 right-2 inline-flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 max-sm:min-h-11 max-sm:min-w-11"
-                  aria-label="Remove background image"
-                  title="Remove background image"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => bgInputRef.current?.click()}
-                className="w-full px-4 py-3 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              >
-                <Image className="h-6 w-6 flex-none text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
-                <span className="min-w-0">
-                  <span className="block text-sm text-gray-600 dark:text-slate-300">Upload a background image</span>
-                  <span className="block text-xs text-gray-500 dark:text-slate-400">PNG, JPG up to 20MB, made smaller to fit</span>
-                </span>
-              </button>
-            )}
-            <input
-              ref={bgInputRef}
-              type="file"
-              accept="image/*"
-              aria-label="Background image file"
-              onChange={(e) => void handleImageUpload(e, 'backgroundImage')}
-              className="hidden"
-            />
-            {imageError('backgroundImage')}
-          </div>
-
-          {/* Logo */}
-          <div>
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Logo</h3>
-            {editedTheme.logo ? (
-              <div className="relative inline-block">
-                <div className="p-4 bg-gray-100 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
-                  <img
-                    src={editedTheme.logo}
-                    alt="Logo"
-                    className="h-16 max-w-[200px] object-contain"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => removeImage('logo')}
-                  className="absolute -top-2 -right-2 inline-flex items-center justify-center p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 max-sm:-right-3 max-sm:-top-3 max-sm:min-h-11 max-sm:min-w-11"
-                  aria-label="Remove logo"
-                  title="Remove logo"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => logoInputRef.current?.click()}
-                className="w-full px-4 py-3 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
-              >
-                <Upload className="h-6 w-6 flex-none text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
-                <span className="min-w-0">
-                  <span className="block text-sm text-gray-600 dark:text-slate-300">Upload a logo</span>
-                  <span className="block text-xs text-gray-500 dark:text-slate-400">PNG, JPG up to 20MB, made smaller to fit</span>
-                </span>
-              </button>
-            )}
-            <input
-              ref={logoInputRef}
-              type="file"
-              accept="image/*"
-              aria-label="Logo file"
-              onChange={(e) => void handleImageUpload(e, 'logo')}
-              className="hidden"
-            />
-            {imageError('logo')}
-          </div>
-         </div>
-
-          {/* Preview */}
-          <div className="border-t border-gray-200 bg-gray-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
-            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Preview</h3>
-            <div
-              className="p-6 rounded-xl border border-gray-200 dark:border-slate-700 relative overflow-hidden"
-              style={{
-                backgroundColor: editedTheme.backgroundColor,
-                fontFamily: editedTheme.fontFamily,
-                backgroundImage: editedTheme.backgroundImage
-                  ? `url(${editedTheme.backgroundImage})`
-                  : undefined,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-              }}
-            >
-              {editedTheme.backgroundImage && (
-                <div
-                  className="absolute inset-0 bg-black/20"
-                  style={{ backgroundColor: `color-mix(in srgb, ${editedTheme.backgroundColor} 80%, transparent)` }}
-                />
-              )}
-              <div className="relative">
-                {editedTheme.logo && (
-                  <img
-                    src={editedTheme.logo}
-                    alt="Logo preview"
-                    className="h-8 mb-4 object-contain"
-                  />
                 )}
-                <h4
-                  className="text-lg font-semibold mb-2"
-                  style={{ color: editedTheme.textColor }}
+
+                {/* Text Color */}
+                <div>
+                  <label className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Text color</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={editedTheme.textColor}
+                        onChange={(e) => updateTheme({ textColor: e.target.value })}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg pl-10 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        placeholder="#1f2937"
+                      />
+                      <div
+                        className="absolute left-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded border border-gray-300 dark:border-slate-700"
+                        style={{ backgroundColor: editedTheme.textColor }}
+                      />
+                    </div>
+                    <input
+                      type="color"
+                      aria-label="Text color picker"
+                      value={safeColorPicker(editedTheme.textColor, '#1f2937')}
+                      onChange={(e) => updateTheme({ textColor: e.target.value })}
+                      className="w-11 h-10 rounded-lg cursor-pointer border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 p-1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Typography & Corners */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <h3 className={cn(GROUP_TITLE, 'mb-2')}>Type</h3>
+                <label htmlFor="theme-font" className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Font family</label>
+                <select
+                  id="theme-font"
+                  value={editedTheme.fontFamily}
+                  onChange={(e) => updateTheme({ fontFamily: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-gray-900 dark:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 max-sm:min-h-11"
+                  style={{ fontFamily: resolveFormFontStack(editedTheme.fontFamily) }}
                 >
-                  Sample question
-                </h4>
-                <p className="text-sm mb-4" style={{ color: editedTheme.textColor, opacity: 0.7 }}>
-                  What is your email address?
-                </p>
-                <input
-                  type="text"
-                  placeholder="your@email.com"
-                  disabled
-                  className={cn(
-                    'w-full px-4 py-2 border-2 mb-4',
-                    editedTheme.borderRadius === 'none' && 'rounded-none',
-                    editedTheme.borderRadius === 'small' && 'rounded',
-                    editedTheme.borderRadius === 'medium' && 'rounded-lg',
-                    editedTheme.borderRadius === 'large' && 'rounded-xl'
-                  )}
+                  {FORM_FONT_OPTIONS.map((font) => (
+                    <option key={font.value} value={font.value} style={{ fontFamily: resolveFormFontStack(font.value) }}>
+                      {font.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <h3 className={cn(GROUP_TITLE, 'mb-2')}>Shape</h3>
+                <p id="theme-corners" className="block text-sm text-gray-600 dark:text-slate-400 mb-1.5">Corners</p>
+                <div role="group" aria-labelledby="theme-corners" className="flex gap-1.5">
+                  {BORDER_RADIUS_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => updateTheme({ borderRadius: option.value })}
+                      aria-pressed={editedTheme.borderRadius === option.value}
+                      className={cn(
+                        'flex-1 py-2 px-2 border transition-colors text-xs font-medium cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 max-sm:min-h-11',
+                        option.class,
+                        editedTheme.borderRadius === option.value
+                          ? 'border-primary-500 ring-1 ring-primary-500 bg-primary-50 dark:bg-primary-500/10 text-primary-700 dark:text-primary-400'
+                          : 'border-gray-200 dark:border-slate-700 text-gray-600 dark:text-slate-400 hover:border-gray-300 dark:hover:border-slate-600'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Background Image */}
+            <div>
+              <h3 className={cn(GROUP_TITLE, 'mb-3')}>Background image</h3>
+              {editedTheme.backgroundImage ? (
+                <div className="relative rounded-xl overflow-hidden border border-gray-200 dark:border-slate-700">
+                  <img
+                    src={editedTheme.backgroundImage}
+                    alt="Background"
+                    className="w-full h-32 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage('backgroundImage')}
+                    className="absolute top-2 right-2 inline-flex items-center justify-center p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 max-sm:min-h-11 max-sm:min-w-11"
+                    aria-label="Remove background image"
+                    title="Remove background image"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => bgInputRef.current?.click()}
+                  className="w-full px-4 py-3 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                >
+                  <Image className="h-6 w-6 flex-none text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-gray-600 dark:text-slate-300">Upload a background image</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400">PNG, JPG up to 20MB, made smaller to fit</span>
+                  </span>
+                </button>
+              )}
+              <input
+                ref={bgInputRef}
+                type="file"
+                accept="image/*"
+                aria-label="Background image file"
+                onChange={(e) => void handleImageUpload(e, 'backgroundImage')}
+                className="hidden"
+              />
+              {imageError('backgroundImage')}
+            </div>
+
+            {/* Logo */}
+            <div>
+              <h3 className={cn(GROUP_TITLE, 'mb-3')}>Logo</h3>
+              {editedTheme.logo ? (
+                <div className="relative inline-block">
+                  <div className="p-4 bg-gray-100 dark:bg-slate-800 rounded-lg border border-gray-200 dark:border-slate-700">
+                    <img
+                      src={editedTheme.logo}
+                      alt="Logo"
+                      className="h-16 max-w-[200px] object-contain"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeImage('logo')}
+                    className="absolute -top-2 -right-2 inline-flex items-center justify-center p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 max-sm:-right-3 max-sm:-top-3 max-sm:min-h-11 max-sm:min-w-11"
+                    aria-label="Remove logo"
+                    title="Remove logo"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  className="w-full px-4 py-3 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl hover:border-gray-400 dark:hover:border-slate-600 transition-colors flex items-center gap-3 text-left group cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+                >
+                  <Upload className="h-6 w-6 flex-none text-gray-400 dark:text-slate-500 group-hover:text-gray-500 dark:group-hover:text-slate-400" />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-gray-600 dark:text-slate-300">Upload a logo</span>
+                    <span className="block text-xs text-gray-500 dark:text-slate-400">PNG, JPG up to 20MB, made smaller to fit</span>
+                  </span>
+                </button>
+              )}
+              <input
+                ref={logoInputRef}
+                type="file"
+                accept="image/*"
+                aria-label="Logo file"
+                onChange={(e) => void handleImageUpload(e, 'logo')}
+                className="hidden"
+              />
+              {imageError('logo')}
+            </div>
+          </div>
+
+          {/* Live Preview */}
+          <div className="border-t border-gray-200 bg-gray-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+            <h3 className={cn(GROUP_TITLE, 'mb-3')}>Live preview</h3>
+            <div
+              className="fl-themed-form rounded-xl border border-gray-200 dark:border-slate-700 relative overflow-hidden p-4"
+              style={tokens.pageStyle}
+            >
+              {tokens.hasBackgroundImage && (
+                <div
+                  className="absolute inset-0"
                   style={{
-                    borderColor: editedTheme.primaryColor,
-                    backgroundColor: editedTheme.backgroundColor,
-                    color: editedTheme.textColor,
+                    backgroundColor: tokens.isPageDark ? 'rgba(15,23,42,0.45)' : 'rgba(255,255,255,0.45)',
                   }}
                 />
-                <button
-                  disabled
+              )}
+
+              <div
+                className={cn(
+                  'relative overflow-hidden',
+                  tokens.surfaceStyle === 'clean' && !tokens.hasBackgroundImage ? 'p-1' : tokens.sheetClass,
+                  tokens.surfaceStyle !== 'clean' && 'p-0',
+                )}
+                style={tokens.surfaceStyle === 'clean' && !tokens.hasBackgroundImage ? { color: tokens.surfaceTextColor } : { ...tokens.sheetStyle, padding: 0 }}
+              >
+                {/* Header preview */}
+                {tokens.headerStyle === 'accent_bar' && (
+                  <div className="h-2 w-full" style={{ backgroundColor: editedTheme.primaryColor }} />
+                )}
+                <div
                   className={cn(
-                    'px-6 py-2 font-medium',
-                    editedTheme.borderRadius === 'none' && 'rounded-none',
-                    editedTheme.borderRadius === 'small' && 'rounded',
-                    editedTheme.borderRadius === 'medium' && 'rounded-lg',
-                    editedTheme.borderRadius === 'large' && 'rounded-xl'
+                    tokens.headerStyle === 'hero'
+                      ? 'px-4 py-4'
+                      : tokens.surfaceStyle === 'clean' && !tokens.hasBackgroundImage
+                        ? 'pb-3'
+                        : 'px-4 pt-4 pb-3 border-b',
                   )}
-                  style={{ backgroundColor: editedTheme.primaryColor, color: readableForegroundColor(editedTheme.primaryColor) }}
+                  style={
+                    tokens.headerStyle === 'hero'
+                      ? { backgroundColor: editedTheme.primaryColor, color: tokens.onPrimaryColor }
+                      : { borderColor: `${tokens.surfaceTextColor}14` }
+                  }
                 >
-                  Continue
-                </button>
+                  {editedTheme.logo && (
+                    <img
+                      src={editedTheme.logo}
+                      alt="Logo preview"
+                      className="h-7 mb-2 object-contain"
+                    />
+                  )}
+                  <h4 className="text-base font-bold tracking-tight truncate">{formTitle?.trim() || 'Patient Intake'}</h4>
+                  <p className="text-xs opacity-75 mt-0.5 truncate">
+                    {sectionTitles.length > 0
+                      ? `Section 1 of ${sectionTitles.length} · ${sectionTitles[0]}`
+                      : 'Section 1 · Patient Identification'}
+                  </p>
+                </div>
+
+                {/* Mini Section Outline strip when the form has sections */}
+                {sectionTitles.length > 1 && (
+                  <div
+                    className={cn(
+                      'flex flex-wrap gap-1 border-b px-4 py-2',
+                      tokens.surfaceStyle === 'clean' && !tokens.hasBackgroundImage && 'px-0',
+                    )}
+                    style={{ borderColor: `${tokens.surfaceTextColor}14` }}
+                  >
+                    {sectionTitles.slice(0, 3).map((secTitle, idx) => (
+                      <span
+                        key={`${secTitle}-${idx}`}
+                        className={cn('inline-flex items-center px-2 py-0.5 text-[10px] font-medium max-w-[115px] truncate', tokens.controlRadiusClass)}
+                        style={
+                          idx === 0
+                            ? { backgroundColor: `${editedTheme.primaryColor}1c`, color: editedTheme.primaryColor }
+                            : { backgroundColor: `${tokens.surfaceTextColor}0d`, color: tokens.surfaceTextColor, opacity: 0.72 }
+                        }
+                      >
+                        {idx + 1}. {secTitle}
+                      </span>
+                    ))}
+                    {sectionTitles.length > 3 && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] opacity-60" style={{ color: tokens.surfaceTextColor }}>
+                        +{sectionTitles.length - 3} more
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Body preview */}
+                <div
+                  className={cn(
+                    tokens.surfaceStyle === 'clean' && !tokens.hasBackgroundImage ? 'pt-3' : 'p-4',
+                    tokens.density === 'compact' ? 'space-y-3' : tokens.density === 'spacious' ? 'space-y-5' : 'space-y-4',
+                  )}
+                >
+                  <div>
+                    <p className="text-sm font-semibold mb-1.5" style={{ color: tokens.surfaceTextColor }}>
+                      Full Legal Name <span className="text-red-500">*</span>
+                    </p>
+                    <input
+                      type="text"
+                      placeholder="Elena Rostova"
+                      readOnly
+                      tabIndex={-1}
+                      className={cn(tokens.inputClass, 'text-sm! py-2!')}
+                      style={{
+                        ...tokens.inputStyleObj,
+                        borderColor: tokens.inputStyle === 'filled' ? 'transparent' : editedTheme.primaryColor,
+                      }}
+                    />
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold mb-1.5" style={{ color: tokens.surfaceTextColor }}>
+                      Visit Type
+                    </p>
+                    <div className="space-y-1.5">
+                      <div
+                        className={cn('flex items-center gap-2 border-2 px-3 py-2 text-xs font-medium', tokens.controlRadiusClass)}
+                        style={{
+                          borderColor: editedTheme.primaryColor,
+                          backgroundColor: `${editedTheme.primaryColor}14`,
+                          color: tokens.surfaceTextColor,
+                        }}
+                      >
+                        <span
+                          className="h-4 w-4 rounded-full flex items-center justify-center text-[10px]"
+                          style={{ backgroundColor: editedTheme.primaryColor, color: tokens.onPrimaryColor }}
+                        >
+                          ✓
+                        </span>
+                        Outpatient Consultation
+                      </div>
+                      <div
+                        className={cn('flex items-center gap-2 border px-3 py-2 text-xs opacity-75', tokens.controlRadiusClass)}
+                        style={{
+                          borderColor: `${tokens.surfaceTextColor}25`,
+                          color: tokens.surfaceTextColor,
+                        }}
+                      >
+                        <span className="h-4 w-4 rounded-full border border-current/40" />
+                        Scheduled Admission
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled
+                    className={cn('w-full px-4 py-2 text-xs font-semibold', tokens.controlRadiusClass)}
+                    style={{
+                      backgroundColor: editedTheme.primaryColor,
+                      color: tokens.onPrimaryColor,
+                    }}
+                  >
+                    Continue to Section 2 →
+                  </button>
+                </div>
               </div>
             </div>
           </div>

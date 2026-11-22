@@ -128,12 +128,25 @@ export interface FormSettings {
   singleRecord?: boolean;
 }
 
+export type FormSurfaceStyle = 'clean' | 'card' | 'paper' | 'glass';
+export type FormInputStyle = 'underline' | 'outlined' | 'filled';
+export type FormHeaderStyle = 'minimal' | 'accent_bar' | 'hero';
+export type FormDensity = 'compact' | 'comfortable' | 'spacious';
+export type FormBackgroundPattern = 'none' | 'dots' | 'grid' | 'gradient';
+
 export interface FormTheme {
   primaryColor: string;
   backgroundColor: string;
   textColor: string;
+  /** Optional card/sheet background color when surfaceStyle is 'card', 'paper', or 'glass'. */
+  cardColor?: string;
   fontFamily: string;
   borderRadius: 'none' | 'small' | 'medium' | 'large';
+  surfaceStyle?: FormSurfaceStyle;
+  inputStyle?: FormInputStyle;
+  headerStyle?: FormHeaderStyle;
+  density?: FormDensity;
+  backgroundPattern?: FormBackgroundPattern;
   backgroundImage?: string;
   logo?: string;
 }
@@ -283,8 +296,13 @@ export const DEFAULT_FORM_THEME: FormTheme = {
   primaryColor: '#4f46e5',
   backgroundColor: '#ffffff',
   textColor: '#1f2937',
-  fontFamily: 'Inter',
+  fontFamily: 'DM Sans',
   borderRadius: 'medium',
+  surfaceStyle: 'clean',
+  inputStyle: 'outlined',
+  headerStyle: 'minimal',
+  density: 'comfortable',
+  backgroundPattern: 'none',
 };
 
 /**

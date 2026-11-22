@@ -230,8 +230,13 @@ const defaultTheme: FormTheme = {
   primaryColor: '#4f46e5',
   backgroundColor: '#ffffff',
   textColor: '#1f2937',
-  fontFamily: 'Inter',
+  fontFamily: 'DM Sans',
   borderRadius: 'medium',
+  surfaceStyle: 'clean',
+  inputStyle: 'outlined',
+  headerStyle: 'minimal',
+  density: 'comfortable',
+  backgroundPattern: 'none',
 };
 
 // Debounce helper for auto-save. The pending saveFn is kept alongside the timer so

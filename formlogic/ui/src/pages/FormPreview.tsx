@@ -1,10 +1,12 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, Share2, ClipboardCheck } from 'lucide-react';
+import { ArrowLeft, Monitor, Smartphone, ExternalLink, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Share2, ClipboardCheck } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '../components/ui/Button';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { FieldResponse } from './FormResponse';
+import { FormSectionNav } from '../components/forms/FormSectionNav';
+import { groupFieldsIntoSections } from '../lib/formDraft';
 import { SiteChatWidget } from '../components/chat/SiteChatWidget';
 import { useChatDockOffset } from '../components/chat/useChatDockOffset';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
@@ -24,6 +26,7 @@ import { DynamicIcon } from '../components/ui/DynamicIcon';
 import type { FormField } from '../types/form';
 import { publicUnfillableFieldLabels } from '../lib/publicForm';
 import { formPageColors } from '../lib/formPageColors';
+import { getFormThemeTokens } from '../lib/formThemeStyles';
 import { readableForegroundColor } from '../lib/color';
 
 // Main Preview Component
@@ -49,12 +52,32 @@ export default function FormPreview() {
   const chatDockOffset = useChatDockOffset();
 
   const reduceMotion = useReducedMotion();
+  const previewScrollRef = useRef<HTMLDivElement>(null);
   const [currentStep, setCurrentStep] = useState(0);
+  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
+  const [sectionViewMode, setSectionViewMode] = useState<'paged' | 'all'>('paged');
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [sectionModeInitFormId, setSectionModeInitFormId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [showNigo, setShowNigo] = useState(false);
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
   const [loaded, setLoaded] = useState(false);
+
+  const scrollToPreviewSection = useCallback((idx: number) => {
+    requestAnimationFrame(() => {
+      const container = previewScrollRef.current;
+      const el = document.getElementById(`preview-section-block-${idx}`);
+      if (container && el) {
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const targetTop = Math.max(0, container.scrollTop + (elRect.top - containerRect.top) - 20);
+        container.scrollTo({ top: targetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else if (container) {
+        container.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      }
+    });
+  }, [reduceMotion]);
 
   const handleCalculated = useCallback((fId: string, val: unknown) => {
     setCalculatedValues(prev => {
@@ -77,6 +100,9 @@ export default function FormPreview() {
     setAnswers({});
     setCalculatedValues({});
     setCurrentStep(0);
+    setActiveSectionIndex(0);
+    setWelcomeDismissed(false);
+    setSectionModeInitFormId(null);
     setLoaded(false);
   }, [formId]);
 
@@ -115,6 +141,22 @@ export default function FormPreview() {
     });
     return s;
   }, [visibleFields, isFieldRequired]);
+
+  const groupedSections = useMemo(
+    () => groupFieldsIntoSections(visibleFields, answers, (fieldId) => requiredFieldIds.has(fieldId)),
+    [visibleFields, answers, requiredFieldIds],
+  );
+
+  // When opening a multi-section form in Preview, default to Classic mode so designers
+  // immediately see the full section outline & paged sections (still toggleable to Focused).
+  useEffect(() => {
+    if (!form?.id || visibleFields.length === 0 || sectionModeInitFormId === form.id) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot initial mode selection per form load
+    setSectionModeInitFormId(form.id);
+    if (groupedSections.hasExplicitSections && previewMode !== 'classic') {
+      setPreviewMode('classic');
+    }
+  }, [form?.id, visibleFields.length, groupedSections.hasExplicitSections, sectionModeInitFormId, previewMode, setPreviewMode]);
 
   // Clamp currentStep when visible fields shrink (e.g. conditional logic hides fields)
   useEffect(() => {
@@ -229,7 +271,17 @@ export default function FormPreview() {
   // default light ones (formPageColors). The page around it keeps the site's mode; the form keeps
   // its own (fl-light turns the dark variant off within it, `dark` on), so a light form's labels
   // and answers are never drawn in dark mode's light text on its light page.
+  const safeSectionIndex = Math.min(activeSectionIndex, Math.max(0, groupedSections.sections.length - 1));
+  const activeSection = groupedSections.sections[safeSectionIndex];
+  const focusedSection = groupedSections.hasExplicitSections && currentField
+    ? groupedSections.sections.find(
+        (sec) => sec.id === currentField.id || sec.fields.some((f) => f.id === currentField.id),
+      )
+    : undefined;
+
   const page = formPageColors(form.theme, false);
+  const resolvedTheme = { ...form.theme, backgroundColor: page.backgroundColor, textColor: page.textColor };
+  const themeTokens = getFormThemeTokens(resolvedTheme, page.dark);
   // The OK and Submit buttons in the form's accent with words that read on it, as the published
   // page draws them. Left to the button's own text colour they took the site's theme: dark mode's
   // navy on an indigo accent (3:1), and on a navy one hardly there at all.
@@ -359,34 +411,55 @@ export default function FormPreview() {
       />
 
       {/* Preview Area */}
-      <div className="flex-1 flex items-center justify-center p-4 sm:p-8 relative overflow-hidden">
+      <div className="flex-1 flex items-center justify-center p-3 sm:p-5 relative overflow-hidden">
         <div
           className={cn(
-            'rounded-2xl shadow-2xl overflow-hidden transition-all duration-300 bg-cover bg-center',
+            'fl-themed-form relative rounded-2xl shadow-2xl overflow-hidden transition-all duration-300',
             page.dark ? 'dark' : 'fl-light',
-            previewDevice === 'mobile' ? 'w-full max-w-[375px] h-[667px] max-h-[calc(100vh-8rem)]' : 'w-full max-w-4xl h-[600px] max-h-[calc(100vh-8rem)]'
+            previewDevice === 'mobile'
+              ? 'w-full max-w-[390px] h-[720px] max-h-[calc(100vh-7rem)]'
+              : groupedSections.hasExplicitSections && previewMode === 'classic'
+                ? 'w-full max-w-6xl h-[calc(100vh-7rem)] min-h-[580px]'
+                : 'w-full max-w-5xl h-[calc(100vh-7rem)] min-h-[580px]'
           )}
-          style={{
-            backgroundColor: page.backgroundColor,
-            backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
-            color: page.textColor,
-            fontFamily: form.theme.fontFamily,
-          }}
+          style={themeTokens.pageStyle}
         >
+          {themeTokens.hasBackgroundImage && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 z-0"
+              style={{
+                backgroundColor: themeTokens.isPageDark ? 'rgba(15, 23, 42, 0.35)' : 'rgba(255, 255, 255, 0.35)',
+              }}
+            />
+          )}
           {visibleFields.length === 0 ? (
-            <div className="h-full flex items-center justify-center opacity-50">
+            <div className="relative z-10 h-full flex items-center justify-center opacity-50">
               <p>Add some fields to preview your form</p>
             </div>
           ) : previewMode === 'focused' ? (
             /* Focused Mode */
-            <div className="h-full flex flex-col">
+            <div className="relative z-10 h-full flex flex-col">
               {/* Progress */}
               <div className="p-4">
                 <ProgressBar value={progress} size="sm" barColor={form.theme.primaryColor} />
-                <p className="text-sm opacity-50 mt-2 text-right">
-                  {safeCurrentStep + 1} of {visibleFields.length}
-                  {isEvaluating && <span className="ml-2 animate-pulse">...</span>}
-                </p>
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  {focusedSection ? (
+                    <span
+                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                      style={{
+                        backgroundColor: `${form.theme.primaryColor}18`,
+                        color: form.theme.primaryColor,
+                      }}
+                    >
+                      Section {focusedSection.index + 1} of {groupedSections.sections.length} · {focusedSection.title}
+                    </span>
+                  ) : <span />}
+                  <p className="text-sm opacity-50">
+                    {safeCurrentStep + 1} of {visibleFields.length}
+                    {isEvaluating && <span className="ml-2 animate-pulse">...</span>}
+                  </p>
+                </div>
               </div>
 
               {/* Content */}
@@ -398,7 +471,8 @@ export default function FormPreview() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: reduceMotion ? 0 : -20 }}
                     transition={{ duration: reduceMotion ? 0 : 0.3 }}
-                    className="w-full max-w-lg"
+                    className={cn('w-full max-w-2xl', themeTokens.sheetClass)}
+                    style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
                   >
                     <FieldResponse
                       field={currentField}
@@ -406,7 +480,8 @@ export default function FormPreview() {
                       onChange={(val) => handleAnswerChange(currentField.id, val)}
                       isRequired={getFieldRequired(currentField)}
                       primaryColor={form.theme.primaryColor}
-                      textColor={page.textColor}
+                      textColor={themeTokens.surfaceTextColor}
+                      theme={resolvedTheme}
                       allAnswers={allFormData}
                       allFieldIds={form.fields.map(f => f.id)}
                       onCalculated={handleCalculated}
@@ -426,8 +501,8 @@ export default function FormPreview() {
                 >
                   <ChevronUp className="h-6 w-6" />
                 </button>
-                <Button onClick={handleNext} style={accentButton}>
-                  {isLastStep ? 'Submit' : 'OK'} ✓
+                <Button onClick={handleNext} style={accentButton} className={themeTokens.controlRadiusClass}>
+                  {isLastStep ? 'Submit' : currentField?.type === 'section' ? 'Continue' : 'OK'} ✓
                 </Button>
                 <button
                   onClick={handleNext}
@@ -440,65 +515,253 @@ export default function FormPreview() {
               </div>
             </div>
           ) : (
-            /* Classic Mode */
-            <div className="h-full overflow-y-auto p-8">
-              <div className="max-w-lg mx-auto space-y-8">
-                <div className="text-center mb-8">
-                  {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" />}
-                  <h1 className="text-3xl font-bold tracking-tight">{form.title}</h1>
-                  {form.description && (
-                    <p className="opacity-70 mt-2">{form.description}</p>
-                  )}
-                </div>
+            /* Classic / Multi-Section Mode */
+            <div ref={previewScrollRef} className={cn('relative z-10 h-full overflow-y-auto', previewDevice === 'mobile' ? 'p-4' : 'p-5 sm:p-8')}>
+              <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections && previewDevice === 'desktop' ? 'max-w-6xl' : 'max-w-3xl')}>
+                {form.theme.logo && (
+                  <div className="mb-4 flex justify-center">
+                    <img src={form.theme.logo} alt="" className="max-h-12 max-w-[60%] object-contain" />
+                  </div>
+                )}
 
-                {visibleFields.map((field) => (
-                  field.type === 'section' ? (
-                    <div
-                      key={field.id}
-                      id={`field-${field.id}`}
-                      className="rounded-2xl border px-5 py-4"
-                      style={{
-                        borderColor: `${form.theme.primaryColor}35`,
-                        backgroundColor: `${form.theme.primaryColor}0d`,
+                {themeTokens.headerStyle === 'hero' ? (
+                  <div
+                    className={cn('mb-6 text-center shadow-sm', themeTokens.cardRadiusClass, themeTokens.headerPaddingClass)}
+                    style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
+                  >
+                    {form.icon && <DynamicIcon name={form.icon} className="h-7 w-7 mx-auto mb-2 opacity-90" />}
+                    <h1 className="text-2xl font-bold tracking-tight">{form.title}</h1>
+                    {form.description && <p className="opacity-85 mt-1.5 text-sm">{form.description}</p>}
+                  </div>
+                ) : themeTokens.headerStyle === 'accent_bar' ? (
+                  <div
+                    className={cn('mb-6 overflow-hidden border shadow-2xs', themeTokens.cardRadiusClass)}
+                    style={{
+                      backgroundColor: themeTokens.surfaceBgColor,
+                      borderColor: themeTokens.isSurfaceDark ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.12)',
+                      color: themeTokens.surfaceTextColor,
+                    }}
+                  >
+                    <div className="h-2 w-full" style={{ backgroundColor: form.theme.primaryColor }} />
+                    <div className={cn('text-center sm:text-left', themeTokens.headerPaddingClass)}>
+                      {form.icon && <DynamicIcon name={form.icon} className="h-7 w-7 mx-auto sm:mx-0 mb-2" style={{ color: form.theme.primaryColor }} />}
+                      <h1 className="text-2xl font-bold tracking-tight">{form.title}</h1>
+                      {form.description && <p className="opacity-75 mt-1.5 text-sm">{form.description}</p>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center mb-8">
+                    {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" />}
+                    <h1 className="text-3xl font-bold tracking-tight">{form.title}</h1>
+                    {form.description && (
+                      <p className="opacity-70 mt-2">{form.description}</p>
+                    )}
+                  </div>
+                )}
+
+                {groupedSections.hasExplicitSections && groupedSections.welcomeField && !welcomeDismissed ? (
+                  <div
+                    className={cn('mx-auto max-w-xl text-center', themeTokens.sheetClass || `${themeTokens.cardRadiusClass} border p-6 sm:p-8 shadow-sm`)}
+                    style={themeTokens.sheetClass ? themeTokens.sheetStyle : { borderColor: `${page.textColor}20` }}
+                  >
+                    <h2 className="text-2xl font-bold tracking-tight" style={{ color: themeTokens.surfaceTextColor }}>
+                      {groupedSections.welcomeField.label || form.title}
+                    </h2>
+                    {groupedSections.welcomeField.description && (
+                      <p className="mt-3 text-base opacity-75 whitespace-pre-line" style={{ color: themeTokens.surfaceTextColor }}>
+                        {groupedSections.welcomeField.description}
+                      </p>
+                    )}
+                    <p className="mt-4 text-xs opacity-65" style={{ color: themeTokens.surfaceTextColor }}>
+                      {groupedSections.sections.length} sections · {groupedSections.totalInputs} questions
+                    </p>
+                    <div className="mt-6 flex justify-center">
+                      <Button
+                        size="lg"
+                        onClick={() => {
+                          setWelcomeDismissed(true);
+                          scrollToPreviewSection(0);
+                        }}
+                        className={themeTokens.controlRadiusClass}
+                        style={accentButton}
+                      >
+                        {groupedSections.welcomeField.properties.buttonText || 'Begin Form'}
+                        <ChevronRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  </div>
+                ) : groupedSections.hasExplicitSections ? (
+                  <div className={cn(previewDevice === 'desktop' && 'lg:flex lg:items-start lg:gap-6')}>
+                    <FormSectionNav
+                      sections={groupedSections.sections}
+                      activeIndex={safeSectionIndex}
+                      onSelectSection={(idx) => {
+                        setActiveSectionIndex(idx);
+                        scrollToPreviewSection(idx);
                       }}
+                      totalInputs={groupedSections.totalInputs}
+                      answeredCount={groupedSections.answeredCount}
+                      sectionViewMode={sectionViewMode}
+                      onToggleSectionViewMode={setSectionViewMode}
+                      primaryColor={form.theme.primaryColor}
+                      darkSurface={page.dark}
+                      radiusClass={themeTokens.cardRadiusClass}
+                      forceCompact={previewDevice === 'mobile'}
+                    />
+
+                    <div
+                      className={cn('min-w-0 flex-1', themeTokens.sheetClass)}
+                      style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
                     >
-                      <h2 className="text-xl font-bold tracking-tight" style={{ color: page.textColor }}>
-                        {field.label}
-                      </h2>
-                      {field.description && (
-                        <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: page.textColor }}>
-                          {field.description}
-                        </p>
+                      {(sectionViewMode === 'paged' && activeSection ? [activeSection] : groupedSections.sections).map((sec) => (
+                        <section
+                          key={sec.id}
+                          id={`preview-section-block-${sec.index}`}
+                          aria-label={sec.title}
+                          className="mb-8 last:mb-0 scroll-mt-6"
+                        >
+                          <div
+                            className={cn('mb-5 border px-5 py-4', themeTokens.cardRadiusClass)}
+                            style={{
+                              borderColor: `${form.theme.primaryColor}35`,
+                              backgroundColor: `${form.theme.primaryColor}0d`,
+                            }}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wider" style={{ color: form.theme.primaryColor }}>
+                              <span>Section {sec.index + 1} of {groupedSections.sections.length}</span>
+                              <span className="tabular-nums opacity-80">{sec.answeredCount} / {sec.totalInputs} answered</span>
+                            </div>
+                            <h2 className="mt-1 text-xl font-bold tracking-tight" style={{ color: themeTokens.surfaceTextColor }}>
+                              {sec.title}
+                            </h2>
+                            {sec.description && (
+                              <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: themeTokens.surfaceTextColor }}>
+                                {sec.description}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className={themeTokens.fieldSpacingClass}>
+                            {sec.fields.map((field) => (
+                              <div
+                                key={field.id}
+                                id={`field-${field.id}`}
+                                className={cn(themeTokens.density === 'compact' ? 'pb-4' : 'pb-6', 'border-b border-current/10 last:border-0')}
+                              >
+                                <FieldResponse
+                                  field={field}
+                                  value={answers[field.id]}
+                                  onChange={(val) => handleAnswerChange(field.id, val)}
+                                  isRequired={getFieldRequired(field)}
+                                  primaryColor={form.theme.primaryColor}
+                                  textColor={themeTokens.surfaceTextColor}
+                                  theme={resolvedTheme}
+                                  compactHeading
+                                  allAnswers={allFormData}
+                                  allFieldIds={form.fields.map(f => f.id)}
+                                  onCalculated={handleCalculated}
+                                  formId={formId}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+
+                      {sectionViewMode === 'paged' ? (
+                        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-current/15 pt-5">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={safeSectionIndex === 0}
+                            className={themeTokens.controlRadiusClass}
+                            onClick={() => {
+                              const prev = Math.max(0, safeSectionIndex - 1);
+                              setActiveSectionIndex(prev);
+                              scrollToPreviewSection(prev);
+                            }}
+                            leftIcon={<ChevronLeft className="h-4 w-4" />}
+                          >
+                            Previous section
+                          </Button>
+
+                          {safeSectionIndex < groupedSections.sections.length - 1 ? (
+                            <Button
+                              type="button"
+                              size="lg"
+                              className={themeTokens.controlRadiusClass}
+                              onClick={() => {
+                                const next = Math.min(groupedSections.sections.length - 1, safeSectionIndex + 1);
+                                setActiveSectionIndex(next);
+                                scrollToPreviewSection(next);
+                              }}
+                              style={accentButton}
+                              rightIcon={<ChevronRight className="h-4 w-4" />}
+                            >
+                              Next: {groupedSections.sections[safeSectionIndex + 1]?.title}
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="lg"
+                              className={themeTokens.controlRadiusClass}
+                              onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
+                              style={accentButton}
+                            >
+                              {form.settings.submitButtonText || 'Submit'}
+                            </Button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="pt-6">
+                          <Button
+                            className={cn('w-full', themeTokens.controlRadiusClass)}
+                            size="lg"
+                            onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
+                            style={accentButton}
+                          >
+                            {form.settings.submitButtonText || 'Submit'}
+                          </Button>
+                        </div>
                       )}
                     </div>
-                  ) : (
-                    <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-current/10 last:border-0">
-                      <FieldResponse
-                        field={field}
-                        value={answers[field.id]}
-                        onChange={(val) => handleAnswerChange(field.id, val)}
-                        isRequired={getFieldRequired(field)}
-                        primaryColor={form.theme.primaryColor}
-                        textColor={page.textColor}
-                        allAnswers={allFormData}
-                        allFieldIds={form.fields.map(f => f.id)}
-                        onCalculated={handleCalculated}
-                        formId={formId}
-                      />
-                    </div>
-                  )
-                ))}
-
-                <div className="pt-4">
-                  <Button
-                    className="w-full"
-                    size="lg"
-                    onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
-                    style={accentButton}
+                  </div>
+                ) : (
+                  <div
+                    className={cn(themeTokens.fieldSpacingClass, themeTokens.sheetClass)}
+                    style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
                   >
-                    {form.settings.submitButtonText || 'Submit'}
-                  </Button>
-                </div>
+                    {visibleFields.map((field) => (
+                      <div key={field.id} id={`field-${field.id}`} className="pb-5 border-b border-current/10 last:border-0">
+                        <FieldResponse
+                          field={field}
+                          value={answers[field.id]}
+                          onChange={(val) => handleAnswerChange(field.id, val)}
+                          isRequired={getFieldRequired(field)}
+                          primaryColor={form.theme.primaryColor}
+                          textColor={themeTokens.surfaceTextColor}
+                          theme={resolvedTheme}
+                          compactHeading
+                          allAnswers={allFormData}
+                          allFieldIds={form.fields.map(f => f.id)}
+                          onCalculated={handleCalculated}
+                          formId={formId}
+                        />
+                      </div>
+                    ))}
+
+                    <div className="pt-4">
+                      <Button
+                        className={cn('w-full', themeTokens.controlRadiusClass)}
+                        size="lg"
+                        onClick={() => toast.info('Preview only', "This is a preview — responses aren't saved. Publish your form and open its share link to collect real responses.")}
+                        style={accentButton}
+                      >
+                        {form.settings.submitButtonText || 'Submit'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -516,6 +779,17 @@ export default function FormPreview() {
                 const idx = visibleFields.findIndex((f) => f.id === fieldId);
                 if (idx >= 0) {
                   setCurrentStep(idx);
+                  if (groupedSections.hasExplicitSections) {
+                    setWelcomeDismissed(true);
+                    const secIdx = groupedSections.sections.findIndex((s) => s.fields.some((f) => f.id === fieldId));
+                    if (secIdx >= 0 && sectionViewMode === 'paged') {
+                      setActiveSectionIndex(secIdx);
+                      window.setTimeout(() => {
+                        document.getElementById(`field-${fieldId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }, 50);
+                      return;
+                    }
+                  }
                   // In classic mode, scroll the field into view
                   const el = document.getElementById(`field-${fieldId}`);
                   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });

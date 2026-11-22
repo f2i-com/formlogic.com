@@ -1807,6 +1807,8 @@ export default function FormBuilder() {
         isOpen={activeModal === 'theme'}
         onClose={closeModal}
         theme={form.theme}
+        formTitle={form.title}
+        sectionTitles={(form.fields || []).filter((f) => f.type === 'section').map((f) => f.label).filter(Boolean)}
         onSave={async (theme) => {
           // Sent now, so the dialog can say whether it arrived. Only this save decides that:
           // a fields save that failed earlier has nothing to do with the theme.

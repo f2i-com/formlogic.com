@@ -15,6 +15,12 @@ interface FormSectionNavProps {
   primaryColor?: string;
   /** Optional dark surface theme flag (for public forms with dark theme). */
   darkSurface?: boolean;
+  /** Optional border-radius class matching the form theme (`rounded-none`, `rounded-lg`, `rounded-2xl`, `rounded-3xl`). */
+  radiusClass?: string;
+  /** Force the compact top selector bar (e.g. inside the 375px Mobile frame of FormPreview on a wide monitor). */
+  forceCompact?: boolean;
+  /** Tailwind sticky top offset class for the desktop sidebar (default `'lg:top-6'`). */
+  stickyTopClass?: string;
   /** Optional extra footer actions rendered inside the desktop sidebar card (e.g. Save/Load .json). */
   sidebarFooter?: React.ReactNode;
 }
@@ -34,6 +40,9 @@ export function FormSectionNav({
   onToggleSectionViewMode,
   primaryColor,
   darkSurface = false,
+  radiusClass = 'rounded-2xl',
+  forceCompact = false,
+  stickyTopClass = 'lg:top-6',
   sidebarFooter,
 }: FormSectionNavProps) {
   const pct = totalInputs > 0 ? Math.min(100, Math.round((answeredCount / totalInputs) * 100)) : 0;
@@ -44,7 +53,9 @@ export function FormSectionNav({
       {/* Mobile & tablet compact section bar */}
       <div
         className={cn(
-          'mb-5 rounded-2xl border p-3.5 shadow-sm lg:hidden',
+          'mb-5 border p-3.5 shadow-sm',
+          !forceCompact && 'lg:hidden',
+          radiusClass,
           darkSurface
             ? 'border-white/10 bg-white/[0.04] text-white'
             : 'border-gray-200/90 bg-white/95 text-gray-900 dark:border-slate-800 dark:bg-slate-900/90 dark:text-white',
@@ -114,13 +125,15 @@ export function FormSectionNav({
       </div>
 
       {/* Desktop sticky section outline sidebar */}
+      {!forceCompact && (
       <aside
         aria-label="Form sections"
-        className="hidden w-64 shrink-0 lg:block"
+        className={cn('hidden w-64 shrink-0 lg:block lg:sticky lg:self-start', stickyTopClass)}
       >
         <div
           className={cn(
-            'sticky top-6 rounded-2xl border p-4 shadow-sm',
+            'max-h-[calc(100vh-3rem)] overflow-y-auto border p-4 shadow-sm',
+            radiusClass,
             darkSurface
               ? 'border-white/10 bg-white/[0.04] text-white'
               : 'border-gray-200/90 bg-white/95 text-gray-900 dark:border-slate-800 dark:bg-slate-900/90 dark:text-white',
@@ -235,6 +248,7 @@ export function FormSectionNav({
           )}
         </div>
       </aside>
+      )}
     </>
   );
 }

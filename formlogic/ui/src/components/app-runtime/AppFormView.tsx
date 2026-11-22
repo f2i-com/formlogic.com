@@ -12,6 +12,7 @@ import { AppSectionDashboard } from './AppSectionDashboard';
 import { FormSectionNav } from '../forms/FormSectionNav';
 import { FormDraftControls } from '../forms/FormDraftControls';
 import { groupFieldsIntoSections, type ParsedDraftImport } from '../../lib/formDraft';
+import { getFormThemeTokens } from '../../lib/formThemeStyles';
 
 // Foreground for text/icons on a solid fill of `c`. When the form sets its own theme
 // color we derive contrast from THAT hex; otherwise fall back to the app's
@@ -39,7 +40,7 @@ import { SdkScreenRuntime } from '../custom-screen/SdkScreenRuntime';
 import { useCustomAppLogic } from '../../client-runtime/logic/useCustomAppLogic';
 import { useDesktopConnectorEvents } from '../../client-runtime/desktop/useDesktopConnectorEvents';
 import { dispatchFormEvent } from '../../client-runtime/flows/flowDispatcher';
-import type { FormField as FormFieldType, CustomScreen } from '../../types/form';
+import type { FormField as FormFieldType, FormTheme as FormThemeType, CustomScreen } from '../../types/form';
 import type { CustomAppLogicBundle } from '../../types/customAppLogic';
 
 interface FormField {
@@ -51,13 +52,6 @@ interface FormField {
   description?: string;
   properties?: Record<string, unknown>;
   validation?: Array<{ type: string; value?: string | number; message?: string }>;
-}
-
-interface FormTheme {
-  primaryColor: string;
-  backgroundColor: string;
-  textColor: string;
-  fontFamily?: string;
 }
 
 // Signature pad as its own component so it can legally run a hook that restores
@@ -208,6 +202,8 @@ function FieldInput({
   value,
   onChange,
   primaryColor,
+  inputStyle,
+  radiusClass,
   formId,
   appSlug,
   allAnswers,
@@ -222,6 +218,8 @@ function FieldInput({
   value: unknown;
   onChange: (val: unknown) => void;
   primaryColor: string;
+  inputStyle?: 'underline' | 'outlined' | 'filled';
+  radiusClass?: string;
   formId?: string;
   appSlug?: string;
   allAnswers?: Record<string, unknown>;
@@ -234,12 +232,17 @@ function FieldInput({
 }) {
   // Conditional logic can make a field required dynamically; fall back to the static flag.
   const required = isRequired ?? field.required;
+  const rClass = radiusClass || 'rounded-lg';
   // Associate a validation error with the rendered control (aria-invalid +
   // aria-describedby) so screen readers announce it as part of the field. The body
   // uses early returns, so render first then clone the top element (input, or the
   // role="radiogroup" wrapper for rating/scale/choice).
   const renderInput = () => {
-  const inputClass = 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 px-3 text-base sm:text-lg md:text-xl text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current';
+  const inputClass = inputStyle === 'underline'
+    ? 'w-full bg-transparent border-b-2 border-gray-200 dark:border-slate-700 outline-none py-2.5 px-1 text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 focus:border-current'
+    : inputStyle === 'filled'
+      ? `w-full bg-gray-100/90 dark:bg-slate-800/90 border-2 border-transparent focus:border-current outline-none py-2.5 px-3.5 ${rClass} text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200`
+      : `w-full bg-white dark:bg-slate-900/90 border border-gray-300 dark:border-slate-600 focus:border-current outline-none py-2.5 px-3.5 ${rClass} text-base sm:text-lg text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-slate-500 transition-all duration-200 shadow-2xs`;
   const focusStyle = { '--focus-color': primaryColor } as React.CSSProperties;
 
   if (field.type === 'phone') {
@@ -435,8 +438,14 @@ function FieldInput({
   if (field.type === 'rating') {
     const maxStars = (field.properties?.maxStars as number) ?? 5;
     const currentRating = (value as number) ?? 0;
+    const manyStars = maxStars > 5;
     return (
-      <div className="flex gap-2" role="radiogroup" aria-label={field.label} aria-required={required || undefined}>
+      <div
+        className={cn('flex', manyStars ? 'flex-nowrap gap-0.5 sm:gap-1.5' : 'flex-wrap gap-2')}
+        role="radiogroup"
+        aria-label={field.label}
+        aria-required={required || undefined}
+      >
         {Array.from({ length: maxStars }, (_, i) => (
           <button
             key={i}
@@ -456,7 +465,12 @@ function FieldInput({
               }
             }}
             className={cn(
-              'text-4xl transition-all duration-150 hover:scale-125 p-1 min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg',
+              'transition-all duration-150 hover:scale-125 p-1 min-h-[44px] flex items-center justify-center cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg',
+              maxStars > 7
+                ? 'text-2xl sm:text-3xl flex-1 min-w-0 sm:flex-none sm:min-w-[38px]'
+                : manyStars
+                  ? 'text-3xl sm:text-4xl min-w-[36px] sm:min-w-[44px]'
+                  : 'text-4xl min-w-[44px]',
               currentRating > i ? 'text-yellow-400' : 'text-gray-300 dark:text-slate-500'
             )}
           >
@@ -471,9 +485,20 @@ function FieldInput({
     const min = (field.properties?.scaleStart as number) ?? (field.properties?.min as number) ?? 1;
     const max = (field.properties?.scaleEnd as number) ?? (field.properties?.max as number) ?? 10;
     const range = Math.max(1, max - min + 1);
+    const singleRow = range <= 12;
     return (
       <div className="space-y-3">
-        <div role="radiogroup" aria-label={field.label} aria-required={required || undefined} className={cn('grid gap-2', range <= 5 ? 'grid-cols-5' : range <= 7 ? 'grid-cols-7' : 'grid-cols-5 sm:grid-cols-10')}>
+        <div
+          role="radiogroup"
+          aria-label={field.label}
+          aria-required={required || undefined}
+          className={cn(
+            'grid w-full',
+            range >= 10 ? 'gap-1 sm:gap-2' : 'gap-1.5 sm:gap-2',
+            !singleRow && 'grid-cols-5 sm:grid-cols-10',
+          )}
+          style={singleRow ? { gridTemplateColumns: `repeat(${range}, minmax(0, 1fr))` } : undefined}
+        >
           {Array.from({ length: range }, (_, i) => {
             const num = min + i;
             const selected = value === num;
@@ -496,7 +521,9 @@ function FieldInput({
                   }
                 }}
                 className={cn(
-                  'aspect-square min-h-[44px] rounded-lg border-2 flex items-center justify-center text-lg font-medium transition-all hover:scale-105',
+                  'min-w-0 min-h-[40px] sm:min-h-[44px] py-2 sm:py-3 px-0.5 sm:px-1 border-2 flex items-center justify-center font-bold whitespace-nowrap tabular-nums leading-none transition-all hover:scale-105 cursor-pointer',
+                  range >= 10 ? 'text-xs sm:text-base' : 'text-sm sm:text-lg',
+                  radiusClass || 'rounded-lg',
                   selected ? 'shadow-sm' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500 text-gray-700 dark:text-slate-300'
                 )}
                 style={selected ? { backgroundColor: primaryColor, borderColor: primaryColor, color: onPrimaryFor(primaryColor) } : {}}
@@ -804,6 +831,25 @@ function FormVisit() {
   const [sectionViewMode, setSectionViewMode] = useState<'paged' | 'all'>('paged');
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const [draftBanner, setDraftBanner] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+  const classicScrollRef = useRef<HTMLDivElement>(null);
+  const scrollToAppSectionTop = useCallback((idx: number) => {
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`app-section-block-${idx}`);
+      const container = classicScrollRef.current;
+      if (el && container && container.scrollHeight > container.clientHeight + 2) {
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const targetTop = Math.max(0, container.scrollTop + (elRect.top - containerRect.top) - 24);
+        container.scrollTo({ top: targetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else if (el) {
+        el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      } else if (container && container.scrollHeight > container.clientHeight + 2) {
+        container.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else {
+        window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      }
+    });
+  }, [reduceMotion]);
   const appTheme = useUIStore((s) => s.theme);
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
   // Keep user navigation within this form, while honoring a new-record deep link.
@@ -927,9 +973,18 @@ function FormVisit() {
     () => ((form?.fields ?? []) as FormField[]).find(f => f.type === 'thank_you'),
     [form]
   );
-  const formTheme = form?.theme as FormTheme | undefined;
+  const formTheme = form?.theme as Partial<FormThemeType> | undefined;
   const formSettings = form?.settings as Record<string, unknown> | undefined;
   const primaryColor = formTheme?.primaryColor || 'var(--app-primary, #6366f1)';
+  const appFormTokens = getFormThemeTokens(
+    {
+      ...formTheme,
+      primaryColor: primaryColor.startsWith('#') ? primaryColor : '#6366f1',
+      backgroundColor: appTheme === 'dark' ? '#0f172a' : '#ffffff',
+      textColor: appTheme === 'dark' ? '#f8fafc' : '#111827',
+    },
+    appTheme === 'dark',
+  );
   const showProgress = formSettings?.showProgressBar !== false;
   const allowBack = formSettings?.allowBackNavigation !== false;
   const nigoEnabled = formSettings?.showNigoDashboard === true;
@@ -1467,7 +1522,11 @@ function FormVisit() {
   }
 
   return (
-    <div className="relative flex-1 flex flex-col min-h-[60vh]" onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}>
+    <div
+      className="fl-themed-form relative flex-1 flex flex-col min-h-[60vh]"
+      style={{ fontFamily: appFormTokens.fontStack }}
+      onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
+    >
       {/* Back to the section dashboard (only when the custom screen stepped aside for a new record) */}
       {showFormView && (
         <div className="px-4 pt-3">
@@ -1562,7 +1621,7 @@ function FormVisit() {
 
       {/* Portable Save/Load .json progress bar */}
       <div className="px-4 pt-3">
-        <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
+        <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-6xl' : 'max-w-3xl')}>
           <FormDraftControls
             form={draftFormDescriptor}
             answers={answers}
@@ -1651,7 +1710,7 @@ function FormVisit() {
 
       {/* Main field area */}
       <div className="flex-1 flex items-center justify-center px-4 py-8">
-        <div className="w-full max-w-xl">
+        <div className="w-full max-w-2xl">
           <AnimatePresence mode="wait">
             <motion.div
               key={currentField.id}
@@ -1708,6 +1767,8 @@ function FormVisit() {
                 value={answers[currentField.id]}
                 onChange={(val) => handleSetAnswer(currentField.id, val)}
                 primaryColor={primaryColor}
+                inputStyle={appFormTokens.inputStyle}
+                radiusClass={appFormTokens.controlRadiusClass}
                 formId={formId}
                 appSlug={appSlug}
                 allAnswers={allFormData}
@@ -1809,8 +1870,8 @@ function FormVisit() {
       </>
       ) : (
         /* Classic / Multi-Section Mode */
-        <div className="flex-1 overflow-y-auto px-4 py-8">
-          <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
+        <div ref={classicScrollRef} className="flex-1 overflow-y-auto px-4 py-8">
+          <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-6xl' : 'max-w-3xl')}>
             {Boolean(form?.title) && (
               <div className="text-center mb-8">
                 {typeof form?.icon === 'string' && form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2 text-gray-900 dark:text-white" />}
@@ -1852,7 +1913,10 @@ function FormVisit() {
                 <div className="mt-6 flex justify-center">
                   <button
                     type="button"
-                    onClick={() => setWelcomeDismissed(true)}
+                    onClick={() => {
+                      setWelcomeDismissed(true);
+                      scrollToAppSectionTop(0);
+                    }}
                     className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg cursor-pointer"
                     style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
                   >
@@ -1868,11 +1932,7 @@ function FormVisit() {
                   activeIndex={safeSectionIndex}
                   onSelectSection={(idx) => {
                     setActiveSectionIndex(idx);
-                    if (sectionViewMode === 'all') {
-                      document.getElementById(`app-section-block-${idx}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
-                    } else {
-                      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
-                    }
+                    scrollToAppSectionTop(idx);
                   }}
                   totalInputs={groupedSections.totalInputs}
                   answeredCount={groupedSections.answeredCount}
@@ -1882,7 +1942,7 @@ function FormVisit() {
                   darkSurface={appTheme === 'dark'}
                 />
 
-                <div className="min-w-0 flex-1 max-w-2xl">
+                <div className="min-w-0 flex-1 max-w-3xl">
                   {(sectionViewMode === 'paged' && activeSection ? [activeSection] : groupedSections.sections).map((sec) => (
                     <section
                       key={sec.id}
@@ -1926,6 +1986,8 @@ function FormVisit() {
                                 value={answers[field.id]}
                                 onChange={(val) => handleSetAnswer(field.id, val)}
                                 primaryColor={primaryColor}
+                                inputStyle={appFormTokens.inputStyle}
+                                radiusClass={appFormTokens.controlRadiusClass}
                                 formId={formId}
                                 appSlug={appSlug}
                                 allAnswers={allFormData}
@@ -1960,8 +2022,9 @@ function FormVisit() {
                         type="button"
                         disabled={safeSectionIndex === 0}
                         onClick={() => {
-                          setActiveSectionIndex((i) => Math.max(0, i - 1));
-                          window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                          const prev = Math.max(0, safeSectionIndex - 1);
+                          setActiveSectionIndex(prev);
+                          scrollToAppSectionTop(prev);
                         }}
                         className="inline-flex items-center gap-1.5 rounded-control border border-gray-200 dark:border-slate-700 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
                       >
@@ -1973,8 +2036,9 @@ function FormVisit() {
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveSectionIndex((i) => Math.min(groupedSections.sections.length - 1, i + 1));
-                            window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                            const next = Math.min(groupedSections.sections.length - 1, safeSectionIndex + 1);
+                            setActiveSectionIndex(next);
+                            scrollToAppSectionTop(next);
                           }}
                           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg cursor-pointer"
                           style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
@@ -2032,6 +2096,8 @@ function FormVisit() {
                         value={answers[field.id]}
                         onChange={(val) => handleSetAnswer(field.id, val)}
                         primaryColor={primaryColor}
+                        inputStyle={appFormTokens.inputStyle}
+                        radiusClass={appFormTokens.controlRadiusClass}
                         formId={formId}
                         appSlug={appSlug}
                         allAnswers={allFormData}

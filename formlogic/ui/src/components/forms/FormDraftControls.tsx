@@ -18,6 +18,8 @@ interface FormDraftControlsProps {
   isPrivate?: boolean;
   /** Show the zero-account "Fill with AI (MCP)" helper modal (standalone published public forms). */
   showPublicMcp?: boolean;
+  /** Optional form theme primary color to harmonize the AI (MCP) accent pill with the form's palette. */
+  primaryColor?: string;
   darkSurface?: boolean;
   compact?: boolean;
   /** Optional status text such as "Saved locally 2m ago". */
@@ -40,6 +42,7 @@ export function FormDraftControls({
   allowLinkedRecord = false,
   isPrivate = false,
   showPublicMcp = false,
+  primaryColor,
   darkSurface = false,
   compact = false,
   localSaveNote,
@@ -164,8 +167,23 @@ export function FormDraftControls({
             onClick={() => setShowAiModal(true)}
             className={cn(
               btnBase,
-              !darkSurface && 'border-primary-200 bg-primary-50/70 text-primary-700 hover:bg-primary-100/80 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/20',
+              !primaryColor && !darkSurface && 'border-primary-200 bg-primary-50/70 text-primary-700 hover:bg-primary-100/80 dark:border-primary-500/30 dark:bg-primary-500/10 dark:text-primary-300 dark:hover:bg-primary-500/20',
             )}
+            style={
+              primaryColor && primaryColor.startsWith('#')
+                ? darkSurface
+                  ? {
+                      borderColor: `${primaryColor}66`,
+                      backgroundColor: `${primaryColor}24`,
+                      color: '#ffffff',
+                    }
+                  : {
+                      borderColor: `${primaryColor}45`,
+                      backgroundColor: `${primaryColor}12`,
+                      color: primaryColor,
+                    }
+                : undefined
+            }
             title="Connect an AI assistant via MCP to help fill out this form — no account required"
           >
             <Bot className="h-3.5 w-3.5" aria-hidden="true" />

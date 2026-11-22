@@ -5,6 +5,7 @@ import { useVaultStore } from '../stores/vaultStore';
 import { toast } from '../stores/toastStore';
 import { TemplateSelector } from '../components/builder';
 import type { FormTemplate } from '../data/formTemplates';
+import type { FormTheme } from '../types/form';
 
 /**
  * Shared "Create New Form" flow. Every entry point ("New Form" / "Create Form" / the
@@ -21,19 +22,22 @@ import type { FormTemplate } from '../data/formTemplates';
  */
 export function useCreateFormFlow() {
   const navigate = useNavigate();
-  const { createForm, addFields, setActiveForm } = useFormStore();
+  const { createForm, addFields, updateFormTheme, setActiveForm } = useFormStore();
   const vaultStatus = useVaultStore((s) => s.status);
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false); // guard against a double-tap creating two drafts
 
-  const handleSelect = async (template: FormTemplate | null, makePrivate = false, name?: string) => {
+  const handleSelect = async (template: FormTemplate | null, makePrivate = false, name?: string, theme?: FormTheme) => {
     if (creatingRef.current) return;
     creatingRef.current = true;
     setCreating(true);
     try {
       const form = await createForm(name?.trim() || (template ? template.name : 'Untitled Form'));
       if (!form) { toast.error('Creation failed', 'Could not create this form. Your choices are kept so you can try again.'); return; }
+      if (theme && updateFormTheme) {
+        updateFormTheme(form.id, theme);
+      }
       if (template && template.fields.length > 0) {
         addFields(form.id, template.fields);
       }

@@ -20,6 +20,7 @@ import { useConditionalLogic } from '../hooks/useFormLogic';
 import { cn, generateId } from '../lib/utils';
 import { readableForegroundColor, parseHex, luminance } from '../lib/color';
 import { formPageColors } from '../lib/formPageColors';
+import { getFormThemeTokens } from '../lib/formThemeStyles';
 import { useUIStore } from '../stores/uiStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type LinkedRecord } from '../lib/api';
@@ -34,7 +35,7 @@ import { DynamicIcon } from '../components/ui/DynamicIcon';
 import { FileUploadField } from '../components/ui/FileUploadField';
 import { CameraField } from '../components/ui/CameraField';
 import { LocationField } from '../components/ui/LocationField';
-import type { FormField } from '../types/form';
+import type { FormField, FormTheme } from '../types/form';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { usePublicConfig } from '../hooks/usePublicConfig';
 import { handleRovingKeys } from '../lib/a11y';
@@ -48,6 +49,8 @@ export function FieldResponse({
   onChange,
   primaryColor,
   textColor,
+  theme,
+  compactHeading = false,
   isRequired,
   allAnswers,
   allFieldIds,
@@ -62,6 +65,8 @@ export function FieldResponse({
   onChange: (value: unknown) => void;
   primaryColor: string;
   textColor?: string;
+  theme?: Partial<FormTheme>;
+  compactHeading?: boolean;
   isRequired?: boolean;
   allAnswers?: Record<string, unknown>;
   allFieldIds?: string[];
@@ -72,6 +77,8 @@ export function FieldResponse({
   onUploadingChange?: (uploading: boolean) => void;
 }) {
   const required = isRequired ?? field.required;
+  const tokens = getFormThemeTokens(theme ?? { primaryColor, textColor });
+  const effectiveTextColor = theme ? tokens.surfaceTextColor : textColor;
 
   // Linked records work outside an app for the form OWNER: an authenticated viewer can pick from
   // records they own (incl. pack-sibling forms). Anonymous public viewers still see the notice.
@@ -117,7 +124,7 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(val) => onChange(val)}
             primaryColor={primaryColor}
-            textColor={textColor}
+            textColor={effectiveTextColor}
             autoFocus={autoFocus}
             required={required}
           />
@@ -136,8 +143,8 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
-            style={{ '--tw-ring-color': primaryColor } as React.CSSProperties}
+            className={tokens.inputClass}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -150,8 +157,9 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder || 'Type your answer here...'}
-            rows={4}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl resize-none transition-colors"
+            rows={tokens.density === 'compact' ? 3 : 4}
+            className={cn(tokens.inputClass, 'resize-y')}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -172,7 +180,8 @@ export function FieldResponse({
               onChange(isNaN(val) ? undefined : val);
             }}
             placeholder={field.placeholder || '0'}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
+            className={tokens.inputClass}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -186,7 +195,8 @@ export function FieldResponse({
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
             onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors cursor-pointer"
+            className={cn(tokens.inputClass, 'cursor-pointer')}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -199,7 +209,8 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
+            className={tokens.inputClass}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -212,7 +223,8 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-b-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-2 px-3 text-xl transition-colors"
+            className={tokens.inputClass}
+            style={tokens.inputStyleObj}
             autoFocus={autoFocus}
           />
         );
@@ -221,7 +233,7 @@ export function FieldResponse({
         const mcOpts = field.properties.options ?? [];
         const radioFocusIdx = Math.max(0, mcOpts.findIndex((o) => o.value === value));
         return (
-          <div className="space-y-3" role="radiogroup" aria-label={field.label} aria-required={required || undefined}>
+          <div className={tokens.density === 'compact' ? 'space-y-2' : 'space-y-3'} role="radiogroup" aria-label={field.label} aria-required={required || undefined}>
             {mcOpts.length === 0 ? (
               <p className="opacity-50 italic text-sm">No options configured</p>
             ) : mcOpts.map((option, index) => (
@@ -233,22 +245,24 @@ export function FieldResponse({
                 onKeyDown={(e) => handleRovingKeys(e, mcOpts, true, onChange)}
                 onClick={() => onChange(option.value)}
                 className={cn(
-                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
+                  'w-full flex items-center border-2 text-left transition-all cursor-pointer',
+                  tokens.controlRadiusClass,
+                  tokens.optionPaddingClass,
                   value === option.value
                     ? 'border-primary-500 bg-primary-500/10'
-                    : 'border-current/20 hover:border-current/30'
+                    : 'border-current/20 hover:border-current/35'
                 )}
-                style={value === option.value ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
+                style={value === option.value ? { borderColor: primaryColor, backgroundColor: `${primaryColor}12` } : {}}
               >
                 <span
-                  className="w-8 h-8 rounded-full border-2 border-current/30 flex items-center justify-center text-sm font-bold"
+                  className="w-7 h-7 shrink-0 rounded-full border-2 border-current/30 flex items-center justify-center text-xs font-bold"
                   style={value === option.value ? { borderColor: primaryColor, color: primaryColor } : {}}
                 >
                   {String.fromCharCode(65 + index)}
                 </span>
-                <span className="flex-1 min-w-0 break-words text-lg">{option.label?.trim() || option.value}</span>
+                <span className={cn('flex-1 min-w-0 break-words', tokens.optionTextClass)}>{option.label?.trim() || option.value}</span>
                 {value === option.value && (
-                  <Check className="h-5 w-5" style={{ color: primaryColor }} />
+                  <Check className="h-5 w-5 shrink-0" style={{ color: primaryColor }} />
                 )}
               </button>
             ))}
@@ -261,7 +275,7 @@ export function FieldResponse({
         const selectedValues = tickedValues(value);
         const cbOpts = checkboxOptions(field);
         return (
-          <div className="space-y-3" role="group" aria-label={field.label} aria-required={required || undefined}>
+          <div className={tokens.density === 'compact' ? 'space-y-2' : 'space-y-3'} role="group" aria-label={field.label} aria-required={required || undefined}>
             {cbOpts.length === 0 ? (
               <p className="opacity-50 italic text-sm">No options configured</p>
             ) : cbOpts.map((option, index) => (
@@ -278,20 +292,22 @@ export function FieldResponse({
                   onChange(newValues);
                 }}
                 className={cn(
-                  'w-full flex items-center gap-4 p-4 rounded-lg border-2 text-left transition-all cursor-pointer',
+                  'w-full flex items-center border-2 text-left transition-all cursor-pointer',
+                  tokens.controlRadiusClass,
+                  tokens.optionPaddingClass,
                   selectedValues.includes(option.value)
                     ? 'border-primary-500 bg-primary-500/10'
-                    : 'border-current/20 hover:border-current/30'
+                    : 'border-current/20 hover:border-current/35'
                 )}
-                style={selectedValues.includes(option.value) ? { borderColor: primaryColor, backgroundColor: `${primaryColor}10` } : {}}
+                style={selectedValues.includes(option.value) ? { borderColor: primaryColor, backgroundColor: `${primaryColor}12` } : {}}
               >
                 <span
-                  className="w-8 h-8 rounded border-2 flex items-center justify-center"
+                  className={cn('w-7 h-7 shrink-0 border-2 flex items-center justify-center', tokens.borderRadius === 'none' ? 'rounded-none' : 'rounded')}
                   style={selectedValues.includes(option.value) ? { backgroundColor: primaryColor, borderColor: primaryColor, color: readableForegroundColor(primaryColor) } : {}}
                 >
                   {selectedValues.includes(option.value) && <Check className="h-4 w-4" />}
                 </span>
-                <span className="flex-1 min-w-0 break-words text-lg">{option.label?.trim() || option.value}</span>
+                <span className={cn('flex-1 min-w-0 break-words', tokens.optionTextClass)}>{option.label?.trim() || option.value}</span>
               </button>
             ))}
           </div>
@@ -307,13 +323,16 @@ export function FieldResponse({
             aria-required={required}
             value={(value as string) || ''}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full bg-transparent border-2 border-current/30 focus:border-current/60 outline-hidden focus-visible:ring-2 focus-visible:ring-primary-500 py-3 px-4 rounded-lg text-xl transition-colors"
-            style={{ borderColor: value ? primaryColor : undefined }}
+            className={cn(tokens.inputClass, 'cursor-pointer')}
+            style={{
+              ...tokens.inputStyleObj,
+              borderColor: value ? primaryColor : undefined,
+            }}
             autoFocus={autoFocus}
           >
-            <option value="">{field.placeholder || 'Select an option...'}</option>
+            <option value="" style={tokens.selectOptionStyle}>{field.placeholder || 'Select an option...'}</option>
             {field.properties.options?.map((option) => (
-              <option key={option.id} value={option.value}>
+              <option key={option.id} value={option.value} style={tokens.selectOptionStyle}>
                 {option.label?.trim() || option.value}
               </option>
             ))}
@@ -323,11 +342,21 @@ export function FieldResponse({
       case 'rating': {
         const maxStars = field.properties.maxStars || 5;
         const currentRating = (value as number) || 0;
+        const manyStars = maxStars > 5;
         return (
-          <div className="flex flex-wrap justify-center gap-2 sm:gap-3" role="radiogroup" aria-label={`${field.label} rating`} aria-required={required || undefined}>
+          <div
+            className={cn(
+              'flex justify-center',
+              manyStars ? 'flex-nowrap gap-0.5 sm:gap-1.5' : 'flex-wrap gap-2 sm:gap-3',
+            )}
+            role="radiogroup"
+            aria-label={`${field.label} rating`}
+            aria-required={required || undefined}
+          >
             {Array.from({ length: maxStars }, (_, i) => (
               <button
                 key={i}
+                type="button"
                 role="radio"
                 aria-checked={currentRating === i + 1}
                 aria-label={`${i + 1} star${i === 0 ? '' : 's'}`}
@@ -343,7 +372,12 @@ export function FieldResponse({
                   }
                 }}
                 className={cn(
-                  'text-4xl sm:text-5xl transition-transform hover:scale-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg min-w-[44px] min-h-[44px] flex items-center justify-center',
+                  'transition-transform hover:scale-110 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 rounded-lg min-h-[44px] flex items-center justify-center',
+                  maxStars > 7
+                    ? 'text-2xl sm:text-3xl flex-1 min-w-0 sm:flex-none sm:min-w-[38px]'
+                    : manyStars
+                      ? 'text-3xl sm:text-4xl min-w-[36px] sm:min-w-[44px]'
+                      : 'text-4xl sm:text-5xl min-w-[44px]',
                   i < currentRating ? 'text-yellow-400' : 'opacity-30'
                 )}
               >
@@ -358,7 +392,8 @@ export function FieldResponse({
         const start = field.properties.scaleStart ?? 1;
         const end = field.properties.scaleEnd ?? 10;
         const scaleValue = typeof value === 'number' ? value : null;
-        const scaleLength = end - start + 1;
+        const scaleLength = Math.max(1, end - start + 1);
+        const singleRow = scaleLength <= 12;
         return (
           <div>
             <div className="flex justify-between text-sm opacity-60 mb-3">
@@ -370,14 +405,18 @@ export function FieldResponse({
               aria-label={field.label}
               aria-required={required || undefined}
               className={cn(
-              "grid gap-2",
-              scaleLength <= 5 ? "grid-cols-5" : scaleLength <= 7 ? "grid-cols-4 sm:grid-cols-7" : "grid-cols-5 sm:grid-cols-10"
-            )}>
+                'grid w-full',
+                scaleLength >= 10 ? 'gap-1 sm:gap-2' : 'gap-1.5 sm:gap-2',
+                !singleRow && 'grid-cols-5 sm:grid-cols-10',
+              )}
+              style={singleRow ? { gridTemplateColumns: `repeat(${scaleLength}, minmax(0, 1fr))` } : undefined}
+            >
               {Array.from({ length: scaleLength }, (_, i) => {
                 const num = start + i;
                 return (
                   <button
                     key={num}
+                    type="button"
                     role="radio"
                     aria-checked={scaleValue === num}
                     aria-label={`${num} out of ${end}`}
@@ -393,7 +432,9 @@ export function FieldResponse({
                       }
                     }}
                     className={cn(
-                      'py-4 min-h-[44px] rounded-lg border-2 font-bold text-lg transition-all cursor-pointer',
+                      'flex items-center justify-center min-w-0 min-h-[40px] sm:min-h-[44px] py-2 sm:py-3 px-0.5 sm:px-1 border-2 font-bold whitespace-nowrap tabular-nums leading-none transition-all cursor-pointer',
+                      scaleLength >= 10 ? 'text-xs sm:text-base' : 'text-sm sm:text-lg',
+                      tokens.controlRadiusClass,
                       scaleValue === num ? '' : 'border-current/20 hover:border-current/30'
                     )}
                     style={scaleValue === num ? { backgroundColor: primaryColor, borderColor: primaryColor, color: readableForegroundColor(primaryColor) } : {}}
@@ -762,17 +803,17 @@ export function FieldResponse({
     : rendered;
 
   return (
-    <div className="w-full max-w-xl mx-auto">
-      <div className="mb-8">
+    <div className={cn('w-full mx-auto', compactHeading ? 'max-w-none' : 'max-w-2xl')}>
+      <div className={tokens.questionGapClass}>
         <h2
-          className="text-3xl font-bold mb-3 tracking-tight break-words"
-          style={{ color: textColor }}
+          className={compactHeading ? tokens.questionHeadingCompactClass : tokens.questionHeadingClass}
+          style={{ color: effectiveTextColor }}
         >
           {field.label}
           {required && <span className="ml-1 text-red-600 dark:text-red-400" aria-hidden="true">*</span>}
         </h2>
         {field.description && field.type !== 'section' && field.type !== 'statement' && field.type !== 'welcome_screen' && (
-          <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
+          <p className={tokens.density === 'compact' ? 'text-sm' : 'text-base'} style={{ color: effectiveTextColor, opacity: 0.7 }}>{field.description}</p>
         )}
       </div>
       {fieldEl}
@@ -1281,6 +1322,26 @@ function FormResponseContent() {
   const [draftBanner, setDraftBanner] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
   const [localSaveNote, setLocalSaveNote] = useState<string | null>(null);
   const draftHydratedRef = useRef(false);
+  const classicScrollRef = useRef<HTMLElement>(null);
+
+  const scrollToSectionTop = useCallback((idx: number) => {
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`section-block-${idx}`);
+      const container = classicScrollRef.current;
+      if (el && container && container.scrollHeight > container.clientHeight + 2) {
+        const containerRect = container.getBoundingClientRect();
+        const elRect = el.getBoundingClientRect();
+        const targetTop = Math.max(0, container.scrollTop + (elRect.top - containerRect.top) - 24);
+        container.scrollTo({ top: targetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else if (el) {
+        el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      } else if (container && container.scrollHeight > container.clientHeight + 2) {
+        container.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      } else {
+        window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+      }
+    });
+  }, [reduceMotion]);
 
   const formHasSections = useMemo(
     () => Boolean(form?.fields.some((f) => f.type === 'section')),
@@ -2009,10 +2070,8 @@ function FormResponseContent() {
     }
   })();
 
-  const isDarkSurface = (() => {
-    const rgb = parseHex(form.theme.backgroundColor || '');
-    return rgb ? luminance(rgb) < 0.5 : appTheme === 'dark';
-  })();
+  const themeTokens = getFormThemeTokens(form.theme, appTheme === 'dark');
+  const isDarkSurface = themeTokens.isPageDark;
 
   const sectionErrorSet = errorFieldId ? new Set([errorFieldId]) : undefined;
   const groupedSections = groupFieldsIntoSections(visibleFields, currentAnswers, (fieldId) => nigoRequiredIds.has(fieldId), sectionErrorSet);
@@ -2162,17 +2221,30 @@ function FormResponseContent() {
 
   return (
     <div
-      className="min-h-screen min-h-dvh flex flex-col bg-cover bg-center bg-scroll md:bg-fixed"
-      style={{
-        backgroundColor: form.theme.backgroundColor,
-        backgroundImage: form.theme.backgroundImage ? `url(${form.theme.backgroundImage})` : undefined,
-        color: form.theme.textColor,
-        fontFamily: form.theme.fontFamily,
-      }}
+      className="fl-themed-form relative min-h-screen min-h-dvh flex flex-col bg-scroll md:bg-fixed"
+      style={themeTokens.pageStyle}
       onKeyDown={effectiveMode === 'focused' ? handleKeyDown : undefined}
     >
+      {themeTokens.hasBackgroundImage && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-0 z-0"
+          style={{
+            backgroundColor: themeTokens.isPageDark ? 'rgba(15, 23, 42, 0.35)' : 'rgba(255, 255, 255, 0.35)',
+          }}
+        />
+      )}
       {(showModeToggle || (screenTakeover && showFormView) || form.settings?.showNigoDashboard) && (
-        <div className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center gap-2 px-4 pb-2 pt-[max(.5rem,env(safe-area-inset-top))]" style={{ backgroundColor: form.theme.backgroundColor }}>
+        <div
+          className="sticky top-0 z-20 flex shrink-0 flex-wrap items-center gap-2 px-4 pb-2 pt-[max(.5rem,env(safe-area-inset-top))] backdrop-blur-sm"
+          style={{
+            backgroundColor: themeTokens.hasBackgroundImage || themeTokens.backgroundPattern !== 'none'
+              ? themeTokens.isPageDark
+                ? 'rgba(15, 23, 42, 0.72)'
+                : 'rgba(255, 255, 255, 0.72)'
+              : form.theme.backgroundColor,
+          }}
+        >
           {/* Back to the custom-screen dashboard (only when the screen stepped aside for a new record) */}
           {screenTakeover && showFormView && (
             <button
@@ -2263,13 +2335,13 @@ function FormResponseContent() {
 
       {/* Brand logo */}
       {form.theme.logo && (
-        <div className="pt-6 pb-1 flex justify-center shrink-0">
+        <div className="relative z-10 pt-6 pb-1 flex justify-center shrink-0">
           <img src={form.theme.logo} alt="" className="max-h-16 max-w-[60%] object-contain" />
         </div>
       )}
 
       {/* Portable Save/Load .json progress bar + AI/MCP helper + saved draft banners */}
-      <div className="mx-auto w-full max-w-5xl px-4 pt-2">
+      <div className={cn('relative z-10 mx-auto w-full px-4 pt-2', groupedSections.hasExplicitSections ? 'max-w-6xl' : 'max-w-3xl')}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <FormDraftControls
             form={form}
@@ -2279,6 +2351,7 @@ function FormResponseContent() {
             allowLinkedRecord={Boolean(viewer)}
             isPrivate={isPrivateForm}
             showPublicMcp={form.status === 'published' && !inIframe}
+            primaryColor={form.theme.primaryColor}
             darkSurface={isDarkSurface}
             compact
             localSaveNote={localSaveNote}
@@ -2298,7 +2371,12 @@ function FormResponseContent() {
         {pendingLocalDraft && (
           <div
             role="status"
-            className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-200 bg-primary-50/90 px-3.5 py-2.5 text-xs text-primary-950 dark:border-primary-500/35 dark:bg-primary-500/15 dark:text-primary-100"
+            className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs font-sans"
+            style={{
+              borderColor: `${form.theme.primaryColor}45`,
+              backgroundColor: isDarkSurface ? `${form.theme.primaryColor}20` : `${form.theme.primaryColor}10`,
+              color: form.theme.textColor,
+            }}
           >
             <span>
               <strong>Saved progress found</strong> ({Object.keys(pendingLocalDraft.answers).length}{' '}
@@ -2309,7 +2387,11 @@ function FormResponseContent() {
               <button
                 type="button"
                 onClick={resumeLocalDraft}
-                className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700"
+                className={cn('inline-flex cursor-pointer items-center gap-1 px-3 py-1.5 text-xs font-semibold transition-opacity hover:opacity-90', themeTokens.controlRadiusClass)}
+                style={{
+                  backgroundColor: form.theme.primaryColor,
+                  color: themeTokens.onPrimaryColor,
+                }}
               >
                 <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                 Resume draft
@@ -2317,7 +2399,11 @@ function FormResponseContent() {
               <button
                 type="button"
                 onClick={discardLocalDraft}
-                className="cursor-pointer rounded-lg border border-primary-300/70 px-2.5 py-1.5 text-xs font-medium hover:bg-white/60 dark:border-primary-400/40 dark:hover:bg-slate-800/60"
+                className={cn('cursor-pointer border px-2.5 py-1.5 text-xs font-medium hover:opacity-80', themeTokens.controlRadiusClass)}
+                style={{
+                  borderColor: `${form.theme.textColor}30`,
+                  color: form.theme.textColor,
+                }}
               >
                 Start fresh
               </button>
@@ -2425,7 +2511,7 @@ function FormResponseContent() {
       </div>
 
       {/* Main Content */}
-      <main id="form-main" className="flex-1 flex items-center justify-center p-4 md:p-8">
+      <main id="form-main" className="relative z-10 flex-1 flex items-center justify-center p-4 md:p-8">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentField.id}
@@ -2446,14 +2532,19 @@ function FormResponseContent() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: reduceMotion ? 0 : -30 }}
             transition={{ duration: reduceMotion ? 0 : 0.4 }}
-            className="w-full outline-none"
+            className={cn(
+              'w-full max-w-2xl outline-none',
+              themeTokens.sheetClass,
+            )}
+            style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
           >
             <FieldResponse
               field={currentField}
               value={currentAnswers[currentField.id]}
               onChange={(val) => { if (fieldError) setFieldError(null); setAnswer(currentField.id, val); }}
               primaryColor={form.theme.primaryColor}
-              textColor={form.theme.textColor}
+              textColor={themeTokens.surfaceTextColor}
+              theme={form.theme}
               isRequired={getFieldRequired(currentField)}
               allAnswers={allFormData}
               allFieldIds={form.fields.map(f => f.id)}
@@ -2475,8 +2566,8 @@ function FormResponseContent() {
                 onClick={handleNext}
                 disabled={isSubmitting || uploadsRunning > 0}
                 isLoading={isLastStep && isSubmitting}
-                style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
-                className="px-8"
+                style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
+                className={cn('px-8', themeTokens.controlRadiusClass)}
               >
                 {uploadsRunning > 0
                   ? 'Uploading…'
@@ -2532,37 +2623,92 @@ function FormResponseContent() {
       </>
       ) : (
         /* Classic / Multi-Section Mode */
-        <main id="form-main" className="flex-1 overflow-y-auto">
-          <div className={cn('mx-auto px-4 py-8 sm:py-10 w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
-            <div className="text-center mb-8">
-              {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" style={{ color: form.theme.textColor }} />}
-              <h1 className="text-3xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
-                {form.title}
-              </h1>
-              {form.description && (
-                <p className="mt-2 opacity-70" style={{ color: form.theme.textColor }}>{form.description}</p>
-              )}
-            </div>
+        <main id="form-main" ref={classicScrollRef} className="relative z-10 flex-1">
+          <div className={cn('mx-auto px-4 py-6 sm:py-9 w-full', groupedSections.hasExplicitSections ? 'max-w-6xl' : 'max-w-3xl')}>
+            {/* Styled Form Header (minimal, accent_bar, or hero banner) */}
+            {themeTokens.headerStyle === 'hero' ? (
+              <div
+                className={cn('mb-8 overflow-hidden shadow-md', themeTokens.cardRadiusClass, themeTokens.headerPaddingClass)}
+                style={{
+                  backgroundColor: form.theme.primaryColor,
+                  color: themeTokens.onPrimaryColor,
+                }}
+              >
+                <div className="max-w-3xl mx-auto text-center">
+                  {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2 opacity-90" />}
+                  <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{form.title}</h1>
+                  {form.description && (
+                    <p className="mt-2 text-sm sm:text-base opacity-85">{form.description}</p>
+                  )}
+                </div>
+              </div>
+            ) : themeTokens.headerStyle === 'accent_bar' ? (
+              <div
+                className={cn('mb-8 overflow-hidden border shadow-xs', themeTokens.cardRadiusClass)}
+                style={{
+                  backgroundColor: themeTokens.surfaceBgColor,
+                  borderColor: themeTokens.isSurfaceDark ? 'rgba(255,255,255,0.14)' : 'rgba(15,23,42,0.12)',
+                  color: themeTokens.surfaceTextColor,
+                }}
+              >
+                <div className="h-2 w-full" style={{ backgroundColor: form.theme.primaryColor }} />
+                <div className={cn('text-center sm:text-left', themeTokens.headerPaddingClass)}>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    {form.icon && (
+                      <span
+                        className={cn('mx-auto sm:mx-0 inline-flex h-10 w-10 shrink-0 items-center justify-center', themeTokens.controlRadiusClass)}
+                        style={{ backgroundColor: `${form.theme.primaryColor}16`, color: form.theme.primaryColor }}
+                      >
+                        <DynamicIcon name={form.icon} className="h-5 w-5" />
+                      </span>
+                    )}
+                    <div className="min-w-0">
+                      <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{form.title}</h1>
+                      {form.description && (
+                        <p className="mt-1 text-sm sm:text-base opacity-75">{form.description}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center mb-8">
+                {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" style={{ color: form.theme.textColor }} />}
+                <h1 className="text-3xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+                  {form.title}
+                </h1>
+                {form.description && (
+                  <p className="mt-2 opacity-75" style={{ color: form.theme.textColor }}>{form.description}</p>
+                )}
+              </div>
+            )}
 
             {/* Leading Welcome Screen for multi-section forms before diving into Section 1 */}
             {groupedSections.hasExplicitSections && groupedSections.welcomeField && !welcomeDismissed ? (
-              <div className="mx-auto max-w-xl rounded-2xl border p-6 sm:p-8 text-center shadow-sm" style={{ borderColor: `${form.theme.textColor}20` }}>
-                <h2 className="text-2xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+              <div
+                className={cn('mx-auto max-w-xl text-center', themeTokens.sheetClass || `${themeTokens.cardRadiusClass} border p-6 sm:p-8 shadow-sm`)}
+                style={themeTokens.sheetClass ? themeTokens.sheetStyle : { borderColor: `${form.theme.textColor}20` }}
+              >
+                <h2 className="text-2xl font-bold tracking-tight" style={{ color: themeTokens.surfaceTextColor }}>
                   {groupedSections.welcomeField.label || form.title}
                 </h2>
                 {groupedSections.welcomeField.description && (
-                  <p className="mt-3 text-base opacity-75 whitespace-pre-line" style={{ color: form.theme.textColor }}>
+                  <p className="mt-3 text-base opacity-75 whitespace-pre-line" style={{ color: themeTokens.surfaceTextColor }}>
                     {groupedSections.welcomeField.description}
                   </p>
                 )}
-                <p className="mt-4 text-xs opacity-65" style={{ color: form.theme.textColor }}>
+                <p className="mt-4 text-xs opacity-65" style={{ color: themeTokens.surfaceTextColor }}>
                   {groupedSections.sections.length} sections · {groupedSections.totalInputs} questions — save &amp; resume anytime with Save .json
                 </p>
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                   <Button
                     size="lg"
-                    onClick={() => setWelcomeDismissed(true)}
-                    style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                    onClick={() => {
+                      setWelcomeDismissed(true);
+                      scrollToSectionTop(0);
+                    }}
+                    className={themeTokens.controlRadiusClass}
+                    style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
                   >
                     {groupedSections.welcomeField.properties.buttonText || 'Begin Form'}
                     <ChevronRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
@@ -2576,11 +2722,7 @@ function FormResponseContent() {
                   activeIndex={safeSectionIndex}
                   onSelectSection={(idx) => {
                     setActiveSectionIndex(idx);
-                    if (sectionViewMode === 'all') {
-                      document.getElementById(`section-block-${idx}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
-                    } else {
-                      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
-                    }
+                    scrollToSectionTop(idx);
                   }}
                   totalInputs={groupedSections.totalInputs}
                   answeredCount={groupedSections.answeredCount}
@@ -2588,18 +2730,23 @@ function FormResponseContent() {
                   onToggleSectionViewMode={setSectionViewMode}
                   primaryColor={form.theme.primaryColor}
                   darkSurface={isDarkSurface}
+                  radiusClass={themeTokens.cardRadiusClass}
+                  stickyTopClass="lg:top-16"
                 />
 
-                <div className="min-w-0 flex-1 max-w-2xl">
+                <div
+                  className={cn('min-w-0 flex-1 max-w-3xl', themeTokens.sheetClass)}
+                  style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
+                >
                   {(sectionViewMode === 'paged' && activeSection ? [activeSection] : groupedSections.sections).map((sec) => (
                     <section
                       key={sec.id}
                       id={`section-block-${sec.index}`}
                       aria-label={sec.title}
-                      className="mb-10 scroll-mt-20"
+                      className="mb-10 last:mb-0 scroll-mt-20"
                     >
                       <div
-                        className="mb-6 rounded-2xl border px-5 py-4"
+                        className={cn('mb-6 border px-5 py-4', themeTokens.cardRadiusClass)}
                         style={{
                           borderColor: `${form.theme.primaryColor}35`,
                           backgroundColor: `${form.theme.primaryColor}0d`,
@@ -2609,25 +2756,35 @@ function FormResponseContent() {
                           <span>Section {sec.index + 1} of {groupedSections.sections.length}</span>
                           <span className="tabular-nums opacity-80">{sec.answeredCount} / {sec.totalInputs} answered</span>
                         </div>
-                        <h2 className="mt-1 text-xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+                        <h2 className="mt-1 text-xl font-bold tracking-tight" style={{ color: themeTokens.surfaceTextColor }}>
                           {sec.title}
                         </h2>
                         {sec.description && (
-                          <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: form.theme.textColor }}>
+                          <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: themeTokens.surfaceTextColor }}>
                             {sec.description}
                           </p>
                         )}
                       </div>
 
-                      <div className="space-y-8">
+                      <div className={themeTokens.fieldSpacingClass}>
                         {sec.fields.map((field) => (
-                          <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
+                          <div
+                            key={field.id}
+                            id={`field-${field.id}`}
+                            className={cn(
+                              themeTokens.density === 'compact' ? 'pb-4' : 'pb-6',
+                              'border-b last:border-0 scroll-mt-24',
+                            )}
+                            style={{ borderColor: `${themeTokens.surfaceTextColor}14` }}
+                          >
                             <FieldResponse
                               field={field}
                               value={currentAnswers[field.id]}
                               onChange={(val) => { if (errorFieldId === field.id) setErrorFieldId(null); setAnswer(field.id, val); }}
                               primaryColor={form.theme.primaryColor}
-                              textColor={form.theme.textColor}
+                              textColor={themeTokens.surfaceTextColor}
+                              theme={form.theme}
+                              compactHeading
                               isRequired={getFieldRequired(field)}
                               allAnswers={allFormData}
                               allFieldIds={form.fields.map(f => f.id)}
@@ -2649,14 +2806,16 @@ function FormResponseContent() {
                   {pinConflictNotice}
 
                   {sectionViewMode === 'paged' ? (
-                    <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t pt-6" style={{ borderColor: `${form.theme.textColor}18` }}>
+                    <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t pt-6" style={{ borderColor: `${themeTokens.surfaceTextColor}18` }}>
                       <Button
                         type="button"
                         variant="secondary"
                         disabled={safeSectionIndex === 0}
+                        className={themeTokens.controlRadiusClass}
                         onClick={() => {
-                          setActiveSectionIndex((i) => Math.max(0, i - 1));
-                          window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                          const prev = Math.max(0, safeSectionIndex - 1);
+                          setActiveSectionIndex(prev);
+                          scrollToSectionTop(prev);
                         }}
                         leftIcon={<ChevronLeft className="h-4 w-4" />}
                       >
@@ -2667,11 +2826,13 @@ function FormResponseContent() {
                         <Button
                           type="button"
                           size="lg"
+                          className={themeTokens.controlRadiusClass}
                           onClick={() => {
-                            setActiveSectionIndex((i) => Math.min(groupedSections.sections.length - 1, i + 1));
-                            window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                            const next = Math.min(groupedSections.sections.length - 1, safeSectionIndex + 1);
+                            setActiveSectionIndex(next);
+                            scrollToSectionTop(next);
                           }}
-                          style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                          style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
                           rightIcon={<ChevronRight className="h-4 w-4" />}
                         >
                           Next: {groupedSections.sections[safeSectionIndex + 1]?.title}
@@ -2680,10 +2841,11 @@ function FormResponseContent() {
                         <Button
                           type="button"
                           size="lg"
+                          className={themeTokens.controlRadiusClass}
                           onClick={handleClassicSubmit}
                           disabled={isSubmitting || uploadsRunning > 0}
                           isLoading={isSubmitting}
-                          style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                          style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
                         >
                           {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
                         </Button>
@@ -2696,8 +2858,8 @@ function FormResponseContent() {
                         onClick={handleClassicSubmit}
                         disabled={isSubmitting || uploadsRunning > 0}
                         isLoading={isSubmitting}
-                        style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
-                        className="w-full"
+                        style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
+                        className={cn('w-full', themeTokens.controlRadiusClass)}
                       >
                         {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
                       </Button>
@@ -2706,16 +2868,29 @@ function FormResponseContent() {
                 </div>
               </div>
             ) : (
-              <>
-                <div className="space-y-8">
+              <div
+                className={cn(themeTokens.sheetClass)}
+                style={themeTokens.sheetClass ? themeTokens.sheetStyle : undefined}
+              >
+                <div className={themeTokens.fieldSpacingClass}>
                   {visibleFields.map((field) => (
-                    <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
+                    <div
+                      key={field.id}
+                      id={`field-${field.id}`}
+                      className={cn(
+                        themeTokens.density === 'compact' ? 'pb-4' : 'pb-6',
+                        'border-b last:border-0 scroll-mt-24',
+                      )}
+                      style={{ borderColor: `${themeTokens.surfaceTextColor}14` }}
+                    >
                       <FieldResponse
                         field={field}
                         value={currentAnswers[field.id]}
-                        onChange={(val) => setAnswer(field.id, val)}
+                        onChange={(val) => { if (errorFieldId === field.id) setErrorFieldId(null); setAnswer(field.id, val); }}
                         primaryColor={form.theme.primaryColor}
-                        textColor={form.theme.textColor}
+                        textColor={themeTokens.surfaceTextColor}
+                        theme={form.theme}
+                        compactHeading
                         isRequired={getFieldRequired(field)}
                         allAnswers={allFormData}
                         allFieldIds={form.fields.map(f => f.id)}
@@ -2740,13 +2915,13 @@ function FormResponseContent() {
                     onClick={handleClassicSubmit}
                     disabled={isSubmitting || uploadsRunning > 0}
                     isLoading={isSubmitting}
-                    style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
-                    className="w-full"
+                    style={{ backgroundColor: form.theme.primaryColor, color: themeTokens.onPrimaryColor }}
+                    className={cn('w-full', themeTokens.controlRadiusClass)}
                   >
                     {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
                   </Button>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </main>
