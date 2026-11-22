@@ -56,7 +56,7 @@ final class FormTemplateCatalogTest extends TestCase
         $catalog = new FormTemplateCatalog(dirname(__DIR__, 2) . '/resources/form-templates', $this->root . '/custom');
         $result = $catalog->load();
         $this->assertSame(0, $result['skipped']);
-        $this->assertCount(8, $result['templates']);
+        $this->assertCount(9, $result['templates']);
         foreach ($result['templates'] as $template) foreach ($template['fields'] as $field) {
             $this->assertArrayNotHasKey('id', $field);
             $this->assertIsObject($field['properties']);

@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = 'b47ba76f7220e64e8a5c91d7743083f6';
+    public const SCHEMA_STAMP = '28bad589672a8953ff1026df88842916';
 
     private static ?PDO $instance = null;
     private array $config;

@@ -111,11 +111,12 @@ class McpOnSubmitGuideTextTest extends TestCase
     {
         $seen = 0;
         foreach (array_merge(ChatToolsService::toolDefinitions(), ChatToolsService::chatCatalog()) as $tool) {
-            if (!isset($tool['inputSchema']['properties']['logicScript'])) {
+            $props = $tool['inputSchema']['properties'] ?? null;
+            if (!is_array($props) || !isset($props['logicScript'])) {
                 continue;
             }
             $seen++;
-            $text = $tool['description'] . "\n" . ($tool['inputSchema']['properties']['logicScript']['description'] ?? '');
+            $text = $tool['description'] . "\n" . ($props['logicScript']['description'] ?? '');
             $this->assertSame([], self::unknownContextNames($text), $tool['name']);
             $this->assertStringContainsString('ctx.db.setField', $text, $tool['name']);
         }
