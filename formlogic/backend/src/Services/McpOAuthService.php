@@ -319,14 +319,32 @@ class McpOAuthService
             'issuer' => $origin,
             'authorization_endpoint' => $origin . '/oauth/authorize',
             'token_endpoint' => $origin . '/api/oauth/token',
+            'device_authorization_endpoint' => $origin . '/api/oauth/device',
             'registration_endpoint' => $origin . '/api/oauth/register',
             'response_types_supported' => ['code'],
-            'grant_types_supported' => ['authorization_code', 'refresh_token'],
+            'grant_types_supported' => ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code'],
             'code_challenge_methods_supported' => ['S256'],
-            'token_endpoint_auth_methods_supported' => ['none', 'client_secret_post'],
+            'token_endpoint_auth_methods_supported' => ['none', 'client_secret_post', 'client_secret_basic'],
             'client_id_metadata_document_supported' => true,
             'scopes_supported' => self::supportedScopes(),
         ];
+    }
+
+    /** Normalize an RFC 8707 resource URI (lowercase scheme/host, omit default port, strip trailing slash). */
+    public static function normalizeResource(string $resource): string
+    {
+        $parsed = parse_url(trim($resource));
+        if (!is_array($parsed) || empty($parsed['scheme']) || empty($parsed['host'])) {
+            return trim($resource);
+        }
+        $scheme = strtolower((string) $parsed['scheme']);
+        $host = strtolower((string) $parsed['host']);
+        $port = $parsed['port'] ?? null;
+        $portPart = ($port !== null && !($scheme === 'https' && $port === 443) && !($scheme === 'http' && $port === 80))
+            ? ':' . $port
+            : '';
+        $path = rtrim((string) ($parsed['path'] ?? ''), '/');
+        return $scheme . '://' . $host . $portPart . $path;
     }
 
     // ── Client registration (RFC 7591 DCR + CIMD) ──
@@ -533,7 +551,7 @@ class McpOAuthService
         }
         $expectedResource = self::resourceForClient($request, $client['clientId']);
         $resource = trim((string) ($p['resource'] ?? ''));
-        if ($resource !== '' && $resource !== $expectedResource) {
+        if ($resource !== '' && self::normalizeResource($resource) !== self::normalizeResource($expectedResource)) {
             return $err('invalid_target', 'resource must be ' . $expectedResource);
         }
         [$supported, $default] = self::scopePolicyForClient($client['clientId']);
@@ -634,7 +652,7 @@ class McpOAuthService
         if (!hash_equals((string) $row['code_challenge'], $computed)) {
             return $err('PKCE verification failed');
         }
-        if ($resourceParam !== null && $resourceParam !== '' && $resourceParam !== (string) $row['resource']) {
+        if ($resourceParam !== null && $resourceParam !== '' && self::normalizeResource($resourceParam) !== self::normalizeResource((string) $row['resource'])) {
             return $err('resource does not match the authorization request');
         }
         $scopes = json_decode((string) $row['scopes'], true);

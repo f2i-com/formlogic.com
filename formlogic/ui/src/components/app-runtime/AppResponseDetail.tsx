@@ -62,7 +62,7 @@ function ResponseVisit() {
   // Exclude layout-only screens (they carry no answer) so they don't render as empty
   // "No answer" rows — or, in edit mode, as bogus editable inputs the backend discards.
   const fields = ((runtimeForm?.fields ?? []) as Array<{ id: string; label: string; type: string; properties?: Record<string, unknown> }>)
-    .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+    .filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type));
   const hasLinkedFields = fields.some((f) => f.type === 'linked_record');
 
   useEffect(() => deferEffect(() => {

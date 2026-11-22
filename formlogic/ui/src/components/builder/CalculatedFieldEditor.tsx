@@ -24,7 +24,7 @@ export function CalculatedFieldEditor({
   // Available fields for calculations (excluding layout fields)
   const availableFields = useMemo(
     () => allFields.filter(
-      (f) => !['welcome_screen', 'thank_you', 'statement', 'calculated'].includes(f.type)
+      (f) => !['welcome_screen', 'thank_you', 'statement', 'section', 'calculated'].includes(f.type)
     ),
     [allFields]
   );

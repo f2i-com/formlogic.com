@@ -18,7 +18,7 @@ final class FormTemplateCatalog
             sort($files, SORT_STRING);
             foreach (array_slice($files, 0, 200) as $file) {
                 try {
-                    if (is_link($file) || !is_file($file) || filesize($file) > 262144) throw new \InvalidArgumentException('Invalid template file');
+                    if (is_link($file) || !is_file($file) || filesize($file) > 1048576) throw new \InvalidArgumentException('Invalid template file');
                     $value = json_decode(file_get_contents($file), true, 32, JSON_THROW_ON_ERROR);
                     $id = basename($file, '.json');
                     if (!preg_match('/^[a-z0-9][a-z0-9-]{0,79}$/D', $id) || !is_array($value) || ($value['id'] ?? null) !== $id) throw new \InvalidArgumentException('Template ID must match its filename');
@@ -55,8 +55,8 @@ final class FormTemplateCatalog
         $name = $this->text($value, 'name', 120);
         $category = $this->text($value, 'category', 80, 'other');
         if (!trim($name) || $category === 'all' || !preg_match('/^[a-z0-9][a-z0-9-]{0,79}$/D', $category)) throw new \InvalidArgumentException('Invalid name or category');
-        if (!is_array($value['fields'] ?? null) || !array_is_list($value['fields']) || count($value['fields']) > 100) throw new \InvalidArgumentException('Provide up to 100 fields');
-        $types = ['short_text','long_text','email','phone','number','url','date','time','datetime','dropdown','multiple_choice','checkboxes','rating','scale','file_upload','signature','statement','welcome_screen','thank_you','calculated','linked_record','location','hidden'];
+        if (!is_array($value['fields'] ?? null) || !array_is_list($value['fields']) || count($value['fields']) > 500) throw new \InvalidArgumentException('Provide up to 500 fields');
+        $types = ['short_text','long_text','email','phone','number','url','date','time','datetime','dropdown','multiple_choice','checkboxes','rating','scale','file_upload','signature','section','statement','welcome_screen','thank_you','calculated','linked_record','location','hidden'];
         foreach ($value['fields'] as &$field) {
             if (!is_array($field) || !in_array($field['type'] ?? null, $types, true) || !is_string($field['label'] ?? null) || strlen($field['label']) > 2000 || (isset($field['required']) && !is_bool($field['required']))) throw new \InvalidArgumentException('Invalid field');
             $properties = $field['properties'] ?? [];

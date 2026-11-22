@@ -642,10 +642,10 @@ class McpTest extends TestCase
         $tok = self::$tokens->create($this->userId, $this->appA)['token'];
         $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'logicScript' => str_repeat('x', 102401)])['isError'], 'oversized logicScript rejected');
         $fields = [];
-        for ($i = 0; $i < 250; $i++) {
+        for ($i = 0; $i < 550; $i++) {
             $fields[] = ['id' => "f{$i}", 'type' => 'short_text', 'label' => 'L', 'required' => false];
         }
-        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'fields' => $fields])['isError'], '>200 fields rejected');
+        $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'fields' => $fields])['isError'], '>500 fields rejected');
         // The customScreen cap is 2MB (raised for data:-URI image assets) — 2.2MB must still refuse.
         $this->assertTrue($this->tool($tok, 'create_form', ['title' => 'Big', 'customScreen' => ['enabled' => true, 'html' => str_repeat('y', 2200000)]])['isError'], 'oversized customScreen rejected');
     }

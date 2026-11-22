@@ -1,0 +1,359 @@
+{
+  "id": "hospital-patient-intake",
+  "name": "Hospital Patient Intake & Medical History",
+  "description": "Comprehensive multi-section hospital admission form covering demographics, emergency contacts, insurance, current symptoms, medical history, allergies, medications, and patient consent. Supports saving progress as JSON and resuming anytime.",
+  "category": "healthcare",
+  "categoryLabel": "Healthcare",
+  "categoryIcon": "Stethoscope",
+  "icon": "Stethoscope",
+  "estimatedTime": "10–15 min",
+  "order": 15,
+  "fields": [
+    {
+      "type": "welcome_screen",
+      "label": "Hospital Patient Intake Form",
+      "description": "Please complete each section carefully before your admission or appointment. You can save your progress as a .json file at any time and reload it later to continue.",
+      "required": false,
+      "properties": {
+        "buttonText": "Start Patient Intake"
+      }
+    },
+    {
+      "type": "section",
+      "label": "Patient Identification",
+      "description": "Legal name, date of birth, contact details, and residential address.",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Full Legal Name",
+      "placeholder": "First, Middle, and Last Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Preferred Name / Pronouns",
+      "placeholder": "Optional",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "date",
+      "label": "Date of Birth",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Sex Assigned at Birth",
+      "required": true,
+      "properties": {
+        "options": [
+          { "id": "female", "label": "Female", "value": "female" },
+          { "id": "male", "label": "Male", "value": "male" },
+          { "id": "intersex", "label": "Intersex / Other", "value": "intersex" },
+          { "id": "prefer_not", "label": "Prefer not to say", "value": "prefer_not" }
+        ]
+      }
+    },
+    {
+      "type": "short_text",
+      "label": "National Health / Medicare / Patient ID",
+      "placeholder": "e.g., Medicare or Medical Record Number",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "phone",
+      "label": "Primary Phone Number",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "email",
+      "label": "Email Address",
+      "placeholder": "patient@example.com",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "Residential Address",
+      "placeholder": "Street address, apartment/unit, city, state/province, postal code",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Preferred Language",
+      "placeholder": "e.g., English (let us know if an interpreter is needed)",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "section",
+      "label": "Emergency Contact & Next of Kin",
+      "description": "Who should the hospital contact immediately in case of an emergency?",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Emergency Contact Full Name",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Relationship to Patient",
+      "placeholder": "e.g., Spouse, Parent, Sibling, Carer",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "phone",
+      "label": "Emergency Contact Phone",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Secondary Emergency Contact (Name & Phone)",
+      "placeholder": "Optional backup contact",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Primary Care Physician / GP Name & Clinic",
+      "placeholder": "Doctor's name, clinic, and phone if known",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "section",
+      "label": "Insurance & Billing",
+      "description": "Coverage details for hospital billing and pre-authorization.",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Coverage Type",
+      "required": true,
+      "properties": {
+        "options": [
+          { "id": "public", "label": "Public / Government Health Cover", "value": "public" },
+          { "id": "private", "label": "Private Health Insurance", "value": "private" },
+          { "id": "workers_comp", "label": "Workers' Compensation / Accident", "value": "workers_comp" },
+          { "id": "self_pay", "label": "Self-Pay / Uninsured", "value": "self_pay" }
+        ]
+      }
+    },
+    {
+      "type": "short_text",
+      "label": "Insurance Provider Name",
+      "placeholder": "Leave blank if self-pay",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Policy / Member Number",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Group / Plan Number",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "short_text",
+      "label": "Policyholder Full Name (if different from patient)",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "section",
+      "label": "Current Visit & Symptoms",
+      "description": "Help the triage and clinical team understand why you are visiting today.",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Visit Type",
+      "required": true,
+      "properties": {
+        "options": [
+          { "id": "scheduled", "label": "Scheduled Admission / Procedure", "value": "scheduled" },
+          { "id": "outpatient", "label": "Outpatient Clinic Consultation", "value": "outpatient" },
+          { "id": "urgent", "label": "Urgent / Emergency Assessment", "value": "urgent" },
+          { "id": "follow_up", "label": "Post-Operative / Follow-up", "value": "follow_up" }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Primary Reason for Visit / Chief Complaint",
+      "placeholder": "Describe your symptoms, when they started, and anything that makes them better or worse",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "scale",
+      "label": "Current Pain Level (0 = No Pain, 10 = Worst Possible Pain)",
+      "required": false,
+      "properties": {
+        "scaleStart": 0,
+        "scaleEnd": 10,
+        "scaleStartLabel": "No pain",
+        "scaleEndLabel": "Severe pain"
+      }
+    },
+    {
+      "type": "date",
+      "label": "Symptom Onset Date (if applicable)",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "section",
+      "label": "Medical History, Allergies & Medications",
+      "description": "Important safety information regarding allergies, active prescriptions, and past conditions.",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "multiple_choice",
+      "label": "Do you have any known drug, food, latex, or contrast dye allergies?",
+      "required": true,
+      "properties": {
+        "options": [
+          { "id": "yes", "label": "Yes — listed below", "value": "yes" },
+          { "id": "no", "label": "No known allergies (NKDA)", "value": "no" },
+          { "id": "unsure", "label": "Unsure", "value": "unsure" }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Allergies & Reactions",
+      "placeholder": "List each allergen and reaction (e.g., Penicillin — hives; Peanuts — anaphylaxis)",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "long_text",
+      "label": "Current Medications & Dosages",
+      "placeholder": "Include prescriptions, over-the-counter medicines, vitamins, and supplements with dose & frequency",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "checkboxes",
+      "label": "Existing or Past Medical Conditions (select all that apply)",
+      "required": false,
+      "properties": {
+        "options": [
+          { "id": "hypertension", "label": "High blood pressure (Hypertension)", "value": "hypertension" },
+          { "id": "diabetes", "label": "Diabetes", "value": "diabetes" },
+          { "id": "asthma", "label": "Asthma / COPD / Respiratory condition", "value": "asthma" },
+          { "id": "heart_disease", "label": "Heart disease / Arrhythmia", "value": "heart_disease" },
+          { "id": "stroke", "label": "Stroke / Blood clots (DVT/PE)", "value": "stroke" },
+          { "id": "kidney", "label": "Kidney or liver condition", "value": "kidney" },
+          { "id": "cancer", "label": "History of cancer", "value": "cancer" },
+          { "id": "seizures", "label": "Epilepsy / Seizures", "value": "seizures" },
+          { "id": "bleeding", "label": "Bleeding / Clotting disorder", "value": "bleeding" },
+          { "id": "none", "label": "None of the above", "value": "none" }
+        ]
+      }
+    },
+    {
+      "type": "long_text",
+      "label": "Prior Surgeries, Hospitalizations, or Implants",
+      "placeholder": "Include approximate year and any pacemakers, stents, or metal implants",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "dropdown",
+      "label": "Smoking / Vaping Status",
+      "required": false,
+      "properties": {
+        "options": [
+          { "id": "never", "label": "Never smoked", "value": "never" },
+          { "id": "former", "label": "Former smoker", "value": "former" },
+          { "id": "current", "label": "Current smoker / vaper", "value": "current" }
+        ]
+      }
+    },
+    {
+      "type": "dropdown",
+      "label": "Blood Type (if known)",
+      "required": false,
+      "properties": {
+        "options": [
+          { "id": "unknown", "label": "Unknown", "value": "unknown" },
+          { "id": "o_pos", "label": "O+", "value": "O+" },
+          { "id": "o_neg", "label": "O-", "value": "O-" },
+          { "id": "a_pos", "label": "A+", "value": "A+" },
+          { "id": "a_neg", "label": "A-", "value": "A-" },
+          { "id": "b_pos", "label": "B+", "value": "B+" },
+          { "id": "b_neg", "label": "B-", "value": "B-" },
+          { "id": "ab_pos", "label": "AB+", "value": "AB+" },
+          { "id": "ab_neg", "label": "AB-", "value": "AB-" }
+        ]
+      }
+    },
+    {
+      "type": "section",
+      "label": "Consents & Signature",
+      "description": "Review your answers across all sections, confirm your consent below, and sign.",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "checkboxes",
+      "label": "Patient Consent & Acknowledgements",
+      "required": true,
+      "properties": {
+        "options": [
+          { "id": "accuracy", "label": "I confirm that the medical and personal information provided is accurate to the best of my knowledge.", "value": "accuracy" },
+          { "id": "treatment", "label": "I consent to routine diagnostic evaluation and clinical care by the hospital team.", "value": "treatment" },
+          { "id": "privacy", "label": "I acknowledge receipt of the hospital's patient privacy and health records notice.", "value": "privacy" }
+        ]
+      }
+    },
+    {
+      "type": "short_text",
+      "label": "Authorized Representative Name (if signing on behalf of patient)",
+      "placeholder": "Leave blank if signing for yourself",
+      "required": false,
+      "properties": {}
+    },
+    {
+      "type": "signature",
+      "label": "Patient or Representative Signature",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "date",
+      "label": "Date Signed",
+      "required": true,
+      "properties": {}
+    },
+    {
+      "type": "thank_you",
+      "label": "Patient Intake Submitted",
+      "description": "Thank you for completing your intake form. Our admissions team has received your record — please check in at reception with your photo ID and insurance card.",
+      "required": false,
+      "properties": {}
+    }
+  ]
+}

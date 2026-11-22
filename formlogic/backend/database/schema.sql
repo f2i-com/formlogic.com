@@ -1733,6 +1733,48 @@ CREATE TABLE `mcp_sessions` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `mcp_device_codes` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `device_code_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_code` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `client_name` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `requested_scopes` text COLLATE utf8mb4_unicode_ci NOT NULL,
+  `approved_scopes` text COLLATE utf8mb4_unicode_ci,
+  `app_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `user_id` varchar(36) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('pending','approved','denied','consumed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `last_polled_at` timestamp NULL DEFAULT NULL,
+  `expires_at` timestamp NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_mcp_device_hash` (`device_code_hash`),
+  UNIQUE KEY `idx_mcp_device_user_code` (`user_code`),
+  KEY `idx_mcp_device_expires` (`expires_at`),
+  CONSTRAINT `mcp_device_codes_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `public_form_drafts` (
+  `id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `form_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `token_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `label` varchar(160) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `current_section_index` int NOT NULL DEFAULT '0',
+  `answers` longtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'mcp',
+  `expires_at` timestamp NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_public_draft_token` (`token_hash`),
+  KEY `idx_public_draft_form` (`form_id`,`expires_at`),
+  KEY `idx_public_draft_expires` (`expires_at`),
+  CONSTRAINT `public_form_drafts_ibfk_1` FOREIGN KEY (`form_id`) REFERENCES `forms` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `mfa_challenges` (
   `jti_hash` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
   `user_id` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,

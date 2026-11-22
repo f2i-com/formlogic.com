@@ -1043,7 +1043,7 @@ class ResponseController
 
         // Build map of valid input field IDs
         $inputFieldIds = [];
-        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you', 'hidden'];
+        $nonInputTypes = ['calculated', 'section', 'statement', 'welcome_screen', 'thank_you', 'hidden'];
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
             if (!$id) {
@@ -1099,7 +1099,7 @@ class ResponseController
             $fieldType = $field['type'] ?? 'short_text';
 
             // Skip validation for non-input field types
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) {
+            if (in_array($fieldType, ['section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) {
                 continue;
             }
 
@@ -2073,7 +2073,7 @@ class ResponseController
             // Build fields array from form
             $fields = [];
             foreach ($form['fields'] as $field) {
-                if (in_array($field['type'] ?? '', ['welcome_screen', 'thank_you', 'statement'], true)) {
+                if (in_array($field['type'] ?? '', ['welcome_screen', 'thank_you', 'statement', 'section'], true)) {
                     continue;
                 }
                 $fields[] = [

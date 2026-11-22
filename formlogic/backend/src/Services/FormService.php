@@ -162,6 +162,9 @@ class FormService
         // a sample app write it, and no form screen drew it. It is the list of tick boxes with
         // one box in it: see checkboxProperties for the box it is given when it names none.
         'checkbox' => 'checkboxes',
+        // Common AI/import synonyms for multi-section page dividers.
+        'section_break' => 'section',
+        'page_break' => 'section',
     ];
 
     /** Map a stored/inbound field type onto its canonical name (identity for current types). */
@@ -192,7 +195,7 @@ class FormService
     /** The field types a form screen draws: the same list as `FieldType` in ui/src/types/form.ts. */
     public const FIELD_TYPES = [
         'short_text', 'long_text', 'email', 'phone', 'number', 'url', 'date', 'time', 'datetime', 'dropdown', 'multiple_choice',
-        'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'statement', 'welcome_screen', 'thank_you', 'calculated',
+        'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'section', 'statement', 'welcome_screen', 'thank_you', 'calculated',
         'linked_record', 'location', 'hidden',
     ];
 

@@ -72,7 +72,7 @@ export function LogicEditor({
 
   // Available fields for conditions (excluding the current field)
   const availableFields = useMemo(
-    () => allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type)),
+    () => allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type)),
     [allFields, field.id]
   );
 

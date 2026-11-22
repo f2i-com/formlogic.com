@@ -104,6 +104,7 @@ const AokieGuidePage = lazyWithRetry(() => import('./pages/AokieGuidePage').then
 // their browser opens this page to approve access). Registered in EVERY router branch: signed-out
 // (it forwards to /login?redirect=… and returns), demo, and authed.
 const OAuthAuthorize = lazyWithRetry(() => import('./pages/OAuthAuthorize').then(m => ({ default: m.OAuthAuthorize })));
+const OAuthDeviceApprove = lazyWithRetry(() => import('./pages/OAuthDeviceApprove').then(m => ({ default: m.OAuthDeviceApprove })));
 
 /**
  * Error boundary that auto-resets when the user navigates to a different page. The key remounts
@@ -344,6 +345,7 @@ function AppRoutes() {
         <Route path="/accept-invite" element={<AcceptInvite />} />
         {/* OAuth consent for external AI connectors (sends signed-out visitors through login) */}
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+        <Route path="/oauth/device" element={<OAuthDeviceApprove />} />
         {/* Signing in to an app on its own domain (the same way through login) */}
         <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
         {/* A pass an app requires, met on its plugin's page on this site (it sends signed-out visitors through login) */}
@@ -424,6 +426,7 @@ function AppRoutes() {
         {/* Public content (same as signed-out) */}
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+        <Route path="/oauth/device" element={<OAuthDeviceApprove />} />
 
         <Route path="/docs" element={<Docs />} />
         <Route path="/ai-setup" element={<AiSetupPage />} />
@@ -485,6 +488,7 @@ function AppRoutes() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       {/* OAuth consent for external AI connectors (full screen, no shell) */}
       <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+      <Route path="/oauth/device" element={<OAuthDeviceApprove />} />
       {/* Continuing to an app on its own domain (full screen, no shell) */}
       <Route path="/sign-in/domain" element={<AppDomainSignIn />} />
       {/* A pass an app requires, met on its plugin's page on this site and never on an app's own domain (full screen, no shell) */}

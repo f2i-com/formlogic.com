@@ -606,6 +606,16 @@ ${tourStops}
     </template>
   </category>
 
+  <!-- 9c. Large Multi-Section Forms, Portable .json Save/Resume & Zero-Account AI MCP Filling -->
+  <category>
+    <pattern># BIG FORM # | # LARGE FORM # | # MEDICAL FORM # | # HOSPITAL # | # PATIENT INTAKE # | # SECTIONS # | # SECTION # | # SAVE PROGRESS # | # RESUME # | # SAVE JSON # | # LOAD JSON # | # FILL WITH AI # | # PUBLIC MCP # | # DEVICE LOGIN # | # WITHOUT ACCOUNT #</pattern>
+    <template>
+      [thumbsup] FormLogic supports large multi-section forms up to 500 fields — including a ready-made 6-section Hospital Patient Intake template! Add Section dividers in the Form Builder to get an automatic sticky section outline, Previous/Next section paging, browser auto-save, and portable Save .json / Load .json progress files you can pause and re-import anytime. Even better, respondents can click Fill with AI (MCP) on any published public form to let an AI inspect sections, save a reviewable draft link, or submit on their behalf with zero account required — and the AI can even sign in to a FormLogic account via start_mcp_login and /oauth/device approval!
+      <reply>How does MCP work?</reply>
+      <reply>What field types exist?</reply>
+    </template>
+  </category>
+
   <!-- 10. Interactive Guide (bot.computer) Controls, Moving, Hiding & Fun -->
   <category>
     <pattern># MOVE YOU # | # DRAG YOU # | # HIDE YOU # | # TURN OFF # | # DISMISS # | # IN THE WAY # | # CLOSE YOU #</pattern>

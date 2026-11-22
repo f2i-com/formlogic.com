@@ -561,7 +561,7 @@ export default function FormBuilder() {
     const f = getForm(formId);
     if (!f || f.fields.length === 0) return;
     if (useFormStore.getState().selectedFieldId) return; // respect an existing selection
-    const first = f.fields.find((ff) => !['welcome_screen', 'thank_you', 'statement'].includes(ff.type)) || f.fields[0];
+    const first = f.fields.find((ff) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(ff.type)) || f.fields[0];
     setSelectedField(first.id);
   }, [belowMd, builderLayout, loadFinished, formId, isMobile, getForm, paletteOpenPref, setSelectedField]);
 
@@ -1591,40 +1591,89 @@ export default function FormBuilder() {
                     </div>
                   </section>
                 ) : (
-                  <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragEnd={handleDragEnd}
-                  >
-                    <SortableContext
-                      items={form.fields.map((f) => f.id)}
-                      strategy={verticalListSortingStrategy}
+                  <>
+                    {/* Section Outline Jump Bar for multi-section / large forms */}
+                    {(() => {
+                      const sectionFields = form.fields.filter((f) => f.type === 'section');
+                      if (sectionFields.length === 0) return null;
+                      return (
+                        <nav aria-label="Form sections" className="mb-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-primary-200/70 bg-primary-50/40 px-3 py-2 dark:border-primary-500/20 dark:bg-primary-500/[0.06]">
+                          <span className="mr-1 text-[11px] font-semibold uppercase tracking-wider text-primary-700 dark:text-primary-300">
+                            Sections ({sectionFields.length})
+                          </span>
+                          {sectionFields.map((sec, idx) => (
+                            <button
+                              key={sec.id}
+                              type="button"
+                              onClick={() => {
+                                handleSelectField(sec.id);
+                                document.querySelector(`[data-builder-field-id="${CSS.escape(sec.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }}
+                              className={cn(
+                                'cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium transition-colors',
+                                selectedFieldId === sec.id
+                                  ? 'border-primary-500 bg-primary-600 text-white dark:text-slate-950'
+                                  : 'border-gray-200 bg-white text-gray-700 hover:border-primary-300 hover:text-primary-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-primary-500/50',
+                              )}
+                            >
+                              {idx + 1}. {sec.label || `Section ${idx + 1}`}
+                            </button>
+                          ))}
+                        </nav>
+                      );
+                    })()}
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleDragEnd}
                     >
-                      <div className="space-y-1.5">
-                        {form.fields.map((field) => (
-                          <SortableFieldCard
-                            key={field.id}
-                            field={field}
-                            isSelected={field.id === selectedFieldId}
-                            onSelect={handleSelectField}
-                            onDelete={handleDeleteFieldById}
-                            onDuplicate={handleDuplicateFieldById}
-                          />
-                        ))}
-                      </div>
-                    </SortableContext>
-                  </DndContext>
+                      <SortableContext
+                        items={form.fields.map((f) => f.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        <div className="space-y-1.5">
+                          {(() => {
+                            let secCounter = 0;
+                            return form.fields.map((field) => {
+                              const secNum = field.type === 'section' ? ++secCounter : undefined;
+                              return (
+                                <SortableFieldCard
+                                  key={field.id}
+                                  field={field}
+                                  sectionNumber={secNum}
+                                  isSelected={field.id === selectedFieldId}
+                                  onSelect={handleSelectField}
+                                  onDelete={handleDeleteFieldById}
+                                  onDuplicate={handleDuplicateFieldById}
+                                />
+                              );
+                            });
+                          })()}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  </>
                 )}
 
                 {form.fields.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={openPalette}
-                    className="mt-1.5 flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-sm font-medium text-gray-500 transition-colors hover:border-primary-400 hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-400 dark:hover:border-primary-500/60 dark:hover:text-primary-400"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Add field
-                  </button>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={openPalette}
+                      className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-gray-300 text-sm font-medium text-gray-600 transition-colors hover:border-primary-400 hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-slate-700 dark:text-slate-300 dark:hover:border-primary-500/60 dark:hover:text-primary-400"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add field
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddField('section')}
+                      className="flex min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-primary-300/80 bg-primary-50/30 text-sm font-medium text-primary-700 transition-colors hover:border-primary-500 hover:bg-primary-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:border-primary-500/35 dark:bg-primary-500/[0.05] dark:text-primary-300 dark:hover:border-primary-400 dark:hover:bg-primary-500/10"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add section divider
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

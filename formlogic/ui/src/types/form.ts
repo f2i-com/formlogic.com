@@ -17,6 +17,7 @@ export type FieldType =
   | 'scale'
   | 'file_upload'
   | 'signature'
+  | 'section'
   | 'statement'
   | 'welcome_screen'
   | 'thank_you'
@@ -312,6 +313,7 @@ export const FIELD_TYPE_INFO: Record<FieldType, { label: string; icon: string; c
   signature: { label: 'Signature', icon: 'PenTool', category: 'advanced', description: 'Sign by drawing or typing a name.', keywords: ['sign', 'agree', 'consent', 'authorise'] },
   calculated: { label: 'Calculated', icon: 'Calculator', category: 'advanced', description: 'Works out a value from other answers — nobody types it.', keywords: ['formula', 'total', 'sum', 'maths', 'auto'] },
   linked_record: { label: 'Linked Record', icon: 'Link2', category: 'advanced', description: 'Point at a record in another form, e.g. which customer. Only fillable inside an app.', keywords: ['relation', 'lookup', 'reference', 'customer', 'link'] },
+  section: { label: 'Section / Page', icon: 'LayoutList', category: 'layout', description: 'Split big forms into clear, navigable sections (great for medical & intake forms).', keywords: ['section', 'page', 'break', 'divider', 'step', 'group', 'part', 'medical'] },
   statement: { label: 'Statement', icon: 'MessageSquare', category: 'layout', description: 'A note or instruction — no answer is collected.', keywords: ['text', 'note', 'instruction', 'heading', 'info'] },
   location: { label: 'Location', icon: 'MapPin', category: 'advanced', description: 'Capture where the person is.', keywords: ['gps', 'map', 'address', 'where', 'place'] },
   welcome_screen: { label: 'Welcome Screen', icon: 'PartyPopper', category: 'layout', description: 'An opening page before the first question.', keywords: ['intro', 'start', 'cover', 'first'] },
@@ -333,6 +335,8 @@ export const FIELD_TYPE_ALIASES: Record<string, FieldType> = {
   // One tick box, which bundled packs and the diagram tool write: the list of tick boxes with
   // one box in it (checkboxOptions gives it that box when it names none).
   checkbox: 'checkboxes',
+  section_break: 'section',
+  page_break: 'section',
 };
 
 /** The one box a `checkbox` field has when it names none (FormService::CHECKBOX_YES). */

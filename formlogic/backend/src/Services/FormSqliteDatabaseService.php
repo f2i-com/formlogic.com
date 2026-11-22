@@ -27,6 +27,7 @@ final class FormSqliteDatabaseService
         'welcome_screen',
         'thank_you',
         'statement',
+        'section',
         'section_header',
         'page_break',
         'divider',

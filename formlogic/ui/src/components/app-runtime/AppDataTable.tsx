@@ -15,7 +15,7 @@ import { guessRecordLabel, resolveLinkedDisplays } from '../../lib/recordLabel';
 import { toast } from '../../stores/toastStore';
 
 // Exclude non-data field types from columns
-const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
+const EXCLUDED_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'section', 'signature', 'file_upload']);
 // Rows per page in server mode: a screen of the compact rows. (It was 10, of rows 53px tall;
 // 25 is still a small, fast query.)
 const SERVER_PAGE = 25;

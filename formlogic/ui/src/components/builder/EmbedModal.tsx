@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode, AlertTriangle } from 'lucide-react';
+import { X, Copy, Check, Code, ExternalLink, Monitor, Smartphone, Maximize2, Download, FileJson, FileSpreadsheet, QrCode, AlertTriangle, Bot } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../ui/Button';
 import { toast } from '../../stores/toastStore';
 import { api } from '../../lib/api';
+import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { cn } from '../../lib/utils';
 import type { Form } from '../../types/form';
@@ -53,6 +54,7 @@ export function EmbedModal({ isOpen, onClose, formId, formTitle, formStatus, pub
 
   const baseUrl = window.location.origin;
   const formUrl = `${baseUrl}/form/${formId}`;
+  const formMcpUrl = new URL(resolveBackendApiUrl(`/mcp/forms/${encodeURIComponent(formId)}`), baseUrl).toString();
 
   // Escape HTML special characters to prevent XSS in generated embed code
   const escapeHtml = (str: string) =>
@@ -387,6 +389,36 @@ function closeFormPopup() {
                   </p>
                 </div>
               </div>
+
+              {!browserLocalDemo && (
+                <div className="rounded-xl border border-primary-200/80 dark:border-primary-500/30 bg-primary-50/40 dark:bg-primary-500/10 p-4">
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Bot className="h-4 w-4 text-primary-600 dark:text-primary-400" aria-hidden="true" />
+                    <h4 className={GROUP_TITLE}>AI / MCP link (no account required)</h4>
+                  </div>
+                  <p className="text-xs text-gray-600 dark:text-slate-300 mb-2.5">
+                    Respondents can connect an AI assistant (Claude, ChatGPT, Cursor) directly to this MCP endpoint to inspect sections, save a reviewable draft, or submit on their behalf — no FormLogic account needed.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={formMcpUrl}
+                      aria-label="Form MCP endpoint URL"
+                      className="flex-1 min-w-0 px-3 py-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg font-mono text-xs text-gray-700 dark:text-slate-300 truncate focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    />
+                    <Button
+                      variant="outline"
+                      className="flex-none px-3 max-sm:min-h-11"
+                      onClick={() => handleCopy(formMcpUrl, 'mcp')}
+                      aria-label={copied === 'mcp' ? 'Copied' : 'Copy AI MCP URL'}
+                      title={copied === 'mcp' ? 'Copied' : 'Copy AI MCP URL'}
+                    >
+                      {copied === 'mcp' ? <Check className="h-4 w-4 text-primary-600 dark:text-primary-400" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

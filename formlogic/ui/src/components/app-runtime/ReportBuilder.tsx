@@ -12,7 +12,7 @@ type Filter = { field: string; op: string; value: string };
 type Join = { via: string; formId: string; type: 'inner' | 'left' };
 type RangePreset = NonNullable<AppReportSpec['dateRange']>['preset'];
 
-const LAYOUT_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
+const LAYOUT_TYPES = ['welcome_screen', 'thank_you', 'statement', 'section', 'signature', 'file_upload'];
 const CHOICE_TYPES = ['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio'];
 const DATE_TYPES = ['date', 'datetime'];
 const NUMERIC_TYPES = ['number', 'rating', 'scale'];

@@ -1383,7 +1383,7 @@ JS;
             foreach (is_array($form['fields'] ?? null) ? $form['fields'] : [] as $f) {
                 if (!is_array($f)) continue;
                 $type = (string) ($f['type'] ?? 'short_text');
-                if (in_array($type, ['welcome_screen', 'thank_you', 'statement', 'section_break'], true)) continue;
+                if (in_array($type, ['welcome_screen', 'thank_you', 'statement', 'section', 'section_break'], true)) continue;
                 $fid = (string) ($f['id'] ?? '');
                 $colName = is_string($colMap[$fid] ?? null) ? (string) $colMap[$fid] : $fid;
                 if ($colName === '') continue;

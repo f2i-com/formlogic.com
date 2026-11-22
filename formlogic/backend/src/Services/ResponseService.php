@@ -821,7 +821,7 @@ class ResponseService
         }
 
         $inputFieldIds = [];
-        $nonInputTypes = ['calculated', 'statement', 'welcome_screen', 'thank_you', 'hidden'];
+        $nonInputTypes = ['calculated', 'section', 'statement', 'welcome_screen', 'thank_you', 'hidden'];
         foreach ($fields as $field) {
             $id = $field['id'] ?? null;
             if (!$id) {
@@ -865,7 +865,7 @@ class ResponseService
             if (isset($errors[$fieldId])) continue;
 
             $fieldType = $field['type'] ?? 'short_text';
-            if (in_array($fieldType, ['statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) continue;
+            if (in_array($fieldType, ['section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'], true)) continue;
 
             // Hidden-by-logic fields lose only their REQUIRED status; an answer that
             // arrives for one is still type-checked (see ResponseController).
@@ -3837,7 +3837,7 @@ class ResponseService
         $headers = ['Response ID', 'Submitted At (UTC)', 'Status'];
         foreach ($fields as $field) {
             // Display-only layout fields carry no data — don't emit empty columns for them.
-            if (in_array($field['type'] ?? '', ['statement', 'welcome_screen', 'thank_you'], true)) {
+            if (in_array($field['type'] ?? '', ['section', 'statement', 'welcome_screen', 'thank_you'], true)) {
                 continue;
             }
             $label = $field['label'] ?? $field['id'];
@@ -3877,7 +3877,7 @@ class ResponseService
 
                 foreach ($fields as $field) {
                     // Skip display-only layout fields so row columns stay aligned with the header.
-                    if (in_array($field['type'] ?? '', ['statement', 'welcome_screen', 'thank_you'], true)) {
+                    if (in_array($field['type'] ?? '', ['section', 'statement', 'welcome_screen', 'thank_you'], true)) {
                         continue;
                     }
                     $value = $response['answers'][$field['id']] ?? '';

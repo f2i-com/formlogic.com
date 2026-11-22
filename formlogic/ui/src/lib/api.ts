@@ -846,7 +846,7 @@ export interface OAuthErrorInfo {
 
 /** What the /oauth/authorize consent page renders — GET /api/oauth/authorize-info. */
 export interface OAuthAuthorizeInfo {
-  clientName: string;
+  clientName?: string | null;
   clientUri?: string | null;
   /** Host of the validated redirect_uri — displayed prominently (anti-phishing). */
   redirectHost: string;
@@ -857,6 +857,10 @@ export interface OAuthAuthorizeInfo {
   isDesktopLink?: boolean;
   /** True when this consent is for linking the FormLogic Backups plugin. */
   isBackupLink?: boolean;
+  /** True when this consent is for linking the Aokie Companion app. */
+  isAokieCompanionLink?: boolean;
+  /** True when the server requires selecting a specific app to bind this grant to. */
+  appBindingRequired?: boolean;
   /** Hostname the desktop sent, when `isDesktopLink` is true (may be null). */
   device?: string | null;
 }
@@ -3087,6 +3091,47 @@ class ApiClient {
           : (typeof b.message === 'string' ? b.message : undefined),
       },
     };
+  }
+
+  /** Fetch a saved public-form draft by its unguessable token (e.g. from AI/MCP resume link). */
+  async getPublicFormDraft(formId: string, token: string): Promise<ApiResponse<{
+    draft: {
+      formId: string;
+      label: string | null;
+      currentSectionIndex: number;
+      answers: Record<string, unknown>;
+      source: string;
+      expiresAt: string;
+      updatedAt: string;
+    };
+  }>> {
+    return this.request(`/public/forms/${seg(formId)}/drafts/${seg(token)}`, { method: 'GET' });
+  }
+
+  /** Inspect an RFC 8628 / in-MCP device sign-in request by user code (XXXX-XXXX). */
+  async getOAuthDeviceInfo(code: string): Promise<ApiResponse<{
+    userCode: string;
+    clientName: string;
+    scopes: string[];
+    scopeLabels: Record<string, string>;
+    appId: string | null;
+    expiresAt: string;
+    status: string;
+  }>> {
+    return this.request(`/oauth/device/info?${new URLSearchParams({ code }).toString()}`, { method: 'GET' });
+  }
+
+  /** Approve or deny an in-MCP device sign-in request from the authenticated browser session. */
+  async approveOAuthDevice(payload: {
+    code: string;
+    scopes?: string[];
+    appId?: string | null;
+    deny?: boolean;
+  }): Promise<ApiResponse<{ success: boolean; status: string }>> {
+    return this.request('/oauth/device/approve', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 
   async addAppForm(appId: string, formId: string, displayName?: string): Promise<ApiResponse<{ forms: unknown[] }>> {

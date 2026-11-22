@@ -1,9 +1,19 @@
 import { useEffect, useState, useMemo, useCallback, useRef, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
-import { ChevronUp, ChevronDown, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft, Wrench, ShieldAlert } from 'lucide-react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Check, FileQuestion, RefreshCw, ClipboardCheck, Plus, ArrowLeft, Wrench, ShieldAlert, RotateCcw, X } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { NigoDashboard } from '../components/builder/NigoDashboard';
+import { FormSectionNav } from '../components/forms/FormSectionNav';
+import { FormDraftControls } from '../components/forms/FormDraftControls';
+import {
+  clearLocalPublicDraft,
+  groupFieldsIntoSections,
+  loadLocalPublicDraft,
+  saveLocalPublicDraft,
+  type LocalPublicDraftRecord,
+  type ParsedDraftImport,
+} from '../lib/formDraft';
 import { useFormStore } from '../stores/formStore';
 import { useResponseStore } from '../stores/responseStore';
 import { useConditionalLogic } from '../hooks/useFormLogic';
@@ -397,6 +407,12 @@ export function FieldResponse({
         );
       }
 
+      case 'section': {
+        return field.description ? (
+          <p className="text-base opacity-75 whitespace-pre-line">{field.description}</p>
+        ) : null;
+      }
+
       case 'statement':
       case 'welcome_screen': {
         const mediaUrl = field.properties.mediaUrl;
@@ -755,7 +771,7 @@ export function FieldResponse({
           {field.label}
           {required && <span className="ml-1 text-red-600 dark:text-red-400" aria-hidden="true">*</span>}
         </h2>
-        {field.description && field.type !== 'statement' && field.type !== 'welcome_screen' && (
+        {field.description && field.type !== 'section' && field.type !== 'statement' && field.type !== 'welcome_screen' && (
           <p className="text-lg" style={{ color: textColor, opacity: 0.7 }}>{field.description}</p>
         )}
       </div>
@@ -1255,14 +1271,143 @@ function FormResponseContent() {
     return () => resetCurrentResponse();
   }, [formId, resetCurrentResponse, startResponse]);
 
-  // Set initial presentation mode from form settings
+  // Set initial presentation mode from form settings (multi-section forms default to paged classic
+  // sections when presentationMode === 'both' so big forms open with a section outline right away).
   const [presentationFormId, setPresentationFormId] = useState<string>();
-  if (form?.id && presentationFormId !== form.id) {
+  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
+  const [sectionViewMode, setSectionViewMode] = useState<'paged' | 'all'>('paged');
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [pendingLocalDraft, setPendingLocalDraft] = useState<LocalPublicDraftRecord | null>(null);
+  const [draftBanner, setDraftBanner] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+  const [localSaveNote, setLocalSaveNote] = useState<string | null>(null);
+  const draftHydratedRef = useRef(false);
+
+  const formHasSections = useMemo(
+    () => Boolean(form?.fields.some((f) => f.type === 'section')),
+    [form?.fields],
+  );
+  const isPrivateForm = form?.encryption?.mode === 'private';
+
+  if (form?.id && form.fields.length > 0 && presentationFormId !== form.id) {
     setPresentationFormId(form.id);
-    if (form?.settings?.defaultPresentationMode) {
+    setActiveSectionIndex(0);
+    setWelcomeDismissed(false);
+    if (formHasSections && (form.settings?.presentationMode || 'both') === 'both') {
+      setResponseMode('classic');
+    } else if (form?.settings?.defaultPresentationMode) {
       setResponseMode(form.settings.defaultPresentationMode);
     }
   }
+
+  const activeFormId = form?.id;
+  const activePresentationMode = form?.settings?.presentationMode || 'both';
+  // Hydrate `?draft=fld_...` (from AI/MCP resume link) OR surface a browser-saved local draft
+  // (non-private forms only — E2EE private forms never auto-write plaintext to localStorage).
+  useEffect(() => {
+    if (!activeFormId || !formId || !form?.fields.length || draftHydratedRef.current) return;
+    draftHydratedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const draftToken = params.get('draft');
+    if (draftToken && /^fld_[a-f0-9]{64}$/.test(draftToken)) {
+      // Strip the secret token from the URL immediately so Referer/history never leaks it.
+      params.delete('draft');
+      const nextSearch = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`);
+      api.getPublicFormDraft(formId, draftToken).then((res) => {
+        if (res.data?.draft) {
+          const d = res.data.draft;
+          const entries = Object.entries(d.answers || {});
+          entries.forEach(([k, v]) => setAnswer(k, v));
+          if (entries.length > 0) setWelcomeDismissed(true);
+          if (formHasSections && activePresentationMode === 'both') {
+            setResponseMode('classic');
+          }
+          setActiveSectionIndex(Math.max(0, d.currentSectionIndex || 0));
+          setDraftBanner({
+            tone: 'info',
+            text: `Loaded ${entries.length} pre-filled ${entries.length === 1 ? 'answer' : 'answers'}${d.label ? ` (${d.label})` : ''} — please review all sections before submitting.`,
+          });
+        } else {
+          setDraftBanner({
+            tone: 'warning',
+            text: 'The resume draft link has expired or was already submitted. You can still load a saved .json file below.',
+          });
+        }
+      }).catch(() => {
+        setDraftBanner({ tone: 'warning', text: 'Could not load the resume draft link.' });
+      });
+      return;
+    }
+    if (!isPrivateForm) {
+      const saved = loadLocalPublicDraft(activeFormId);
+      if (saved && Object.keys(saved.answers).length > 0) {
+        queueMicrotask(() => setPendingLocalDraft(saved));
+      }
+    }
+  }, [activeFormId, formId, form?.fields.length, formHasSections, activePresentationMode, isPrivateForm, setAnswer]);
+
+  // Debounced local auto-save for non-private public forms (cleared automatically on submit).
+  useEffect(() => {
+    if (!form?.id || isPrivateForm || isSubmitted || !hasUnsavedAnswers) return;
+    const timer = window.setTimeout(() => {
+      const hiddenIds = new Set(hiddenFields.map((f) => f.id));
+      const userAnswers: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(currentAnswers)) {
+        if (!hiddenIds.has(k)) userAnswers[k] = v;
+      }
+      if (saveLocalPublicDraft(form.id, userAnswers, activeSectionIndex, currentStep)) {
+        setLocalSaveNote('Saved locally');
+      }
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [form?.id, isPrivateForm, isSubmitted, hasUnsavedAnswers, currentAnswers, hiddenFields, activeSectionIndex, currentStep]);
+
+  const applyImportedDraft = useCallback((imported: ParsedDraftImport) => {
+    for (const [k, v] of Object.entries(imported.answers)) {
+      setAnswer(k, v);
+    }
+    setWelcomeDismissed(true);
+    setPendingLocalDraft(null);
+    if (formHasSections && activePresentationMode === 'both') {
+      setResponseMode('classic');
+    }
+    setActiveSectionIndex(Math.max(0, imported.currentSectionIndex));
+    if (typeof imported.currentStep === 'number') {
+      goToStep(imported.currentStep);
+    }
+    const suffix = imported.warnings.length > 0 ? ` ${imported.warnings[0]}` : '';
+    setDraftBanner({
+      tone: imported.warnings.length > 0 ? 'warning' : 'info',
+      text: `Loaded ${imported.matchedCount} saved ${imported.matchedCount === 1 ? 'answer' : 'answers'} from your .json file.${suffix}`,
+    });
+  }, [setAnswer, goToStep, formHasSections, activePresentationMode]);
+
+  const resumeLocalDraft = useCallback(() => {
+    if (!pendingLocalDraft) return;
+    const entries = Object.entries(pendingLocalDraft.answers);
+    for (const [k, v] of entries) {
+      setAnswer(k, v);
+    }
+    setWelcomeDismissed(true);
+    if (formHasSections && activePresentationMode === 'both') {
+      setResponseMode('classic');
+    }
+    setActiveSectionIndex(Math.max(0, pendingLocalDraft.currentSectionIndex));
+    if (pendingLocalDraft.currentStep > 0) {
+      goToStep(pendingLocalDraft.currentStep);
+    }
+    setPendingLocalDraft(null);
+    setDraftBanner({
+      tone: 'info',
+      text: `Resumed ${entries.length} locally saved ${entries.length === 1 ? 'answer' : 'answers'}.`,
+    });
+  }, [pendingLocalDraft, setAnswer, goToStep, formHasSections, activePresentationMode]);
+
+  const discardLocalDraft = useCallback(() => {
+    if (activeFormId) clearLocalPublicDraft(activeFormId);
+    setPendingLocalDraft(null);
+    setLocalSaveNote(null);
+  }, [activeFormId]);
 
   // Get dynamic required status for a field
   const getFieldRequired = (field: FormField) => {
@@ -1567,6 +1712,8 @@ function FormResponseContent() {
       // a theme or setting you had just changed elsewhere. A submission must never
       // write the form definition.
       if (!queued) setFormLocal(form.id, { responseCount: form.responseCount + 1 });
+      if (form?.id) clearLocalPublicDraft(form.id);
+      setLocalSaveNote(null);
       setIsSubmitted(true);
       const privateRedirectUrl = form.settings?.redirectUrl;
       if (privateRedirectUrl) {
@@ -1680,6 +1827,8 @@ function FormResponseContent() {
     // Only an ACCEPTED submission bumps the count — a queued one hasn't landed yet.
     // Local-only bump — see the note on the private path above.
     if (!queuedForSync) setFormLocal(form.id, { responseCount: form.responseCount + 1 });
+    if (form?.id) clearLocalPublicDraft(form.id);
+    setLocalSaveNote(null);
     setIsSubmitted(true);
 
     // Handle redirectUrl (strict URL validation to prevent XSS)
@@ -1764,7 +1913,7 @@ function FormResponseContent() {
     // Skip the required/validation gate for non-input field types — a calculated
     // or layout step has nothing for the user to fill in, so requiring it would
     // be an unrecoverable dead-end. Matches the classic-mode exclusion.
-    if (currentField && !['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(currentField.type)) {
+    if (currentField && !['section', 'statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(currentField.type)) {
       const answer = currentAnswers[currentField.id];
 
       // Check required
@@ -1852,12 +2001,48 @@ function FormResponseContent() {
     }
   };
 
-  const failClassic = (fieldId: string, message: string) => {
-    setSubmitError(message);
-    setErrorFieldId(fieldId);
+  const inIframe = (() => {
+    try {
+      return typeof window !== 'undefined' && window.self !== window.top;
+    } catch {
+      return true;
+    }
+  })();
+
+  const isDarkSurface = (() => {
+    const rgb = parseHex(form.theme.backgroundColor || '');
+    return rgb ? luminance(rgb) < 0.5 : appTheme === 'dark';
+  })();
+
+  const sectionErrorSet = errorFieldId ? new Set([errorFieldId]) : undefined;
+  const groupedSections = groupFieldsIntoSections(visibleFields, currentAnswers, (fieldId) => nigoRequiredIds.has(fieldId), sectionErrorSet);
+  const safeSectionIndex = Math.min(activeSectionIndex, Math.max(0, groupedSections.sections.length - 1));
+  const activeSection = groupedSections.sections[safeSectionIndex];
+  const focusedSection = groupedSections.hasExplicitSections && currentField
+    ? groupedSections.sections.find(
+        (sec) => sec.id === currentField.id || sec.fields.some((f) => f.id === currentField.id),
+      )
+    : undefined;
+
+  const focusClassicField = (fieldId: string) => {
     const el = document.getElementById(`field-${fieldId}`);
     el?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
     (el?.querySelector('input,textarea,select,[role="radiogroup"],[role="group"],button') as HTMLElement | null)?.focus();
+  };
+
+  const failClassic = (fieldId: string, message: string) => {
+    setSubmitError(message);
+    setErrorFieldId(fieldId);
+    if (groupedSections.hasExplicitSections) {
+      setWelcomeDismissed(true);
+      const secIdx = groupedSections.sections.findIndex((sec) => sec.fields.some((f) => f.id === fieldId));
+      if (secIdx >= 0 && sectionViewMode === 'paged' && secIdx !== safeSectionIndex) {
+        setActiveSectionIndex(secIdx);
+        window.setTimeout(() => focusClassicField(fieldId), 50);
+        return;
+      }
+    }
+    focusClassicField(fieldId);
   };
 
   const handleClassicSubmit = () => {
@@ -1866,7 +2051,7 @@ function FormResponseContent() {
     setErrorFieldId(null);
     const missingFields = visibleFields.filter(f => {
       if (!getFieldRequired(f)) return false;
-      if (['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) return false;
+      if (['section', 'statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) return false;
       const answer = currentAnswers[f.id];
       return answer === undefined || answer === null || answer === '' || (Array.isArray(answer) && answer.length === 0)
         // An empty typed signature is the sentinel 'typed:' (a non-empty string) — treat as blank.
@@ -1881,7 +2066,7 @@ function FormResponseContent() {
 
     // Run field validation rules
     for (const f of visibleFields) {
-      if (['statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) continue;
+      if (['section', 'statement', 'calculated', 'welcome_screen', 'thank_you', 'hidden'].includes(f.type)) continue;
       const answer = currentAnswers[f.id];
       if (answer === undefined || answer === null || answer === '') continue;
       if (f.validation?.length) {
@@ -2055,7 +2240,17 @@ function FormResponseContent() {
                 onFieldClick={(fieldId) => {
                   const idx = visibleFields.findIndex((f) => f.id === fieldId);
                   if (idx >= 0) {
-                    if (effectiveMode === 'focused') goToStep(idx);
+                    if (effectiveMode === 'focused') {
+                      goToStep(idx);
+                    } else if (groupedSections.hasExplicitSections) {
+                      setWelcomeDismissed(true);
+                      const secIdx = groupedSections.sections.findIndex((s) => s.fields.some((f) => f.id === fieldId));
+                      if (secIdx >= 0 && sectionViewMode === 'paged') {
+                        setActiveSectionIndex(secIdx);
+                        window.setTimeout(() => focusClassicField(fieldId), 50);
+                        return;
+                      }
+                    }
                     const el = document.getElementById(`field-${fieldId}`);
                     if (el) el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
                   }
@@ -2072,6 +2267,86 @@ function FormResponseContent() {
           <img src={form.theme.logo} alt="" className="max-h-16 max-w-[60%] object-contain" />
         </div>
       )}
+
+      {/* Portable Save/Load .json progress bar + AI/MCP helper + saved draft banners */}
+      <div className="mx-auto w-full max-w-5xl px-4 pt-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <FormDraftControls
+            form={form}
+            answers={currentAnswers}
+            currentSectionIndex={safeSectionIndex}
+            currentStep={safeCurrentStep}
+            allowLinkedRecord={Boolean(viewer)}
+            isPrivate={isPrivateForm}
+            showPublicMcp={form.status === 'published' && !inIframe}
+            darkSurface={isDarkSurface}
+            compact
+            localSaveNote={localSaveNote}
+            onImportDraft={applyImportedDraft}
+            onDraftSaved={(count) => {
+              setDraftBanner({
+                tone: 'info',
+                text: isPrivateForm
+                  ? `Downloaded ${count} ${count === 1 ? 'answer' : 'answers'} as .json. Keep this file private — it is stored unencrypted on your device.`
+                  : `Saved ${count} ${count === 1 ? 'answer' : 'answers'} to a .json file. Re-import it anytime with "Load .json" to resume.`,
+              });
+            }}
+            onDraftError={(msg) => setDraftBanner({ tone: 'warning', text: msg })}
+          />
+        </div>
+
+        {pendingLocalDraft && (
+          <div
+            role="status"
+            className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary-200 bg-primary-50/90 px-3.5 py-2.5 text-xs text-primary-950 dark:border-primary-500/35 dark:bg-primary-500/15 dark:text-primary-100"
+          >
+            <span>
+              <strong>Saved progress found</strong> ({Object.keys(pendingLocalDraft.answers).length}{' '}
+              {Object.keys(pendingLocalDraft.answers).length === 1 ? 'answer' : 'answers'} from{' '}
+              {new Date(pendingLocalDraft.savedAt).toLocaleString()}). Would you like to continue where you left off?
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={resumeLocalDraft}
+                className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-700"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                Resume draft
+              </button>
+              <button
+                type="button"
+                onClick={discardLocalDraft}
+                className="cursor-pointer rounded-lg border border-primary-300/70 px-2.5 py-1.5 text-xs font-medium hover:bg-white/60 dark:border-primary-400/40 dark:hover:bg-slate-800/60"
+              >
+                Start fresh
+              </button>
+            </div>
+          </div>
+        )}
+
+        {draftBanner && (
+          <div
+            role="status"
+            className={cn(
+              'mt-2.5 flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2 text-xs',
+              draftBanner.tone === 'warning'
+                ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200',
+            )}
+          >
+            <span>{draftBanner.text}</span>
+            <button
+              type="button"
+              onClick={() => setDraftBanner(null)}
+              aria-label="Dismiss draft notice"
+              className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 hover:opacity-100"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Hidden fields with a calculation expression compute off-screen, so their value is
           captured in the submission without ever being shown to the respondent. */}
@@ -2132,6 +2407,19 @@ function FormResponseContent() {
             <p className="text-sm md:text-base" style={{ color: form.theme.textColor, opacity: 0.7 }}>
               {form.description}
             </p>
+          )}
+          {focusedSection && (
+            <div className="mt-2 flex justify-center">
+              <span
+                className="inline-flex items-center rounded-full px-3 py-0.5 text-xs font-semibold"
+                style={{
+                  backgroundColor: `${form.theme.primaryColor}18`,
+                  color: form.theme.primaryColor,
+                }}
+              >
+                Section {focusedSection.index + 1} of {groupedSections.sections.length} · {focusedSection.title}
+              </span>
+            </div>
           )}
         </div>
       </div>
@@ -2194,7 +2482,9 @@ function FormResponseContent() {
                   ? 'Uploading…'
                   : isLastStep
                     ? 'Submit'
-                    : (currentField?.type === 'welcome_screen' && currentField.properties.buttonText) || 'OK'} <Check className="ml-2 h-4 w-4" />
+                    : currentField?.type === 'section'
+                      ? 'Continue'
+                      : (currentField?.type === 'welcome_screen' && currentField.properties.buttonText) || 'OK'} <Check className="ml-2 h-4 w-4" />
               </Button>
               <span className="hidden sm:inline text-sm opacity-50">
                 press <kbd className="px-2 py-1 bg-current/10 rounded opacity-80">Enter</kbd>
@@ -2241,10 +2531,10 @@ function FormResponseContent() {
       </div>
       </>
       ) : (
-        /* Classic Mode */
+        /* Classic / Multi-Section Mode */
         <main id="form-main" className="flex-1 overflow-y-auto">
-          <div className="max-w-xl mx-auto px-4 py-12 w-full">
-            <div className="text-center mb-10">
+          <div className={cn('mx-auto px-4 py-8 sm:py-10 w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
+            <div className="text-center mb-8">
               {form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2" style={{ color: form.theme.textColor }} />}
               <h1 className="text-3xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
                 {form.title}
@@ -2254,45 +2544,210 @@ function FormResponseContent() {
               )}
             </div>
 
-            <div className="space-y-8">
-              {visibleFields.map((field) => (
-                <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
-                  <FieldResponse
-                    field={field}
-                    value={currentAnswers[field.id]}
-                    onChange={(val) => setAnswer(field.id, val)}
-                    primaryColor={form.theme.primaryColor}
-                    textColor={form.theme.textColor}
-                    isRequired={getFieldRequired(field)}
-                    allAnswers={allFormData}
-                    allFieldIds={form.fields.map(f => f.id)}
-                    onCalculated={handleCalculated}
-                    formId={formId}
-                    autoFocus={false}
-                    error={errorFieldId === field.id ? (submitError || undefined) : undefined}
-                    onUploadingChange={handleUploadingChange}
-                  />
+            {/* Leading Welcome Screen for multi-section forms before diving into Section 1 */}
+            {groupedSections.hasExplicitSections && groupedSections.welcomeField && !welcomeDismissed ? (
+              <div className="mx-auto max-w-xl rounded-2xl border p-6 sm:p-8 text-center shadow-sm" style={{ borderColor: `${form.theme.textColor}20` }}>
+                <h2 className="text-2xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+                  {groupedSections.welcomeField.label || form.title}
+                </h2>
+                {groupedSections.welcomeField.description && (
+                  <p className="mt-3 text-base opacity-75 whitespace-pre-line" style={{ color: form.theme.textColor }}>
+                    {groupedSections.welcomeField.description}
+                  </p>
+                )}
+                <p className="mt-4 text-xs opacity-65" style={{ color: form.theme.textColor }}>
+                  {groupedSections.sections.length} sections · {groupedSections.totalInputs} questions — save &amp; resume anytime with Save .json
+                </p>
+                <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+                  <Button
+                    size="lg"
+                    onClick={() => setWelcomeDismissed(true)}
+                    style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                  >
+                    {groupedSections.welcomeField.properties.buttonText || 'Begin Form'}
+                    <ChevronRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
+                  </Button>
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : groupedSections.hasExplicitSections ? (
+              <div className="lg:flex lg:items-start lg:gap-8">
+                <FormSectionNav
+                  sections={groupedSections.sections}
+                  activeIndex={safeSectionIndex}
+                  onSelectSection={(idx) => {
+                    setActiveSectionIndex(idx);
+                    if (sectionViewMode === 'all') {
+                      document.getElementById(`section-block-${idx}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+                    } else {
+                      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                    }
+                  }}
+                  totalInputs={groupedSections.totalInputs}
+                  answeredCount={groupedSections.answeredCount}
+                  sectionViewMode={sectionViewMode}
+                  onToggleSectionViewMode={setSectionViewMode}
+                  primaryColor={form.theme.primaryColor}
+                  darkSurface={isDarkSurface}
+                />
 
-            {submitError && (
-              <p role="alert" aria-live="polite" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">{submitError}</p>
+                <div className="min-w-0 flex-1 max-w-2xl">
+                  {(sectionViewMode === 'paged' && activeSection ? [activeSection] : groupedSections.sections).map((sec) => (
+                    <section
+                      key={sec.id}
+                      id={`section-block-${sec.index}`}
+                      aria-label={sec.title}
+                      className="mb-10 scroll-mt-20"
+                    >
+                      <div
+                        className="mb-6 rounded-2xl border px-5 py-4"
+                        style={{
+                          borderColor: `${form.theme.primaryColor}35`,
+                          backgroundColor: `${form.theme.primaryColor}0d`,
+                        }}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wider" style={{ color: form.theme.primaryColor }}>
+                          <span>Section {sec.index + 1} of {groupedSections.sections.length}</span>
+                          <span className="tabular-nums opacity-80">{sec.answeredCount} / {sec.totalInputs} answered</span>
+                        </div>
+                        <h2 className="mt-1 text-xl font-bold tracking-tight" style={{ color: form.theme.textColor }}>
+                          {sec.title}
+                        </h2>
+                        {sec.description && (
+                          <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: form.theme.textColor }}>
+                            {sec.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-8">
+                        {sec.fields.map((field) => (
+                          <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
+                            <FieldResponse
+                              field={field}
+                              value={currentAnswers[field.id]}
+                              onChange={(val) => { if (errorFieldId === field.id) setErrorFieldId(null); setAnswer(field.id, val); }}
+                              primaryColor={form.theme.primaryColor}
+                              textColor={form.theme.textColor}
+                              isRequired={getFieldRequired(field)}
+                              allAnswers={allFormData}
+                              allFieldIds={form.fields.map(f => f.id)}
+                              onCalculated={handleCalculated}
+                              formId={formId}
+                              autoFocus={false}
+                              error={errorFieldId === field.id ? (submitError || undefined) : undefined}
+                              onUploadingChange={handleUploadingChange}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+
+                  {submitError && (
+                    <p role="alert" aria-live="polite" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">{submitError}</p>
+                  )}
+                  {pinConflictNotice}
+
+                  {sectionViewMode === 'paged' ? (
+                    <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t pt-6" style={{ borderColor: `${form.theme.textColor}18` }}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={safeSectionIndex === 0}
+                        onClick={() => {
+                          setActiveSectionIndex((i) => Math.max(0, i - 1));
+                          window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                        }}
+                        leftIcon={<ChevronLeft className="h-4 w-4" />}
+                      >
+                        Previous section
+                      </Button>
+
+                      {safeSectionIndex < groupedSections.sections.length - 1 ? (
+                        <Button
+                          type="button"
+                          size="lg"
+                          onClick={() => {
+                            setActiveSectionIndex((i) => Math.min(groupedSections.sections.length - 1, i + 1));
+                            window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                          }}
+                          style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                          rightIcon={<ChevronRight className="h-4 w-4" />}
+                        >
+                          Next: {groupedSections.sections[safeSectionIndex + 1]?.title}
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="lg"
+                          onClick={handleClassicSubmit}
+                          disabled={isSubmitting || uploadsRunning > 0}
+                          isLoading={isSubmitting}
+                          style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                        >
+                          {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-10">
+                      <Button
+                        size="lg"
+                        onClick={handleClassicSubmit}
+                        disabled={isSubmitting || uploadsRunning > 0}
+                        isLoading={isSubmitting}
+                        style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                        className="w-full"
+                      >
+                        {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-8">
+                  {visibleFields.map((field) => (
+                    <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b last:border-0 scroll-mt-24" style={{ borderColor: `${form.theme.textColor}15` }}>
+                      <FieldResponse
+                        field={field}
+                        value={currentAnswers[field.id]}
+                        onChange={(val) => setAnswer(field.id, val)}
+                        primaryColor={form.theme.primaryColor}
+                        textColor={form.theme.textColor}
+                        isRequired={getFieldRequired(field)}
+                        allAnswers={allFormData}
+                        allFieldIds={form.fields.map(f => f.id)}
+                        onCalculated={handleCalculated}
+                        formId={formId}
+                        autoFocus={false}
+                        error={errorFieldId === field.id ? (submitError || undefined) : undefined}
+                        onUploadingChange={handleUploadingChange}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {submitError && (
+                  <p role="alert" aria-live="polite" className="mt-4 text-center text-sm font-medium text-red-600 dark:text-red-400">{submitError}</p>
+                )}
+                {pinConflictNotice}
+
+                <div className="mt-10">
+                  <Button
+                    size="lg"
+                    onClick={handleClassicSubmit}
+                    disabled={isSubmitting || uploadsRunning > 0}
+                    isLoading={isSubmitting}
+                    style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
+                    className="w-full"
+                  >
+                    {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
+                  </Button>
+                </div>
+              </>
             )}
-            {pinConflictNotice}
-
-            <div className="mt-10">
-              <Button
-                size="lg"
-                onClick={handleClassicSubmit}
-                disabled={isSubmitting || uploadsRunning > 0}
-                isLoading={isSubmitting}
-                style={{ backgroundColor: form.theme.primaryColor, color: readableForegroundColor(form.theme.primaryColor) }}
-                className="w-full"
-              >
-                {uploadsRunning > 0 ? 'Uploading…' : form.settings.submitButtonText || 'Submit'}
-              </Button>
-            </div>
           </div>
         </main>
       )}

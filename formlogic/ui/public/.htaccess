@@ -31,6 +31,7 @@ Options -Indexes
   # goes through /api/ (the rewrites below end in api/public/index.php), so the path says it.
   # `setifempty` would say it too, but needs Apache 2.4.7, and is a 500 on every request before it.
   SetEnvIf Request_URI "^/api/" IS_API
+  SetEnvIf Request_URI "^/\.well-known/" IS_API
   Header always set X-Content-Type-Options "nosniff" env=!IS_API
   Header always set Referrer-Policy "strict-origin-when-cross-origin" env=!IS_API
   # geolocation/camera stay SELF-only: the form runtime has a Location (GPS)
@@ -100,6 +101,11 @@ Options -Indexes
   RewriteEngine On
   RewriteBase /
 
+  # Preserve Authorization headers under Apache + PHP-FPM / FastCGI / CGI so MCP Bearer
+  # tokens and OAuth Basic client credentials always reach Slim PSR-7 cleanly.
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
   # Belt-and-suspenders: block any request that targets a .env file, anywhere in the tree.
   RewriteRule (^|/)\.env(\.|$) - [F,L]
 
@@ -144,7 +150,7 @@ Options -Indexes
   # condition fails and discovery happens on the API domain instead. (/oauth/authorize needs no rule —
   # the consent page is an SPA route, so the fallback below already serves it.)
   RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
-  RewriteRule ^\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server)$ api/public/index.php [QSA,L]
+  RewriteRule ^\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server(/.*)?|openid-configuration)$ api/public/index.php [QSA,L]
 
   # Native Aokie Companion deployment discovery. Keep both the extensionless
   # well-known URI and its explicit JSON alias out of the SPA fallback so a

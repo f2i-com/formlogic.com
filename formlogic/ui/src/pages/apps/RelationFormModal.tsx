@@ -24,7 +24,7 @@ interface RelationFormModalProps {
   existing?: null;
 }
 
-const EXCLUDED_TYPES = new Set(['statement', 'welcome_screen', 'thank_you', 'linked_record']);
+const EXCLUDED_TYPES = new Set(['section', 'statement', 'welcome_screen', 'thank_you', 'linked_record']);
 
 export function RelationFormModal({ isOpen, onClose, onSave, appForms, defaultSourceFormId }: RelationFormModalProps) {
   const [sourceFormId, setSourceFormId] = useState('');

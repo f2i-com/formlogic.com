@@ -403,7 +403,7 @@ TXT;
         foreach ($form['fields'] ?? [] as $f) {
             $type = (string) ($f['type'] ?? '');
             // Display-only pseudo fields hold no data.
-            if (in_array($type, ['statement', 'welcome_screen', 'thank_you'], true)) {
+            if (in_array($type, ['section', 'statement', 'welcome_screen', 'thank_you'], true)) {
                 continue;
             }
             $link = null;

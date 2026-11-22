@@ -751,16 +751,16 @@ class AdminController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'logicScript must be a string up to 100KB'], 400);
         }
         if (isset($input['fields'])) {
-            if (!is_array($input['fields']) || count($input['fields']) > 200) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'fields must be an array of at most 200 items'], 400);
+            if (!is_array($input['fields']) || count($input['fields']) > 500) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'fields must be an array of at most 500 items'], 400);
             }
             foreach ($input['fields'] as $i => $f) {
                 if (!is_array($f) || !isset($f['type'])) {
                     return $this->jsonResponse($response, ['error' => true, 'message' => "field at index {$i} is malformed (must be an object with a type)"], 400);
                 }
             }
-            if (strlen((string) json_encode($input['fields'])) > 512000) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'fields exceed the 500KB limit'], 400);
+            if (strlen((string) json_encode($input['fields'])) > 2097152) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'fields exceed the 2MB limit'], 400);
             }
         }
         foreach (['settings', 'theme'] as $k) {

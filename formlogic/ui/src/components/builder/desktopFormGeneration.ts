@@ -27,6 +27,7 @@ const FIELD_TYPES = new Set([
   'scale',
   'file_upload',
   'signature',
+  'section',
   'statement',
   'welcome_screen',
   'thank_you',

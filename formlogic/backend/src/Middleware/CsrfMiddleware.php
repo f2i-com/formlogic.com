@@ -191,6 +191,17 @@ class CsrfMiddleware implements MiddlewareInterface
         if ($method === 'POST' && preg_match('#^/api/forms/[^/]+/responses$#', $path)) {
             return true;
         }
+        // MCP Streamable HTTP & OAuth 2.1 Bearer/PKCE/device endpoints never authenticate via
+        // session cookies; exempting them stops a same-origin browser holding a session cookie
+        // from hitting 403 CSRF failures when testing MCP or exchanging OAuth tokens.
+        if (in_array($method, ['POST', 'DELETE'], true) && (
+            $path === '/api/mcp'
+            || $path === '/api/mcp/public'
+            || preg_match('#^/api/mcp/forms/[^/]+$#', $path) === 1
+            || in_array($path, ['/api/oauth/token', '/api/oauth/register', '/api/oauth/device', '/api/oauth/device/token'], true)
+        )) {
+            return true;
+        }
         // Marketplace ephemeral sandbox endpoints (stateless HMAC-signed demo token in body,
         // called from opaque-origin sandbox iframes with no session cookies)
         if ($method === 'POST' && preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset)$#', $path)) {

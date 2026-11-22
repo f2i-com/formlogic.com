@@ -279,11 +279,12 @@ class McpOAuthFlowTest extends TestCase
         $this->assertSame($origin, $body['issuer'], 'issuer is the bare origin, no path');
         $this->assertSame($origin . '/oauth/authorize', $body['authorization_endpoint']);
         $this->assertSame($origin . '/api/oauth/token', $body['token_endpoint']);
+        $this->assertSame($origin . '/api/oauth/device', $body['device_authorization_endpoint']);
         $this->assertSame($origin . '/api/oauth/register', $body['registration_endpoint']);
         $this->assertSame(['code'], $body['response_types_supported']);
-        $this->assertSame(['authorization_code', 'refresh_token'], $body['grant_types_supported']);
+        $this->assertSame(['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:device_code'], $body['grant_types_supported']);
         $this->assertSame(['S256'], $body['code_challenge_methods_supported']);
-        $this->assertSame(['none', 'client_secret_post'], $body['token_endpoint_auth_methods_supported']);
+        $this->assertSame(['none', 'client_secret_post', 'client_secret_basic'], $body['token_endpoint_auth_methods_supported']);
         $this->assertTrue($body['client_id_metadata_document_supported']);
         $this->assertContains('offline_access', $body['scopes_supported']);
     }

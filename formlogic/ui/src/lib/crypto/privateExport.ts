@@ -55,7 +55,7 @@ export interface PrivateCsvExportResult {
   partial: boolean;
 }
 
-const EXPORTABLE = (f: FormField) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type);
+const EXPORTABLE = (f: FormField) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type);
 
 /**
  * Full-fetch decrypt-and-assemble CSV. Fetches ALL rows page by page (no search

@@ -3056,6 +3056,50 @@ class MySQLConnection
             $pdo->exec("ALTER TABLE mcp_oauth_codes ADD COLUMN device_label VARCHAR(120) NULL AFTER resource");
         }
 
+        // Portable public-form drafts (long multi-section forms & AI/MCP assisted filling).
+        // Tokens are 256-bit random values stored strictly as SHA-256 hashes; rows expire after 72h.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS public_form_drafts (
+                id VARCHAR(36) PRIMARY KEY,
+                form_id VARCHAR(36) NOT NULL,
+                token_hash CHAR(64) NOT NULL,
+                label VARCHAR(160) NULL,
+                current_section_index INT NOT NULL DEFAULT 0,
+                answers LONGTEXT NOT NULL,
+                source VARCHAR(32) NOT NULL DEFAULT 'mcp',
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE INDEX idx_public_draft_token (token_hash),
+                INDEX idx_public_draft_form (form_id, expires_at),
+                INDEX idx_public_draft_expires (expires_at),
+                FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
+        // RFC 8628 / in-MCP device login challenges allowing an AI client connected to the
+        // zero-account public MCP endpoint to sign in on behalf of a user via browser approval.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS mcp_device_codes (
+                id VARCHAR(36) PRIMARY KEY,
+                device_code_hash CHAR(64) NOT NULL,
+                user_code VARCHAR(16) NOT NULL,
+                client_name VARCHAR(120) NOT NULL,
+                requested_scopes TEXT NOT NULL,
+                approved_scopes TEXT NULL,
+                app_id VARCHAR(36) NULL,
+                user_id VARCHAR(36) NULL,
+                status ENUM('pending','approved','denied','consumed') NOT NULL DEFAULT 'pending',
+                last_polled_at TIMESTAMP NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE INDEX idx_mcp_device_hash (device_code_hash),
+                UNIQUE INDEX idx_mcp_device_user_code (user_code),
+                INDEX idx_mcp_device_expires (expires_at),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+
         // Widen app_role_permissions.permission (was VARCHAR(50)) so connector capability grants —
         // connector.<connectorId>.<command> (see ConnectorCommandController) — aren't silently
         // truncated on longer connector/command names, which would break the exact-match RBAC check

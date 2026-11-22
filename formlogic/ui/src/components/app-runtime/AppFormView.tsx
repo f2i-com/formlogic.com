@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback, useRef, useMemo, cloneElement, isValidElement, type ReactElement } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Box, Check, ChevronUp, ChevronDown, CheckCircle, ClipboardCheck, Clock, Plus } from 'lucide-react';
+import { ArrowLeft, Box, Check, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, CheckCircle, ClipboardCheck, Clock, Plus, X } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { handleRovingKeys } from '../../lib/a11y';
 import { readableForegroundColor } from '../../lib/color';
 import { useAuthStore } from '../../stores/authStore';
+import { useUIStore } from '../../stores/uiStore';
 import { useAppRuntimeStore } from '../../stores/appRuntimeStore';
 import { toast } from '../../stores/toastStore';
 import { AppSectionDashboard } from './AppSectionDashboard';
+import { FormSectionNav } from '../forms/FormSectionNav';
+import { FormDraftControls } from '../forms/FormDraftControls';
+import { groupFieldsIntoSections, type ParsedDraftImport } from '../../lib/formDraft';
 
 // Foreground for text/icons on a solid fill of `c`. When the form sets its own theme
 // color we derive contrast from THAT hex; otherwise fall back to the app's
@@ -512,6 +516,12 @@ function FieldInput({
     );
   }
 
+  if (field.type === 'section') {
+    return field.description ? (
+      <p className="text-base text-gray-600 dark:text-slate-400 whitespace-pre-line">{field.description}</p>
+    ) : null;
+  }
+
   if (field.type === 'statement' || field.type === 'welcome_screen') {
     const mediaUrl = field.properties?.mediaUrl as string | undefined;
     const mediaType = (field.properties?.mediaType as string | undefined) || 'image';
@@ -790,6 +800,11 @@ function FormVisit() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [showNigo, setShowNigo] = useState(false);
   const [viewModeChoice, setViewMode] = useState<'focused' | 'classic' | null>(null);
+  const [activeSectionIndex, setActiveSectionIndex] = useState(0);
+  const [sectionViewMode, setSectionViewMode] = useState<'paged' | 'all'>('paged');
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+  const [draftBanner, setDraftBanner] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+  const appTheme = useUIStore((s) => s.theme);
   const [calculatedValues, setCalculatedValues] = useState<Record<string, unknown>>({});
   // Keep user navigation within this form, while honoring a new-record deep link.
   const [showFormView, setShowFormView] = useState(wantNew);
@@ -919,9 +934,52 @@ function FormVisit() {
   const allowBack = formSettings?.allowBackNavigation !== false;
   const nigoEnabled = formSettings?.showNigoDashboard === true;
   const presentationMode = (formSettings?.presentationMode as string) || 'both';
-  const viewMode = viewModeChoice ?? (formSettings?.defaultPresentationMode === 'classic' ? 'classic' : 'focused');
+  const hasExplicitSections = useMemo(
+    () => ((form?.fields ?? []) as FormField[]).some((f) => f.type === 'section'),
+    [form?.fields],
+  );
+  const viewMode = viewModeChoice ?? (
+    hasExplicitSections && presentationMode === 'both'
+      ? 'classic'
+      : formSettings?.defaultPresentationMode === 'classic'
+        ? 'classic'
+        : 'focused'
+  );
   const effectiveMode = presentationMode === 'both' ? viewMode : presentationMode;
   const showModeToggle = presentationMode === 'both';
+
+  const groupedSections = useMemo(
+    () => groupFieldsIntoSections(
+      fields as unknown as FormFieldType[],
+      answers,
+      isFieldRequired,
+      errorFieldId ? new Set([errorFieldId]) : undefined,
+    ),
+    [fields, answers, isFieldRequired, errorFieldId],
+  );
+  const safeSectionIndex = Math.min(activeSectionIndex, Math.max(0, groupedSections.sections.length - 1));
+  const activeSection = groupedSections.sections[safeSectionIndex];
+
+  const draftFormDescriptor = useMemo(() => ({
+    id: formId || '',
+    title: String(form?.title || config?.forms.find((f) => f.formId === formId)?.displayName || 'Form'),
+    fields: ((form?.fields ?? []) as unknown as FormFieldType[]),
+  }), [formId, form?.title, form?.fields, config?.forms]);
+
+  const applyImportedDraft = useCallback((imported: ParsedDraftImport) => {
+    setAnswers((prev) => ({ ...prev, ...imported.answers }));
+    setRecoverableDraft(null);
+    setWelcomeDismissed(true);
+    setActiveSectionIndex(Math.max(0, imported.currentSectionIndex));
+    if (typeof imported.currentStep === 'number') {
+      setCurrentStep(imported.currentStep);
+    }
+    const suffix = imported.warnings.length > 0 ? ` ${imported.warnings[0]}` : '';
+    setDraftBanner({
+      tone: imported.warnings.length > 0 ? 'warning' : 'info',
+      text: `Loaded ${imported.matchedCount} saved ${imported.matchedCount === 1 ? 'answer' : 'answers'} from your .json file.${suffix}`,
+    });
+  }, []);
 
   // Build sets for NigoDashboard
   const visibleFieldIds = useMemo(() => new Set(fields.map((f) => f.id)), [fields]);
@@ -940,6 +998,11 @@ function FormVisit() {
   const currentField = fields[safeStep];
   const progress = fields.length > 0 ? ((safeStep + 1) / fields.length) * 100 : 0;
   const isLastStep = safeStep === fields.length - 1;
+  const focusedSection = groupedSections.hasExplicitSections && currentField
+    ? groupedSections.sections.find(
+        (sec) => sec.id === currentField.id || sec.fields.some((f) => f.id === currentField.id),
+      )
+    : undefined;
 
   const runtimeForm = config?.forms.find((f) => f.formId === formId);
 
@@ -1069,7 +1132,7 @@ function FormVisit() {
 
   const handleNext = useCallback(() => {
     if (uploadsRunning > 0) return;
-    if (currentField && isFieldRequired(currentField.id) && !['statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
+    if (currentField && isFieldRequired(currentField.id) && !['section', 'statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
       // `typed:` is an empty typed-signature (no name entered yet).
       if (answer === undefined || answer === null || answer === '' || answer === 'typed:' || (Array.isArray(answer) && answer.length === 0)) {
@@ -1078,7 +1141,7 @@ function FormVisit() {
       }
     }
     // Validate against field validation rules (minLength, maxLength, min, max, pattern)
-    if (currentField) {
+    if (currentField && !['section', 'statement', 'calculated', 'welcome_screen'].includes(currentField.type)) {
       const answer = answersRef.current[currentField.id];
       const validationError = validateField(currentField, answer);
       if (validationError) {
@@ -1110,11 +1173,24 @@ function FormVisit() {
     }
   }, [handleNext, currentField?.type]);
 
+  const focusClassicOrSectionField = useCallback((id: string) => {
+    if (groupedSections.hasExplicitSections) {
+      setWelcomeDismissed(true);
+      const secIdx = groupedSections.sections.findIndex((sec) => sec.fields.some((f) => f.id === id));
+      if (secIdx >= 0 && sectionViewMode === 'paged' && secIdx !== safeSectionIndex) {
+        setActiveSectionIndex(secIdx);
+        window.setTimeout(() => focusField(id), 50);
+        return;
+      }
+    }
+    focusField(id);
+  }, [groupedSections, sectionViewMode, safeSectionIndex, focusField]);
+
   const handleClassicSubmit = useCallback(() => {
     setError(null);
     const missingFields = fields.filter(f => {
       if (!isFieldRequired(f.id)) return false;
-      if (['statement', 'calculated', 'welcome_screen'].includes(f.type)) return false;
+      if (['section', 'statement', 'calculated', 'welcome_screen'].includes(f.type)) return false;
       const answer = answersRef.current[f.id];
       return answer === undefined || answer === null || answer === '' || answer === 'typed:' || (Array.isArray(answer) && answer.length === 0);
     });
@@ -1125,22 +1201,23 @@ function FormVisit() {
       const shown = names.slice(0, 3).join(', ');
       setError(names.length <= 3 ? `Please fill in: ${shown}` : `Please fill in: ${shown} and ${names.length - 3} more`);
       setErrorFieldId(missingFields[0].id);
-      focusField(missingFields[0].id);
+      focusClassicOrSectionField(missingFields[0].id);
       return;
     }
     // Validate all fields against their validation rules
     for (const f of fields) {
+      if (['section', 'statement', 'calculated', 'welcome_screen'].includes(f.type)) continue;
       const answer = answersRef.current[f.id];
       const validationError = validateField(f, answer);
       if (validationError) {
         setError(`${f.label}: ${validationError}`);
         setErrorFieldId(f.id);
-        focusField(f.id);
+        focusClassicOrSectionField(f.id);
         return;
       }
     }
     handleSubmit();
-  }, [fields, handleSubmit, isFieldRequired, focusField]);
+  }, [fields, handleSubmit, isFieldRequired, focusClassicOrSectionField]);
 
   if (!formId || !config) return null;
 
@@ -1483,6 +1560,51 @@ function FormVisit() {
         )}
       </div>
 
+      {/* Portable Save/Load .json progress bar */}
+      <div className="px-4 pt-3">
+        <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
+          <FormDraftControls
+            form={draftFormDescriptor}
+            answers={answers}
+            currentSectionIndex={safeSectionIndex}
+            currentStep={safeStep}
+            allowLinkedRecord={true}
+            showPublicMcp={false}
+            darkSurface={appTheme === 'dark'}
+            compact
+            onImportDraft={applyImportedDraft}
+            onDraftSaved={(count) => {
+              setDraftBanner({
+                tone: 'info',
+                text: `Saved ${count} ${count === 1 ? 'answer' : 'answers'} to a .json file. Re-import it anytime with "Load .json" to resume.`,
+              });
+            }}
+            onDraftError={(msg) => setDraftBanner({ tone: 'warning', text: msg })}
+          />
+          {draftBanner && (
+            <div
+              role="status"
+              className={cn(
+                'mt-2.5 flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2 text-xs',
+                draftBanner.tone === 'warning'
+                  ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                  : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200',
+              )}
+            >
+              <span>{draftBanner.text}</span>
+              <button
+                type="button"
+                onClick={() => setDraftBanner(null)}
+                aria-label="Dismiss draft notice"
+                className="inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 hover:opacity-100"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* An earlier visit in this tab left answers behind (in-app navigation resets this
           component, and phones discard backgrounded tabs). Offer them rather than
           restoring silently — answers appearing on their own are their own confusion. */}
@@ -1556,11 +1678,24 @@ function FormVisit() {
             >
               {/* Field label & description */}
               <div className="mb-8">
+                {focusedSection && (
+                  <div className="mb-2">
+                    <span
+                      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                      style={{
+                        backgroundColor: primaryColor.startsWith('#') ? `${primaryColor}18` : 'color-mix(in srgb, var(--app-primary, #6366f1) 12%, transparent)',
+                        color: primaryColor,
+                      }}
+                    >
+                      Section {focusedSection.index + 1} of {groupedSections.sections.length} · {focusedSection.title}
+                    </span>
+                  </div>
+                )}
                 <h2 className="text-2xl md:text-3xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
                   {currentField.label}
                   {isFieldRequired(currentField.id) && <span className="text-red-500 ml-1">*</span>}
                 </h2>
-                {currentField.description && currentField.type !== 'statement' && currentField.type !== 'welcome_screen' && (
+                {currentField.description && currentField.type !== 'section' && currentField.type !== 'statement' && currentField.type !== 'welcome_screen' && (
                   <p className="text-base md:text-lg text-gray-500 dark:text-slate-400 leading-relaxed">
                     {currentField.description}
                   </p>
@@ -1611,7 +1746,9 @@ function FormVisit() {
                       ? 'Uploading...'
                       : isLastStep
                         ? 'Submit'
-                        : (currentField?.type === 'welcome_screen' && (currentField.properties?.buttonText as string | undefined)) || 'OK'}
+                        : currentField?.type === 'section'
+                          ? 'Continue'
+                          : (currentField?.type === 'welcome_screen' && (currentField.properties?.buttonText as string | undefined)) || 'OK'}
                   {!submitting && <Check className="h-4 w-4" />}
                 </button>
                 {!submitting && (
@@ -1671,9 +1808,9 @@ function FormVisit() {
       )}
       </>
       ) : (
-        /* Classic Mode */
+        /* Classic / Multi-Section Mode */
         <div className="flex-1 overflow-y-auto px-4 py-8">
-          <div className="max-w-xl mx-auto w-full">
+          <div className={cn('mx-auto w-full', groupedSections.hasExplicitSections ? 'max-w-5xl' : 'max-w-xl')}>
             {Boolean(form?.title) && (
               <div className="text-center mb-8">
                 {typeof form?.icon === 'string' && form.icon && <DynamicIcon name={form.icon} className="h-8 w-8 mx-auto mb-2 text-gray-900 dark:text-white" />}
@@ -1686,62 +1823,254 @@ function FormVisit() {
               </div>
             )}
 
-            <div className="space-y-8">
-              {fields.map((field) => (
-                <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-gray-100 dark:border-slate-800 last:border-0 scroll-mt-24">
-                  <div className="mb-6">
-                    <h2 className="text-xl md:text-2xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
-                      {field.label}
-                      {isFieldRequired(field.id) && <span className="text-red-500 ml-1">*</span>}
-                    </h2>
-                    {field.description && field.type !== 'statement' && field.type !== 'welcome_screen' && (
-                      <p className="text-sm md:text-base text-gray-500 dark:text-slate-400 leading-relaxed">
-                        {field.description}
-                      </p>
-                    )}
-                  </div>
-                  <FieldInput
-                    field={field}
-                    value={answers[field.id]}
-                    onChange={(val) => handleSetAnswer(field.id, val)}
-                    primaryColor={primaryColor}
-                    formId={formId}
-                    appSlug={appSlug}
-                    allAnswers={allFormData}
-                    onCalculated={handleCalculated}
-                    allFieldIds={fields.map(f => f.id)}
-                    autoFocus={false}
-                    isRequired={isFieldRequired(field.id)}
-                    error={errorFieldId === field.id ? (error || undefined) : undefined}
-                    onUploadingChange={handleUploadingChange}
-                  />
-                </div>
-              ))}
-            </div>
-
-            {error && (
-              <motion.p
-                role="alert"
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="mt-4 text-sm text-red-600 dark:text-red-400 text-center"
-              >
-                {error}
-              </motion.p>
+            {/* NIGO panel in classic mode too */}
+            {nigoEnabled && showNigo && (
+              <div className="mb-6 max-w-sm">
+                <NigoDashboard
+                  fields={fields as unknown as FormFieldType[]}
+                  formData={answers}
+                  visibleFields={visibleFieldIds}
+                  requiredFields={requiredFieldIds}
+                  onFieldClick={(fId) => focusClassicOrSectionField(fId)}
+                />
+              </div>
             )}
 
-            <div className="mt-10">
-              <button
-                type="button"
-                onClick={handleClassicSubmit}
-                disabled={submitting || uploadsRunning > 0}
-                className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
-                style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
-              >
-                {submitting ? 'Submitting...' : uploadsRunning > 0 ? 'Uploading...' : (formSettings?.submitButtonText as string) || 'Submit'}
-                {!submitting && <Check className="h-4 w-4" />}
-              </button>
-            </div>
+            {groupedSections.hasExplicitSections && groupedSections.welcomeField && !welcomeDismissed ? (
+              <div className="mx-auto max-w-xl rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 sm:p-8 text-center shadow-sm">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">
+                  {groupedSections.welcomeField.label || String(form?.title || '')}
+                </h2>
+                {groupedSections.welcomeField.description && (
+                  <p className="mt-3 text-base text-gray-600 dark:text-slate-400 whitespace-pre-line">
+                    {groupedSections.welcomeField.description}
+                  </p>
+                )}
+                <p className="mt-4 text-xs text-gray-500 dark:text-slate-400">
+                  {groupedSections.sections.length} sections · {groupedSections.totalInputs} questions — save &amp; resume anytime with Save .json
+                </p>
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => setWelcomeDismissed(true)}
+                    className="inline-flex items-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg cursor-pointer"
+                    style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
+                  >
+                    {(groupedSections.welcomeField.properties?.buttonText as string | undefined) || 'Begin Form'}
+                    <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            ) : groupedSections.hasExplicitSections ? (
+              <div className="lg:flex lg:items-start lg:gap-8">
+                <FormSectionNav
+                  sections={groupedSections.sections}
+                  activeIndex={safeSectionIndex}
+                  onSelectSection={(idx) => {
+                    setActiveSectionIndex(idx);
+                    if (sectionViewMode === 'all') {
+                      document.getElementById(`app-section-block-${idx}`)?.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+                    } else {
+                      window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                    }
+                  }}
+                  totalInputs={groupedSections.totalInputs}
+                  answeredCount={groupedSections.answeredCount}
+                  sectionViewMode={sectionViewMode}
+                  onToggleSectionViewMode={setSectionViewMode}
+                  primaryColor={primaryColor.startsWith('#') ? primaryColor : '#6366f1'}
+                  darkSurface={appTheme === 'dark'}
+                />
+
+                <div className="min-w-0 flex-1 max-w-2xl">
+                  {(sectionViewMode === 'paged' && activeSection ? [activeSection] : groupedSections.sections).map((sec) => (
+                    <section
+                      key={sec.id}
+                      id={`app-section-block-${sec.index}`}
+                      aria-label={sec.title}
+                      className="mb-10 scroll-mt-20"
+                    >
+                      <div className="mb-6 rounded-2xl border border-primary-200/80 dark:border-primary-500/30 bg-primary-50/50 dark:bg-primary-500/10 px-5 py-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wider" style={{ color: primaryColor }}>
+                          <span>Section {sec.index + 1} of {groupedSections.sections.length}</span>
+                          <span className="tabular-nums opacity-80">{sec.answeredCount} / {sec.totalInputs} answered</span>
+                        </div>
+                        <h2 className="mt-1 text-xl font-bold text-gray-900 dark:text-white tracking-tight">
+                          {sec.title}
+                        </h2>
+                        {sec.description && (
+                          <p className="mt-1 text-sm text-gray-600 dark:text-slate-400 whitespace-pre-line">
+                            {sec.description}
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="space-y-8">
+                        {sec.fields.map((f) => {
+                          const field = f as unknown as FormField;
+                          return (
+                            <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-gray-100 dark:border-slate-800 last:border-0 scroll-mt-24">
+                              <div className="mb-6">
+                                <h3 className="text-xl md:text-2xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
+                                  {field.label}
+                                  {isFieldRequired(field.id) && <span className="text-red-500 ml-1">*</span>}
+                                </h3>
+                                {field.description && field.type !== 'section' && field.type !== 'statement' && field.type !== 'welcome_screen' && (
+                                  <p className="text-sm md:text-base text-gray-500 dark:text-slate-400 leading-relaxed">
+                                    {field.description}
+                                  </p>
+                                )}
+                              </div>
+                              <FieldInput
+                                field={field}
+                                value={answers[field.id]}
+                                onChange={(val) => handleSetAnswer(field.id, val)}
+                                primaryColor={primaryColor}
+                                formId={formId}
+                                appSlug={appSlug}
+                                allAnswers={allFormData}
+                                onCalculated={handleCalculated}
+                                allFieldIds={fields.map(ff => ff.id)}
+                                autoFocus={false}
+                                isRequired={isFieldRequired(field.id)}
+                                error={errorFieldId === field.id ? (error || undefined) : undefined}
+                                onUploadingChange={handleUploadingChange}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+
+                  {error && (
+                    <motion.p
+                      role="alert"
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 text-sm text-red-600 dark:text-red-400 text-center"
+                    >
+                      {error}
+                    </motion.p>
+                  )}
+
+                  {sectionViewMode === 'paged' ? (
+                    <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 dark:border-slate-800 pt-6">
+                      <button
+                        type="button"
+                        disabled={safeSectionIndex === 0}
+                        onClick={() => {
+                          setActiveSectionIndex((i) => Math.max(0, i - 1));
+                          window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-control border border-gray-200 dark:border-slate-700 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-slate-200 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                      >
+                        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                        Previous section
+                      </button>
+
+                      {safeSectionIndex < groupedSections.sections.length - 1 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveSectionIndex((i) => Math.min(groupedSections.sections.length - 1, i + 1));
+                            window.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+                          }}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg cursor-pointer"
+                          style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
+                        >
+                          Next: {groupedSections.sections[safeSectionIndex + 1]?.title}
+                          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleClassicSubmit}
+                          disabled={submitting || uploadsRunning > 0}
+                          className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer"
+                          style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
+                        >
+                          {submitting ? 'Submitting...' : uploadsRunning > 0 ? 'Uploading...' : (formSettings?.submitButtonText as string) || 'Submit'}
+                          {!submitting && <Check className="h-4 w-4" />}
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-10">
+                      <button
+                        type="button"
+                        onClick={handleClassicSubmit}
+                        disabled={submitting || uploadsRunning > 0}
+                        className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
+                        style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
+                      >
+                        {submitting ? 'Submitting...' : uploadsRunning > 0 ? 'Uploading...' : (formSettings?.submitButtonText as string) || 'Submit'}
+                        {!submitting && <Check className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-8">
+                  {fields.map((field) => (
+                    <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-gray-100 dark:border-slate-800 last:border-0 scroll-mt-24">
+                      <div className="mb-6">
+                        <h2 className="text-xl md:text-2xl font-bold mb-2 text-gray-900 dark:text-white tracking-tight">
+                          {field.label}
+                          {isFieldRequired(field.id) && <span className="text-red-500 ml-1">*</span>}
+                        </h2>
+                        {field.description && field.type !== 'section' && field.type !== 'statement' && field.type !== 'welcome_screen' && (
+                          <p className="text-sm md:text-base text-gray-500 dark:text-slate-400 leading-relaxed">
+                            {field.description}
+                          </p>
+                        )}
+                      </div>
+                      <FieldInput
+                        field={field}
+                        value={answers[field.id]}
+                        onChange={(val) => handleSetAnswer(field.id, val)}
+                        primaryColor={primaryColor}
+                        formId={formId}
+                        appSlug={appSlug}
+                        allAnswers={allFormData}
+                        onCalculated={handleCalculated}
+                        allFieldIds={fields.map(f => f.id)}
+                        autoFocus={false}
+                        isRequired={isFieldRequired(field.id)}
+                        error={errorFieldId === field.id ? (error || undefined) : undefined}
+                        onUploadingChange={handleUploadingChange}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {error && (
+                  <motion.p
+                    role="alert"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-4 text-sm text-red-600 dark:text-red-400 text-center"
+                  >
+                    {error}
+                  </motion.p>
+                )}
+
+                <div className="mt-10">
+                  <button
+                    type="button"
+                    onClick={handleClassicSubmit}
+                    disabled={submitting || uploadsRunning > 0}
+                    className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 rounded-control text-sm font-semibold transition-all duration-200 hover:shadow-lg disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-current/50"
+                    style={{ backgroundColor: primaryColor, color: onPrimaryFor(primaryColor) }}
+                  >
+                    {submitting ? 'Submitting...' : uploadsRunning > 0 ? 'Uploading...' : (formSettings?.submitButtonText as string) || 'Submit'}
+                    {!submitting && <Check className="h-4 w-4" />}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

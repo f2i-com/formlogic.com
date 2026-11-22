@@ -120,3 +120,36 @@ it('a backup plugin is named as one, says it needs approving, and offers no app 
   expect(container.textContent).toContain('Data nodes');
   expect(container.querySelector('#oauth-app-limit')).toBeNull();
 });
+
+it('a desktop link hides the app-narrowing dropdown so approving never fails with invalid_grant', async () => {
+  useAuthStore.setState({ user: owner });
+  useAppStore.setState({ apps: [{ id: 'a1', name: 'Bookings' }] as never, fetchApps: async () => {} });
+
+  await open(CONSENT);
+
+  expect(container.textContent).toContain('Link FormLogic Desktop');
+  expect(container.querySelector('#oauth-app-limit')).toBeNull();
+});
+
+it('requires picking an app when appBindingRequired is set', async () => {
+  vi.mocked(api.getOAuthAuthorizeInfo).mockResolvedValueOnce({
+    data: {
+      clientId: 'aokie-companion',
+      clientName: null,
+      isAokieCompanionLink: true,
+      appBindingRequired: true,
+      redirectHost: '127.0.0.1',
+      scopes: ['aokie:state'],
+      scopeLabels: {},
+    },
+  } as never);
+  useAuthStore.setState({ user: owner });
+  useAppStore.setState({ apps: [{ id: 'a1', name: 'Clinic Desk' }] as never, fetchApps: async () => {} });
+
+  await open(CONSENT.replace('oaiy-desktop', 'aokie-companion'));
+
+  expect(container.textContent).toContain('An AI client wants to connect');
+  expect(container.querySelector('#oauth-app-limit')).not.toBeNull();
+  const approveBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Approve access'));
+  expect(approveBtn?.disabled).toBe(true);
+});

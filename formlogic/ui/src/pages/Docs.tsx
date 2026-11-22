@@ -193,6 +193,7 @@ const FIELD_TYPES: Array<[string, string]> = [
   ['Linked record', 'Reference a response from another form in an authenticated app or owner context. The picker is unavailable to anonymous standalone visitors.'],
   ['Location', 'Capture latitude / longitude.'],
   ['Hidden', 'Stores a default, computed, or script-set value that respondents never see — saved with the response and shown in exports.'],
+  ['Section', 'Group large forms (up to 500 fields — such as hospital patient intake packets) into navigable sections with a sticky progress outline, Previous/Next section paging, and portable .json save & resume.'],
   ['Statement · Welcome · Thank you', 'Display-only content and intro / completion screens.'],
 ];
 
@@ -557,6 +558,9 @@ curl -X POST https://<your-api-host>/api/v1/apps/pottery-studio/flows/confirm-bo
                 <li><strong className="text-gray-900 dark:text-white">OAIY</strong> — <C>desktop_status</C> and <C>connector_command</C> operate approved connectors, including the Aokie phone bridge; command access is off by default</li>
               </ul>
               <Tip>Start with app-scoped access and grant only the capabilities needed. Read the current project and version before replacing it. Signup, email verification, OAuth consent and native device pairing still require the person using the account; MCP does not bypass them.</Tip>
+              <h3 className="scroll-mt-24 text-[15px] text-gray-700 dark:text-slate-200 font-semibold mt-6 mb-3">Zero-account public form filling &amp; in-MCP login</h3>
+              <P>Anyone filling out a published standalone form — including multi-section medical or intake forms with <C>Save .json</C> / <C>Load .json</C> progress — can connect an AI assistant directly to <C>https://&lt;your-host&gt;/api/mcp/forms/&lt;formId&gt;</C> (or <C>/api/mcp/public</C>) <strong className="text-gray-900 dark:text-white">without creating a FormLogic account</strong>. The AI can inspect sections (<C>get_public_form</C>), check partial progress (<C>validate_form_answers</C>), save a reviewable draft link &amp; portable <C>.json</C> (<C>save_form_draft</C>), or submit once confirmed (<C>submit_public_form</C>).</P>
+              <P>If the user wants the AI to sign in to their FormLogic account from inside an MCP session, the AI calls <C>start_mcp_login</C>, gives the user the <C>/oauth/device?code=XXXX-XXXX</C> approval link, and then exchanges the approved code via <C>complete_mcp_login</C> for a scoped <C>flm_oauth_…</C> Bearer token.</P>
               <P><GuideLink file="docs/MCP.md">MCP setup, scopes and tool reference</GuideLink> · <Link to="/ai-setup" className="text-primary-700 dark:text-primary-300 underline">Guided setup</Link> · <a href="/llms.txt" className="text-primary-700 dark:text-primary-300 underline">Machine-readable starting point</a></P>
             </section>
 

@@ -109,8 +109,8 @@ class FormController
         }
         if (isset($data['fields']) && is_array($data['fields'])) {
             $fieldsJson = json_encode($data['fields']);
-            if ($fieldsJson !== false && strlen($fieldsJson) > 512000) {
-                return 'Fields data must be 500KB or smaller';
+            if ($fieldsJson !== false && strlen($fieldsJson) > 2097152) {
+                return 'Fields data must be 2MB or smaller';
             }
         }
         if (isset($data['settings'])) {

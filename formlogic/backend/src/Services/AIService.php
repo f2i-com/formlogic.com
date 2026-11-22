@@ -1865,7 +1865,7 @@ PROMPT;
             'short_text', 'long_text', 'email', 'phone', 'number', 'url',
             'date', 'time', 'datetime', 'dropdown', 'multiple_choice',
             'checkboxes', 'rating', 'scale', 'file_upload', 'signature',
-            'statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'
+            'section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'hidden'
         ];
 
         $normalizedFields = [];

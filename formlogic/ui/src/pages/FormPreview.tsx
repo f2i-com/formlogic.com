@@ -452,20 +452,41 @@ export default function FormPreview() {
                 </div>
 
                 {visibleFields.map((field) => (
-                  <div key={field.id} className="pb-6 border-b border-current/10 last:border-0">
-                    <FieldResponse
-                      field={field}
-                      value={answers[field.id]}
-                      onChange={(val) => handleAnswerChange(field.id, val)}
-                      isRequired={getFieldRequired(field)}
-                      primaryColor={form.theme.primaryColor}
-                      textColor={page.textColor}
-                      allAnswers={allFormData}
-                      allFieldIds={form.fields.map(f => f.id)}
-                      onCalculated={handleCalculated}
-                      formId={formId}
-                    />
-                  </div>
+                  field.type === 'section' ? (
+                    <div
+                      key={field.id}
+                      id={`field-${field.id}`}
+                      className="rounded-2xl border px-5 py-4"
+                      style={{
+                        borderColor: `${form.theme.primaryColor}35`,
+                        backgroundColor: `${form.theme.primaryColor}0d`,
+                      }}
+                    >
+                      <h2 className="text-xl font-bold tracking-tight" style={{ color: page.textColor }}>
+                        {field.label}
+                      </h2>
+                      {field.description && (
+                        <p className="mt-1 text-sm opacity-75 whitespace-pre-line" style={{ color: page.textColor }}>
+                          {field.description}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div key={field.id} id={`field-${field.id}`} className="pb-6 border-b border-current/10 last:border-0">
+                      <FieldResponse
+                        field={field}
+                        value={answers[field.id]}
+                        onChange={(val) => handleAnswerChange(field.id, val)}
+                        isRequired={getFieldRequired(field)}
+                        primaryColor={form.theme.primaryColor}
+                        textColor={page.textColor}
+                        allAnswers={allFormData}
+                        allFieldIds={form.fields.map(f => f.id)}
+                        onCalculated={handleCalculated}
+                        formId={formId}
+                      />
+                    </div>
+                  )
                 ))}
 
                 <div className="pt-4">

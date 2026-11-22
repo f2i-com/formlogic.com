@@ -19,12 +19,14 @@ const ROW_MARK = 'flex-none rounded px-1.5 py-0.5 text-[10px] font-medium upperc
  */
 export const SortableFieldCard = memo(function SortableFieldCard({
   field,
+  sectionNumber,
   isSelected,
   onSelect,
   onDelete,
   onDuplicate,
 }: {
   field: FormField;
+  sectionNumber?: number;
   isSelected: boolean;
   onSelect: (fieldId: string) => void;
   onDelete: (fieldId: string) => void;
@@ -58,18 +60,24 @@ export const SortableFieldCard = memo(function SortableFieldCard({
     onDuplicate(field.id);
   }, [onDuplicate, field.id]);
 
+  const isSection = field.type === 'section';
+
   return (
     <div
       ref={setNodeRef}
       style={style}
+      data-builder-field-id={field.id}
       className={cn(
         // The keyboard's place is drawn round the whole row, outside its border, so it reads on
         // the selected row too (whose border is already the accent).
         'group relative flex min-h-14 items-stretch rounded-xl border motion-safe:transition-colors',
         'has-[[data-field-select]:focus-visible]:outline has-[[data-field-select]:focus-visible]:outline-2 has-[[data-field-select]:focus-visible]:outline-offset-2 has-[[data-field-select]:focus-visible]:outline-primary-500',
+        isSection && 'mt-3 border-l-4 border-l-primary-500',
         isSelected
           ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-500 dark:bg-primary-500/10'
-          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/60',
+          : isSection
+            ? 'border-primary-200/80 bg-primary-50/45 hover:border-primary-300 dark:border-primary-500/30 dark:bg-primary-500/[0.07] dark:hover:border-primary-500/50'
+            : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 dark:hover:bg-slate-800/60',
         isDragging && 'z-10 opacity-60 shadow-lg'
       )}
     >
@@ -123,7 +131,9 @@ export const SortableFieldCard = memo(function SortableFieldCard({
             )}
           </span>
           <span className="flex min-w-0 items-center gap-1 text-xs leading-4 text-gray-500 dark:text-slate-400">
-            <span className="flex-none">{fieldInfo.label}</span>
+            <span className={cn('flex-none', isSection && 'font-semibold text-primary-700 dark:text-primary-300')}>
+              {isSection && sectionNumber ? `Section ${sectionNumber}` : fieldInfo.label}
+            </span>
             {field.description && (
               <>
                 <span aria-hidden="true" className="flex-none text-gray-300 dark:text-slate-600">·</span>

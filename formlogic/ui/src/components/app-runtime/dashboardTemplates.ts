@@ -13,7 +13,7 @@
 import type { AppKind, AppReportSpec, AppRuntimeForm, DashboardWidget, DashboardWidgetKind, WidgetLayout } from '../../types/app';
 
 /** Field types that carry no per-record answer data — excluded from pickers and prefills. */
-export const LAYOUT_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload']);
+export const LAYOUT_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'section', 'signature', 'file_upload']);
 export const CHOICE_TYPES = new Set(['dropdown', 'multiple_choice', 'checkbox', 'checkboxes', 'radio']);
 export const DATE_TYPES = new Set(['date', 'datetime']);
 export const NUMERIC_TYPES = new Set(['number', 'rating', 'scale']);

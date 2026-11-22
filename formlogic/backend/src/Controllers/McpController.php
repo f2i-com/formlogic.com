@@ -50,7 +50,8 @@ class McpController
 {
     use JsonResponseTrait;
 
-    private const PROTOCOL_VERSION = '2024-11-05';
+    private const PROTOCOL_VERSION = '2025-06-18';
+    private const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 
     public function __construct(
         private McpTokenService $tokens,
@@ -87,6 +88,8 @@ class McpController
         private ?\FormLogic\Services\SoftnDirectoryService $softnDirectory = null,
         // Delivers the automations a record changed over MCP queued (change_native_app_record).
         private ?\FormLogic\Services\NativeRecordEventRouter $recordEvents = null,
+        // Zero-account public-form filling + in-MCP device login tools.
+        private ?\FormLogic\Services\PublicFormMcpService $publicFormMcp = null,
     ) {}
 
     // ── Token management (authenticated app owner) ──
@@ -127,9 +130,7 @@ class McpController
         $result['readOnly'] = $readOnly;
         $this->audit($request, 'mcp.token.create', $userId, ['appId' => $appId, 'creator' => $creator, 'readOnly' => $readOnly]);
 
-        $uri = $request->getUri();
-        $base = $uri->getScheme() . '://' . $uri->getHost() . ($uri->getPort() ? ':' . $uri->getPort() : '');
-        $result['mcpUrl'] = $base . '/api/mcp';
+        $result['mcpUrl'] = McpOAuthService::resourceFor($request);
         return $this->jsonResponse($response, $result, 201);
     }
 
@@ -180,7 +181,8 @@ class McpController
         if ($this->rateLimiter !== null) {
             $hits = $this->rateLimiter->hit('mcp_request:u:' . hash('sha256', $session['userId']), 60);
             if ($hits > 120) {
-                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32000, 'message' => 'Too many MCP requests — please slow down (max 120 per minute).']], 429);
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32000, 'message' => 'Too many MCP requests — please slow down (max 120 per minute).']], 429)
+                    ->withHeader('Retry-After', '60');
             }
         }
 
@@ -194,34 +196,230 @@ class McpController
             return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32700, 'message' => 'Parse error']], 400);
         }
 
-        // One shared wall-clock budget for every connector_command call in THIS request (batch or
-        // not): 'deadline' is the same ceiling a single call is already allowed today, and 'seen'
-        // counts connector_command calls as they're dispatched. The first one is never clamped by it
-        // (so a solo call — the overwhelmingly common case — behaves exactly as before); only the 2nd+
-        // connector_command call in the SAME batch has its wait clamped to whatever remains, so N
-        // batched calls can't each independently block the worker for up to 25s (an N×25s DoS) — see
-        // the connector_command case in callTool().
         $connectorBudget = ['deadline' => microtime(true) + $this->connectorCommandBatchCeilingMs() / 1000, 'seen' => 0];
+        $protocolHeader = $this->negotiateProtocolVersion($request->getHeaderLine('MCP-Protocol-Version') ?: null);
 
         // Batch (a list of messages) or a single message.
         if (array_is_list($body)) {
+            if ($body === []) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request: empty batch']], 400);
+            }
             if (count($body) > 20) {
                 return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Batch too large (max 20 messages)']], 400);
             }
             $out = [];
             foreach ($body as $msg) {
-                // $session is passed by reference so a create_app/create_form earlier in the batch is
-                // visible to a dependent call later in the same batch (creator tokens).
-                $r = is_array($msg) ? $this->dispatch($msg, $session, $request, $connectorBudget) : null;
+                if (!is_array($msg) || array_is_list($msg)) {
+                    $out[] = ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request']];
+                    continue;
+                }
+                $r = $this->dispatch($msg, $session, $request, $connectorBudget);
                 if ($r !== null) {
                     $out[] = $r;
                 }
             }
-            return empty($out) ? $response->withStatus(202) : $this->rpc($response, $out);
+            return empty($out)
+                ? $response->withStatus(202)->withHeader('MCP-Protocol-Version', $protocolHeader)
+                : $this->rpc($response, $out)->withHeader('MCP-Protocol-Version', $protocolHeader);
         }
 
         $result = $this->dispatch($body, $session, $request, $connectorBudget);
-        return $result === null ? $response->withStatus(202) : $this->rpc($response, $result);
+        if ($result === null) {
+            return $response->withStatus(202)->withHeader('MCP-Protocol-Version', $protocolHeader);
+        }
+        $negotiated = is_array($result['result'] ?? null) && is_string($result['result']['protocolVersion'] ?? null)
+            ? $result['result']['protocolVersion']
+            : $protocolHeader;
+        return $this->rpc($response, $result)->withHeader('MCP-Protocol-Version', $negotiated);
+    }
+
+    /**
+     * Streamable HTTP GET /api/mcp: per MCP spec §2.2, servers that do not keep open SSE
+     * listening streams return 405 Method Not Allowed (after auth check so unauthenticated
+     * clients still receive the 401 + WWW-Authenticate OAuth discovery trigger).
+     */
+    public function handleGet(Request $request, Response $response): Response
+    {
+        $auth = $request->getHeaderLine('Authorization');
+        $token = preg_match('/^Bearer\s+(.+)$/i', $auth, $m) ? trim($m[1]) : '';
+        $session = $token !== '' ? $this->tokens->validate($token, $this->ip($request)) : null;
+        if ($session !== null && is_string($session['resource'] ?? null) && $session['resource'] !== ''
+            && !McpOAuthService::resourceMatchesRequest($session['resource'], $request)) {
+            $session = null;
+        }
+        if (!$session) {
+            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32001, 'message' => 'Unauthorized: invalid or expired MCP token']], 401)
+                ->withHeader('WWW-Authenticate', McpOAuthService::wwwAuthenticateHeader($request));
+        }
+        return $response
+            ->withStatus(405)
+            ->withHeader('Allow', 'POST, DELETE, OPTIONS')
+            ->withHeader('MCP-Protocol-Version', self::PROTOCOL_VERSION);
+    }
+
+    /**
+     * Streamable HTTP DELETE /api/mcp: gracefully end the current Bearer MCP session.
+     */
+    public function handleDelete(Request $request, Response $response): Response
+    {
+        $auth = $request->getHeaderLine('Authorization');
+        $token = preg_match('/^Bearer\s+(.+)$/i', $auth, $m) ? trim($m[1]) : '';
+        $session = $token !== '' ? $this->tokens->validate($token, $this->ip($request)) : null;
+        if (!$session) {
+            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32001, 'message' => 'Unauthorized: invalid or expired MCP token']], 401)
+                ->withHeader('WWW-Authenticate', McpOAuthService::wwwAuthenticateHeader($request));
+        }
+        if (is_string($session['id'] ?? null) && is_string($session['userId'] ?? null)) {
+            $this->tokens->revoke($session['id'], $session['userId']);
+            $this->audit($request, 'mcp.token.revoke', $session['userId'], ['sessionId' => $session['id'], 'via' => 'DELETE /api/mcp']);
+        }
+        return $response->withStatus(204)->withHeader('MCP-Protocol-Version', self::PROTOCOL_VERSION);
+    }
+
+    /**
+     * Zero-account Public Form & Interactive Login MCP endpoint:
+     *   - POST /api/mcp/public          (inspect/fill any published standalone form + start_mcp_login)
+     *   - POST /api/mcp/forms/{formId}  (bound directly to one published standalone form + start_mcp_login)
+     *
+     * No FormLogic account or Bearer token required.
+     *
+     * @param array<string, string> $args
+     */
+    public function handlePublic(Request $request, Response $response, array $args = []): Response
+    {
+        if ($this->publicFormMcp === null) {
+            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32603, 'message' => 'Public form MCP service is unavailable']], 503);
+        }
+        $boundFormId = isset($args['formId']) && trim($args['formId']) !== '' ? trim($args['formId']) : null;
+        if ($boundFormId !== null) {
+            $check = $this->publicFormMcp->loadPublicForm($boundFormId);
+            if (!$check['ok']) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32004, 'message' => $check['error']]], 404);
+            }
+        }
+
+        $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            $raw = (string) $request->getBody();
+            $body = $raw !== '' ? json_decode($raw, true) : null;
+        }
+        if (!is_array($body)) {
+            return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32700, 'message' => 'Parse error']], 400);
+        }
+
+        $protocolHeader = $this->negotiateProtocolVersion($request->getHeaderLine('MCP-Protocol-Version') ?: null);
+        if (array_is_list($body)) {
+            if ($body === []) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request: empty batch']], 400);
+            }
+            if (count($body) > 20) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Batch too large (max 20 messages)']], 400);
+            }
+            $out = [];
+            foreach ($body as $msg) {
+                if (!is_array($msg) || array_is_list($msg)) {
+                    $out[] = ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request']];
+                    continue;
+                }
+                $r = $this->dispatchPublic($msg, $request, $boundFormId);
+                if ($r !== null) {
+                    $out[] = $r;
+                }
+            }
+            return empty($out)
+                ? $response->withStatus(202)->withHeader('MCP-Protocol-Version', $protocolHeader)
+                : $this->rpc($response, $out)->withHeader('MCP-Protocol-Version', $protocolHeader);
+        }
+
+        $result = $this->dispatchPublic($body, $request, $boundFormId);
+        if ($result === null) {
+            return $response->withStatus(202)->withHeader('MCP-Protocol-Version', $protocolHeader);
+        }
+        $negotiated = is_array($result['result'] ?? null) && is_string($result['result']['protocolVersion'] ?? null)
+            ? $result['result']['protocolVersion']
+            : $protocolHeader;
+        return $this->rpc($response, $result)->withHeader('MCP-Protocol-Version', $negotiated);
+    }
+
+    public function handlePublicGet(Request $request, Response $response): Response
+    {
+        return $response
+            ->withStatus(405)
+            ->withHeader('Allow', 'POST, DELETE, OPTIONS')
+            ->withHeader('MCP-Protocol-Version', self::PROTOCOL_VERSION);
+    }
+
+    public function handlePublicDelete(Request $request, Response $response): Response
+    {
+        return $response
+            ->withStatus(204)
+            ->withHeader('MCP-Protocol-Version', self::PROTOCOL_VERSION);
+    }
+
+    private function negotiateProtocolVersion(?string $requested): string
+    {
+        if ($requested !== null && in_array($requested, self::SUPPORTED_PROTOCOL_VERSIONS, true)) {
+            return $requested;
+        }
+        return self::PROTOCOL_VERSION;
+    }
+
+    /** Handle one JSON-RPC message on the zero-account public MCP surface. */
+    private function dispatchPublic(array $message, Request $request, ?string $boundFormId): ?array
+    {
+        $hasId = array_key_exists('id', $message);
+        $id = $hasId ? $message['id'] : null;
+        $method = is_string($message['method'] ?? null) ? $message['method'] : '';
+        $params = is_array($message['params'] ?? null) ? $message['params'] : [];
+
+        if (!$hasId) {
+            return null; // JSON-RPC 2.0 notification
+        }
+        if ($method === '') {
+            return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32600, 'message' => 'Invalid Request: missing method']];
+        }
+
+        $svc = $this->publicFormMcp;
+        if ($svc === null) {
+            return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32603, 'message' => 'Public form MCP unavailable']];
+        }
+
+        switch ($method) {
+            case 'initialize':
+                $requestedVer = is_string($params['protocolVersion'] ?? null) ? $params['protocolVersion'] : null;
+                $capabilities = ['tools' => (object) []];
+                if ($boundFormId !== null) {
+                    $capabilities['resources'] = (object) [];
+                }
+                $instructions = $boundFormId !== null
+                    ? "You are connected to FormLogic's zero-account Public Form MCP server bound to form '{$boundFormId}'. No FormLogic account is required. Call get_public_form first to read all sections, fields, and validation rules. Help the user fill out the form section by section, validate with validate_form_answers, and call save_form_draft anytime to give them a reviewable resumeUrl or portable .json backup. Once they confirm all answers, call submit_public_form with confirmSubmit: true (or send them resumeUrl for E2EE private forms / signatures). If the user wants to manage their FormLogic workspace or private apps, call start_mcp_login."
+                    : "You are connected to FormLogic's zero-account Public MCP server. No FormLogic account is required to inspect, fill, save drafts for, or submit any published public form (pass formId to get_public_form, validate_form_answers, save_form_draft, submit_public_form). If the user wants to sign in to their FormLogic account to build or manage forms/apps, call start_mcp_login to get a browser approval link and then call complete_mcp_login.";
+                return $this->ok($id, [
+                    'protocolVersion' => $this->negotiateProtocolVersion($requestedVer),
+                    'capabilities' => $capabilities,
+                    'serverInfo' => ['name' => 'FormLogic Public Forms', 'version' => '1.1.0'],
+                    'instructions' => $instructions,
+                ]);
+            case 'ping':
+                return $this->ok($id, (object) []);
+            case 'tools/list':
+                return $this->ok($id, ['tools' => \FormLogic\Services\PublicFormMcpService::toolDefinitions($boundFormId, true)]);
+            case 'tools/call':
+                $toolName = is_string($params['name'] ?? null) ? $params['name'] : '';
+                $toolArgs = is_array($params['arguments'] ?? null) ? $params['arguments'] : [];
+                return $this->ok($id, $svc->callTool($toolName, $toolArgs, $request, $boundFormId, true));
+            case 'resources/list':
+                return $this->ok($id, ['resources' => $svc->listResources($boundFormId)]);
+            case 'resources/read':
+                try {
+                    $uri = is_string($params['uri'] ?? null) ? $params['uri'] : '';
+                    return $this->ok($id, $svc->readResource($uri, $boundFormId));
+                } catch (\Throwable $e) {
+                    return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32602, 'message' => $e->getMessage()]];
+                }
+            default:
+                return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32601, 'message' => "Method not found: {$method}"]];
+        }
     }
 
     /** The single-call ceiling (ms), also reused as the whole batch's shared connector_command budget
@@ -235,20 +433,25 @@ class McpController
     /** Handle one JSON-RPC message. Returns the response array, or null for notifications. */
     private function dispatch(array $message, array &$session, Request $request, array &$connectorBudget): ?array
     {
-        $id = $message['id'] ?? null;
-        $method = (string) ($message['method'] ?? '');
+        $hasId = array_key_exists('id', $message);
+        $id = $hasId ? $message['id'] : null;
+        $method = is_string($message['method'] ?? null) ? $message['method'] : '';
         $params = is_array($message['params'] ?? null) ? $message['params'] : [];
 
-        if ($id === null) {
+        if (!$hasId) {
             return null; // notification (e.g. notifications/initialized) — no reply
+        }
+        if ($method === '') {
+            return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32600, 'message' => 'Invalid Request: missing method']];
         }
 
         switch ($method) {
             case 'initialize':
+                $requestedVer = is_string($params['protocolVersion'] ?? null) ? $params['protocolVersion'] : null;
                 return $this->ok($id, [
-                    'protocolVersion' => self::PROTOCOL_VERSION,
+                    'protocolVersion' => $this->negotiateProtocolVersion($requestedVer),
                     'capabilities' => ['tools' => (object) []],
-                    'serverInfo' => ['name' => 'FormLogic', 'version' => '1.0.0'],
+                    'serverInfo' => ['name' => 'FormLogic', 'version' => '1.1.0'],
                     // Surfaced to the model by MCP clients — lets an AI build with zero prior knowledge.
                     'instructions' => $this->serverInstructions(),
                 ]);
@@ -291,6 +494,12 @@ class McpController
         try {
             if ($name === 'get_started') {
                 return ['content' => [['type' => 'text', 'text' => $this->guide()]]];
+            }
+            if (
+                $this->publicFormMcp !== null
+                && in_array($name, ['get_public_form', 'validate_form_answers', 'save_form_draft', 'get_form_draft', 'submit_public_form'], true)
+            ) {
+                return $this->publicFormMcp->callTool($name, $args, $request, null, false);
             }
             // The MCP-TRANSPORT tools (relay/session concerns) stay in this controller; every
             // other tool — and any unknown name, which gets the same scope-gated refusal as
@@ -543,7 +752,7 @@ class McpController
         $all = ChatToolsService::toolDefinitions();
         // get_started is always available (no scope) — a full how-to guide so an AI can build with no prior
         // knowledge. Listed first so it's the obvious first call.
-        $out = [['name' => 'get_started', 'description' => 'Read this first when building or editing a FORMS app (forms, dashboards, flows, custom screens): the workflow, field types, custom-screen SDK, and a worked example. For a web app (a website, tool or web app of its own, with no forms) read get_softn_guide instead.', 'inputSchema' => ['type' => 'object'], 'annotations' => ['readOnlyHint' => true]]];
+        $out = [['name' => 'get_started', 'description' => 'Read this first when building or editing a FORMS app (forms, dashboards, flows, custom screens): the workflow, field types, custom-screen SDK, and a worked example. For a web app (a website, tool or web app of its own, with no forms) read get_softn_guide instead.', 'inputSchema' => ['type' => 'object', 'properties' => (object) []], 'annotations' => ['readOnlyHint' => true]]];
         foreach ($all as $t) {
             if (!in_array($t['scope'], $scopes, true)) {
                 continue;
@@ -560,6 +769,11 @@ class McpController
             $t['annotations'] = ['readOnlyHint' => ChatToolsService::isReadTool($t['name']) || $t['name'] === 'desktop_status'];
             unset($t['scope']);
             $out[] = $t;
+        }
+        if ($this->publicFormMcp !== null) {
+            foreach (\FormLogic\Services\PublicFormMcpService::toolDefinitions(null, false) as $pt) {
+                $out[] = $pt;
+            }
         }
         return $out;
     }

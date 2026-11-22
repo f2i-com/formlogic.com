@@ -1341,6 +1341,9 @@ class ChatToolsService
     {
         $fields = $form['fields'] ?? [];
         $formId = (string) ($form['id'] ?? '');
+        if (($shapeRefusal = $this->responseService->answerShapeRefusal($fields, $answers)) !== null) {
+            throw new \Exception($shapeRefusal['message']);
+        }
         $answers = $this->responseService->sanitizeSubmittedAnswers($fields, $answers);
         $answers = $this->responseService->normalizeAnswers($fields, $answers, $formId);
         $answers = $this->responseService->applyCalculatedFields($fields, $answers);
@@ -1614,8 +1617,8 @@ class ChatToolsService
             if (!is_array($args['fields'])) {
                 throw new \Exception('fields must be an array');
             }
-            if (count($args['fields']) > 200) {
-                throw new \Exception('a form cannot have more than 200 fields');
+            if (count($args['fields']) > 500) {
+                throw new \Exception('a form cannot have more than 500 fields');
             }
             foreach ($args['fields'] as $i => $f) {
                 if (!is_array($f) || !isset($f['type'])) {
@@ -1627,8 +1630,8 @@ class ChatToolsService
                     throw new \Exception("field at index {$i} {$problem}");
                 }
             }
-            if (strlen((string) json_encode($args['fields'])) > 512000) {
-                throw new \Exception('fields exceed the 500KB limit');
+            if (strlen((string) json_encode($args['fields'])) > 2097152) {
+                throw new \Exception('fields exceed the 2MB limit');
             }
         }
         if (isset($args['customScreen'])) {
@@ -1808,7 +1811,18 @@ class ChatToolsService
     {
         $field = ['type' => 'object', 'description' => 'A field: { id, type, label, required, properties? }'];
         $screen = ['type' => 'object', 'description' => "Custom screen — two kinds. (1) PREFERRED no-code widget DASHBOARD: { kind:'dashboard', dashboard:{ cols?:12, widgets:[{ kind:'report'|'list'|'text'|'actions'|'activity', layout:{x,y,w,h}, title?, … }] } } — 'report' embeds a chart/KPI/table via `spec` (the SAME shape as create_report's spec), 'list' shows recent records via `list`:{formId,limit?,titleField?,subtitleField?,metaField?}, 'text' a note via `text`:{body}, 'actions' new-record buttons, 'activity' a latest-records feed (both config-free, app home only). Widget specs are validated against the in-scope forms on save; out-of-scope widgets are dropped. (2) CODE screen — a sandboxed full frontend: EITHER `ts` (a single TypeScript/TSX file) OR `files` (a multi-file project: an array of { path, content } with .tsx/.ts/.css files, folders + relative imports allowed, entry index.tsx). React-style TSX components WORK: 'react', 'react-dom/client', 'preact', 'preact/hooks' are built-in (react aliases to Preact); other npm packages resolve via esm.sh at compile time (pin versions). Image assets: .svg as text files, binary images as data: URI content — importing an image file yields its data: URI. No index.html needed (a <div id=\"root\"></div> shell is automatic; entry must createRoot(...).render(<App/>)). Compiled/bundled to runnable JS automatically. Talks to the backend via window.FormLogic (submit/records/currentUser/context/toast)."];
-        $obj = static fn (array $props, array $req = []) => array_filter(['type' => 'object', 'properties' => $props, 'required' => $req], static fn ($v) => $v !== []);
+        // Always keep `properties` as a JSON object (even `{}` for zero-arg tools) so strict
+        // MCP/OpenAI/Gemini JSON Schema validators accept every tool definition cleanly.
+        $obj = static function (array $props, array $req = []): array {
+            $schema = [
+                'type' => 'object',
+                'properties' => $props === [] ? (object) [] : $props,
+            ];
+            if ($req !== []) {
+                $schema['required'] = $req;
+            }
+            return $schema;
+        };
         // What the sandbox puts on ctx (formlogic/runtime/guest/src/main.rs), and nothing else: a
         // script that calls anything else throws, and a script that throws refuses every submission.
         $logicScript = ['type' => 'string', 'description' => "The form's onSubmit script: JavaScript defining function onSubmit(ctx), run synchronously in the ZIPP sandbox on every submission before the record is stored. ctx.answers (read only), ctx.meta, ctx.db.setField(name, value) / getField(name) / setStatus(status) / addTag(tag), ctx.utils.uuid / now / nowMs / hash / formatDate, ctx.http.get / post / put / patch / delete / request, ctx.flows.run(slug, input?). Refuse by returning { reject: true, message }; { store: false } accepts without storing. Anything the script throws refuses every submission until it is fixed, so check it with a test submission."];

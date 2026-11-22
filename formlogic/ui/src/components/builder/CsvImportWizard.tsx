@@ -60,7 +60,7 @@ export function CsvImportWizard({
 
   const inputFields = useMemo(() => {
     return fields.filter(
-      (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
+      (f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type)
     );
   }, [fields]);
 

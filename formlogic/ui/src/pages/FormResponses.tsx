@@ -371,7 +371,7 @@ function FormResponses() {
   const displayFields = useMemo(() => {
     if (!form) return [];
     return form.fields
-      .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+      .filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type))
       .slice(0, 12);
   }, [form]);
 
@@ -609,7 +609,7 @@ function FormResponses() {
 
     // Export all fields, not just displayFields (which is limited to 6 for the table UI)
     const allExportFields = form.fields.filter(
-      (f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type)
+      (f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type)
     );
     const headers = ['ID', 'Submitted At', 'Status', ...allExportFields.map((f) => f.label)];
     const rows = filteredResponses.map((r) => [
@@ -1366,7 +1366,7 @@ function FormResponses() {
           <>
             <div className="p-6 space-y-4">
               {form.fields
-                .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+                .filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type))
                 .map((field) => (
                   <div key={field.id}>
                     <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1.5">

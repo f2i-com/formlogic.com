@@ -88,9 +88,14 @@ export function OAuthAuthorize() {
   }, [user, info, fetchApps]);
 
   const approve = async () => {
+    if (info?.appBindingRequired && !appId) {
+      setApproveError('Please select an app before approving this connection.');
+      return;
+    }
     setApproving(true);
     setApproveError(null);
-    const r = await api.approveOAuth(params, appId || undefined);
+    const effectiveAppId = (info?.isDesktopLink || info?.isBackupLink) ? undefined : (appId || undefined);
+    const r = await api.approveOAuth(params, effectiveAppId);
     if (r.data?.redirectTo) {
       // Keep the button in its loading state while the browser navigates away.
       window.location.assign(r.data.redirectTo);
@@ -189,7 +194,7 @@ export function OAuthAuthorize() {
               'Link FormLogic Backups'
             ) : (
               <>
-                <span className="text-primary-700 dark:text-primary-300">{info.clientName}</span> wants to connect
+                <span className="text-primary-700 dark:text-primary-300">{info.clientName || 'An AI client'}</span> wants to connect
               </>
             )}
           </h1>
@@ -239,11 +244,15 @@ export function OAuthAuthorize() {
           </p>
         )}
 
-        {/* A backup link always covers the whole account, and the server refuses a limit. */}
-        {apps.length > 0 && !info.isBackupLink && (
+        {/* Desktop and backup links cover the whole account — the server refuses app narrowing on them. */}
+        {!info.isBackupLink && !info.isDesktopLink && (apps.length > 0 || info.appBindingRequired) && (
           <div className="mt-5">
             <label htmlFor="oauth-app-limit" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">
-              Limit access to one app <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span>
+              {info.appBindingRequired ? (
+                <>Select an app <span className="font-normal text-red-500">(required)</span></>
+              ) : (
+                <>Limit access to one app <span className="font-normal text-gray-400 dark:text-slate-500">(optional)</span></>
+              )}
             </label>
             <select
               id="oauth-app-limit"
@@ -251,7 +260,7 @@ export function OAuthAuthorize() {
               onChange={(e) => setAppId(e.target.value)}
               className="w-full px-3.5 py-2.5 text-sm border border-gray-300 dark:border-slate-600 rounded-xl bg-white dark:bg-slate-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200"
             >
-              <option value="">All my apps</option>
+              <option value="">{info.appBindingRequired ? 'Choose a published app…' : 'All my apps'}</option>
               {apps.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
@@ -272,7 +281,7 @@ export function OAuthAuthorize() {
         )}
 
         <div className="flex flex-col gap-2 mt-6">
-          <Button onClick={approve} isLoading={approving}>Approve access</Button>
+          <Button onClick={approve} isLoading={approving} disabled={Boolean(info.appBindingRequired && !appId)}>Approve access</Button>
           <Button variant="outline" onClick={deny} disabled={approving}>Deny</Button>
         </div>
 

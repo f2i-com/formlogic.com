@@ -57,6 +57,7 @@ const FIELD_TYPE_LABELS: Record<string, string> = {
   scale: 'Scale',
   file_upload: 'File upload',
   signature: 'Signature',
+  section: 'Section',
   statement: 'Statement',
   welcome_screen: 'Welcome screen',
   thank_you: 'Thank you',
@@ -77,7 +78,7 @@ const QUICK_ADD_TYPES: Array<{ type: FieldType; label: string }> = [
 ];
 
 /** Field kinds whose settings dock should stay shut in the builder. */
-const LAYOUT_FIELD_TYPES = new Set<string>(['statement', 'welcome_screen', 'thank_you']);
+const LAYOUT_FIELD_TYPES = new Set<string>(['section', 'statement', 'welcome_screen', 'thank_you']);
 
 /**
  * Data & forms: the app's data types (attached forms), their fields and

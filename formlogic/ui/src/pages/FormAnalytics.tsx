@@ -378,7 +378,7 @@ export default function FormAnalytics() {
   // so the hook order stays stable when `form` transitions loading → loaded (else React throws
   // "rendered more hooks than during the previous render").
   const previewFields = (form?.fields ?? [])
-    .filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type))
+    .filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type))
     .slice(0, 8);
   const { ref: previewRef, count: previewCount, cards: previewCards } = useFittedColumns<HTMLDivElement>({
     itemCount: previewFields.length,
@@ -495,7 +495,7 @@ export default function FormAnalytics() {
         return;
       }
 
-      const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+      const inputFields = form.fields.filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type));
       const headers = ['Response ID', 'Submitted At', 'Completion Time (s)', ...inputFields.map((f) => f.label)];
       const rows = localResponses.map((r) => [
         r.id,

@@ -109,7 +109,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
   const logicAsRead = useMemo(() => {
     const expression = field.conditionalLogic?.expression ?? '';
     if (!expression) return '';
-    const others = allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+    const others = allFields.filter((f) => f.id !== field.id && !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type));
     return replaceIdsWithVariables(expression, createFieldVariableMap(others).toVar);
   }, [allFields, field.conditionalLogic?.expression, field.id]);
   // Check if field has validation rules
@@ -151,7 +151,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
           {/* Placeholder only applies to free-text controls — native date/time pickers and
               the phone input ignore it, so don't offer a setting that does nothing. */}
-          {!['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden', 'phone', 'date', 'time', 'datetime', 'multiple_choice', 'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'location'].includes(field.type) && (
+          {!['section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden', 'phone', 'date', 'time', 'datetime', 'multiple_choice', 'checkboxes', 'rating', 'scale', 'file_upload', 'signature', 'location'].includes(field.type) && (
             <Input
               label="Placeholder"
               value={field.placeholder || ''}
@@ -160,7 +160,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
           )}
 
           {/* 'calculated' is computed + read-only, so a Required toggle would be a no-op. */}
-          {!['statement', 'welcome_screen', 'thank_you', 'hidden', 'calculated'].includes(field.type) && (
+          {!['section', 'statement', 'welcome_screen', 'thank_you', 'hidden', 'calculated'].includes(field.type) && (
             <Switch
               checked={field.required}
               onChange={(checked) => onUpdate({ required: checked })}
@@ -575,7 +575,7 @@ export const FieldSettingsPanel = memo(function FieldSettingsPanel({
 
         {/* Validation Tab */}
         <TabsContent value="validation" className="flex-1 overflow-y-auto p-4">
-          {['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) ? (
+          {['section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'hidden'].includes(field.type) ? (
             <p className="flex items-start gap-2 text-sm text-gray-500 dark:text-slate-400">
               <ShieldCheck className="mt-0.5 h-4 w-4 flex-none text-gray-400 dark:text-slate-500" />
               This kind of field takes no answer to check, so it has no validation rules.

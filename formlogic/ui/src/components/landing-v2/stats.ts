@@ -10,7 +10,7 @@
 export const PACK_COUNT = 29;
 
 /** Form field types — must equal Object.keys(FIELD_TYPE_INFO).length. */
-export const FIELD_TYPE_COUNT = 23;
+export const FIELD_TYPE_COUNT = 24;
 
 /** Public source repo — a star is the cheapest way visitors can say "keep going". */
 export const GITHUB_URL = 'https://github.com/f2i-com/formlogic.com';

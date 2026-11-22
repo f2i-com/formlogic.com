@@ -84,11 +84,15 @@ manifests (production is always `https`), so the advertised `resource` matches t
 | Endpoint | Method | Notes |
 |---|---|---|
 | `/.well-known/oauth-protected-resource` (also `…/api/mcp`) | GET | RFC 9728 protected-resource metadata; CORS `*` |
-| `/.well-known/oauth-authorization-server` | GET | RFC 8414 authorization-server metadata; CORS `*` |
-| `/oauth/authorize` | GET | the consent page (an SPA route; requires a signed-in FormLogic session) |
-| `/api/oauth/token` | POST | `application/x-www-form-urlencoded`; grants `authorization_code` + `refresh_token`; CORS `*`, rate-limited |
+| `/.well-known/oauth-authorization-server` (and `/.well-known/openid-configuration`) | GET | RFC 8414 authorization-server metadata (including `device_authorization_endpoint` and `client_secret_basic`); CORS `*` |
+| `/oauth/authorize` | GET | the OAuth 2.1 consent page (an SPA route; requires a signed-in FormLogic session) |
+| `/oauth/device` | GET | the RFC 8628 / in-MCP browser sign-in approval page (`?code=XXXX-XXXX`) |
+| `/api/oauth/token` | POST | `application/x-www-form-urlencoded`; grants `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:device_code`; CORS `*`, rate-limited |
+| `/api/oauth/device` | POST | RFC 8628 device authorization endpoint (also wrapped by MCP `start_mcp_login`); CORS `*` |
 | `/api/oauth/register` | POST | RFC 7591 dynamic client registration; JSON, unauthenticated, rate-limited; CORS `*` |
-| `/api/mcp` | POST | the MCP endpoint — `Authorization: Bearer` header only (tokens are never accepted in the query string) |
+| `/api/mcp` | GET, POST, DELETE | Authenticated MCP Streamable HTTP endpoint — `Authorization: Bearer` header only; negotiates `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`; `DELETE` revokes the current token |
+| `/api/mcp/public` | GET, POST, DELETE | Zero-account MCP endpoint for inspecting & filling published standalone public forms and starting in-MCP user sign-in |
+| `/api/mcp/forms/{formId}` | GET, POST, DELETE | Zero-account MCP endpoint pre-bound to one published standalone public form (also exposes `resources/read` for `formlogic://forms/{formId}/schema`) |
 
 (`GET /api/oauth/authorize-info` and `POST /api/oauth/approve` are the consent page's same-origin support
 APIs — approve is session-authenticated + CSRF-protected like every other authed POST, and performs the
@@ -131,6 +135,35 @@ exception: `http://localhost:<port>/…` and `http://127.0.0.1:<port>/…` loopb
 documents additionally advertise `offline_access` for clients that request refresh tokens. The consent
 page's **"Limit to one app"** picker mints an app-scoped session with exactly the semantics described
 under [Scopes](#scopes).
+
+---
+
+## Filling public forms without an account (and signing in from inside MCP)
+
+An AI assistant can help a person fill out any published standalone FormLogic form — including large multi-section medical or intake forms — **without creating a FormLogic account**:
+
+- **Form-bound endpoint:** `https://<your-host>/api/mcp/forms/<formId>` (shown in every published form's **Fill with AI (MCP)** button and in **Share form → AI / MCP link**)
+- **General public endpoint:** `https://<your-host>/api/mcp/public` (pass `formId` to each tool)
+
+No `Authorization` header is required on these endpoints. Only published standalone public forms (never drafts, archived forms, or app-private forms) are reachable.
+
+**Public form tools**
+
+| Tool | Purpose |
+|---|---|
+| `get_public_form` | Returns the form's title, sections, fields, options, validation rules, and whether it is E2EE private |
+| `validate_form_answers` | Validates partial or complete answers without saving or submitting, reporting missing required fields by section |
+| `save_form_draft` | Saves a temporary 72-hour draft and returns both a browser `resumeUrl` (`/form/<id>?draft=fld_...`) and a portable `draftJson` envelope (`formlogic-form-draft` v1) |
+| `get_form_draft` | Reads an existing draft back by its `draftToken` so the user and AI can resume over multiple turns |
+| `submit_public_form` | Submits on the user's behalf when `confirmSubmit: true` is passed (runs the full public validation, quota, and `onSubmit` pipeline). For E2EE private forms, direct server submission is intentionally refused — the AI saves a draft and hands the user the `resumeUrl` so their browser verifies the signed manifest and seals the answers client-side |
+
+**Signing in on behalf of the user from inside MCP**
+
+If the user later wants the AI to access their FormLogic account (private forms, apps, or saved responses), the AI can upgrade without re-registering:
+
+1. Call `start_mcp_login` (available on `/api/mcp/public` and `/api/mcp/forms/{formId}`). It returns a short `userCode` (e.g. `ABCD-EFGH`), a `verificationUrl` (`https://<your-host>/oauth/device?code=ABCD-EFGH`), and a `deviceCode`.
+2. The user opens the link in their browser, signs in to FormLogic, confirms the code matches, optionally narrows scopes or limits access to one app, and clicks **Approve AI sign-in**.
+3. The AI calls `complete_mcp_login` with the `deviceCode` (or posts `grant_type=urn:ietf:params:oauth:grant-type:device_code` to `/api/oauth/token`) to receive an audience-bound `flm_oauth_…` Bearer token for `https://<your-host>/api/mcp`.
 
 ---
 

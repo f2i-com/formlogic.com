@@ -802,6 +802,29 @@ $container->set(\FormLogic\Services\McpTokenService::class, function (Container 
 $container->set(\FormLogic\Services\RateLimiter::class, function (Container $c) {
     return new \FormLogic\Services\RateLimiter($c->get(MySQLConnection::class)->getConnection());
 });
+$container->set(\FormLogic\Services\PublicFormDraftService::class, function (Container $c) {
+    return new \FormLogic\Services\PublicFormDraftService(
+        $c->get(MySQLConnection::class),
+        $c->get(ResponseService::class),
+    );
+});
+$container->set(\FormLogic\Services\McpDeviceAuthService::class, function (Container $c) {
+    return new \FormLogic\Services\McpDeviceAuthService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\McpTokenService::class),
+    );
+});
+$container->set(\FormLogic\Services\PublicFormMcpService::class, function (Container $c) {
+    return new \FormLogic\Services\PublicFormMcpService(
+        $c->get(FormService::class),
+        $c->get(\FormLogic\Services\AppService::class),
+        $c->get(ResponseService::class),
+        $c->get(\FormLogic\Services\PublicFormDraftService::class),
+        $c->get(\FormLogic\Services\McpDeviceAuthService::class),
+        $c->get(ResponseController::class),
+        $c->get(\FormLogic\Services\FormEncryptionService::class),
+    );
+});
 $container->set(\FormLogic\Controllers\McpController::class, function (Container $c) {
     return new \FormLogic\Controllers\McpController(
         $c->get(\FormLogic\Services\McpTokenService::class),
@@ -835,7 +858,8 @@ $container->set(\FormLogic\Controllers\McpController::class, function (Container
         $c->get(\FormLogic\Services\AppUserService::class),
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
         softnDirectory: $c->get(\FormLogic\Services\SoftnDirectoryService::class),
-        recordEvents: $c->get(\FormLogic\Services\NativeRecordEventRouter::class)
+        recordEvents: $c->get(\FormLogic\Services\NativeRecordEventRouter::class),
+        publicFormMcp: $c->get(\FormLogic\Services\PublicFormMcpService::class),
     );
 });
 // MCP OAuth 2.1: discovery metadata + client registration (DCR/CIMD) + code/refresh grants, so
@@ -856,7 +880,8 @@ $container->set(\FormLogic\Controllers\McpOAuthController::class, function (Cont
         // Desktop device-link: token exchange mints a scoped flk_ key tied to a desktop connection.
         $c->get(ApiKeyService::class),
         $c->get(\FormLogic\Services\FlowService::class),
-        $c->get(AppUserService::class)
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\McpDeviceAuthService::class),
     );
 });
 $container->set(\FormLogic\Services\AokieCompanionAdmissionSigner::class, function () {
@@ -1647,6 +1672,7 @@ $app->add(new BodySizeLimitMiddleware(
         ['path' => '#^/api/packages/install-plans$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/ai/generate-form-from-file$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/app/[^/]+/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
+        ['path' => '#^/api/forms(?:/[^/]+)?$#', 'maxBytes' => 4 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => false],
     ],
     $container->get(AuthService::class),
@@ -1681,13 +1707,21 @@ $oauthPublicPaths = [
     '/.well-known/oauth-protected-resource',
     '/.well-known/oauth-protected-resource/api/mcp',
     '/.well-known/oauth-authorization-server',
+    '/.well-known/openid-configuration',
     '/api/oauth/token',
     '/api/oauth/register',
+    '/api/oauth/device',
+    '/api/oauth/device/token',
+    '/api/mcp',
+    '/api/mcp/public',
 ];
 $app->add(function ($request, $handler) use ($oauthPublicPaths) {
     $reqPath = $request->getUri()->getPath();
     $isMarketplaceSandbox = preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset|frame(?:/.*)?)$#', $reqPath) === 1;
-    if (!in_array($reqPath, $oauthPublicPaths, true) && !$isMarketplaceSandbox) {
+    $isPublicMcpOrWellKnown = in_array($reqPath, $oauthPublicPaths, true)
+        || preg_match('#^/api/mcp/forms/[^/]+$#', $reqPath) === 1
+        || str_starts_with($reqPath, '/.well-known/oauth-authorization-server/');
+    if (!$isPublicMcpOrWellKnown && !$isMarketplaceSandbox) {
         return $handler->handle($request);
     }
     $response = strtoupper($request->getMethod()) === 'OPTIONS'
@@ -1695,8 +1729,9 @@ $app->add(function ($request, $handler) use ($oauthPublicPaths) {
         : $handler->handle($request);
     return $response
         ->withHeader('Access-Control-Allow-Origin', '*')
-        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With')
+        ->withHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+        ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin, X-Requested-With, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID, X-CSRF-Token')
+        ->withHeader('Access-Control-Expose-Headers', 'WWW-Authenticate, Mcp-Session-Id, MCP-Protocol-Version, X-FormLogic-Release, X-FormLogic-Chat-Tools')
         ->withHeader('Access-Control-Max-Age', '3600')
         ->withoutHeader('Access-Control-Allow-Credentials'); // '*' + credentials is an invalid CORS combo
 });
@@ -2713,6 +2748,27 @@ $app->get('/api/public/forms/{id}', function ($request, $response) use ($contain
     return $response->withHeader('Content-Type', 'application/json');
 })->add($publicFormRateLimiter);
 
+// Hydrate a saved public-form draft by its 256-bit unguessable token (`/form/{id}?draft=fld_...`).
+// Enables seamless handoff from zero-account AI/MCP filling to human review (including E2EE forms).
+$app->get('/api/public/forms/{id}/drafts/{token}', function ($request, $response) use ($container, $getArgs) {
+    $args = $getArgs($request);
+    $formId = (string) ($args['id'] ?? '');
+    $token = (string) ($args['token'] ?? '');
+    $mcpSvc = $container->get(\FormLogic\Services\PublicFormMcpService::class);
+    $loaded = $mcpSvc->loadPublicForm($formId);
+    if (!$loaded['ok']) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => $loaded['error']]));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+    }
+    $draft = $container->get(\FormLogic\Services\PublicFormDraftService::class)->getDraft($formId, $token);
+    if ($draft === null) {
+        $response->getBody()->write(json_encode(['error' => true, 'message' => 'Saved draft not found or expired.']));
+        return $response->withStatus(404)->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+    }
+    $response->getBody()->write(json_encode(['draft' => $draft]));
+    return $response->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+})->add($publicFormRateLimiter);
+
 // Public records for a custom screen (e.g. a leaderboard) — ONLY when the form's custom screen has
 // opted in via customScreen.publicRecords. Returns answers only (no submitter metadata/status/tags).
 $app->get('/api/public/forms/{id}/screen-records', function ($request, $response) use ($container, $getArgs) {
@@ -3167,12 +3223,42 @@ $app->group('/api/api-keys', function (RouteCollectorProxy $group) use ($contain
     });
 })->add($apiKeyMgmtRateLimiter)->add($authRequired);
 
-// MCP server (Model Context Protocol over HTTP). The endpoint self-authenticates via the Bearer MCP
-// token — NO session middleware. Token management below is session-authenticated (the app owner).
+// MCP server (Model Context Protocol over Streamable HTTP). The endpoint self-authenticates via
+// the Bearer MCP token — NO session middleware. GET/DELETE implement MCP Streamable HTTP semantics.
 $mcpRateLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'mcp');
 $app->post('/api/mcp', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpController::class)->handle($request, $response);
 })->add($mcpRateLimiter);
+$app->get('/api/mcp', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handleGet($request, $response);
+})->add($mcpRateLimiter);
+$app->delete('/api/mcp', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handleDelete($request, $response);
+})->add($mcpRateLimiter);
+
+// Zero-account Public Form & Interactive Login MCP endpoints (no account or Bearer token needed).
+// An AI client can point directly at `/api/mcp/forms/{formId}` to inspect sections, validate,
+// save a reviewable draft, or submit a published public form — or call `start_mcp_login` to log in
+// on behalf of the user via browser approval.
+$publicMcpRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'mcp_public');
+$app->post('/api/mcp/public', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublic($request, $response);
+})->add($publicMcpRateLimiter);
+$app->get('/api/mcp/public', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublicGet($request, $response);
+})->add($publicMcpRateLimiter);
+$app->delete('/api/mcp/public', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublicDelete($request, $response);
+})->add($publicMcpRateLimiter);
+$app->post('/api/mcp/forms/{formId}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublic($request, $response, $getArgs($request));
+})->add($publicMcpRateLimiter);
+$app->get('/api/mcp/forms/{formId}', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublicGet($request, $response);
+})->add($publicMcpRateLimiter);
+$app->delete('/api/mcp/forms/{formId}', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpController::class)->handlePublicDelete($request, $response);
+})->add($publicMcpRateLimiter);
 
 // Own bucket (was sharing api_key_mgmt's — heavy API-key activity could starve MCP token management
 // and vice versa). $authRequired must be added LAST (Slim LIFO) so it runs first and sets userId.
@@ -3198,9 +3284,12 @@ $oauthPrmHandler = function ($request, $response) use ($container) {
 };
 $app->get('/.well-known/oauth-protected-resource', $oauthPrmHandler);
 $app->get('/.well-known/oauth-protected-resource/api/mcp', $oauthPrmHandler);
-$app->get('/.well-known/oauth-authorization-server', function ($request, $response) use ($container) {
+$oauthAsHandler = function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizationServerMetadata($request, $response);
-});
+};
+$app->get('/.well-known/oauth-authorization-server', $oauthAsHandler);
+$app->get('/.well-known/oauth-authorization-server/{rest:.*}', $oauthAsHandler);
+$app->get('/.well-known/openid-configuration', $oauthAsHandler);
 
 // Aokie Companion deployment discovery. The app-specific URL is the setup/QR
 // surface; the well-known document supports managed deployment bootstrap.
@@ -3410,12 +3499,27 @@ $app->get('/oauth/authorize', function ($request, $response) use ($container) {
 })->add($oauthInfoRateLimiter);
 $app->get('/api/oauth/authorize-info', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizeInfo($request, $response);
-})->add($oauthInfoRateLimiter);
+})->add($oauthInfoRateLimiter)->add($authOptional);
 // Own bucket (was sharing api_key_mgmt's). $authRequired must be added LAST (Slim LIFO) so it runs
 // first and sets userId before the rate limiter's keyByUser check.
 $oauthApproveRateLimiter = new RateLimitMiddleware($rateLimiter, 10, 60, 'oauth_approve', true, true); // fail closed: grant approval (RATE-001)
 $app->post('/api/oauth/approve', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->approve($request, $response);
+})->add($oauthApproveRateLimiter)->add($authRequired);
+
+// RFC 8628 Device / Interactive MCP Login endpoints (start, browser info/approve, poll/redeem).
+$oauthDeviceStartLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'oauth_device_start', false, true);
+$app->post('/api/oauth/device', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->deviceAuthorize($request, $response);
+})->add($oauthDeviceStartLimiter);
+$app->post('/api/oauth/device/token', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->deviceToken($request, $response);
+})->add($oauthTokenRateLimiter);
+$app->get('/api/oauth/device/info', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->deviceInfo($request, $response);
+})->add($oauthInfoRateLimiter);
+$app->post('/api/oauth/device/approve', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)->deviceApprove($request, $response);
 })->add($oauthApproveRateLimiter)->add($authRequired);
 
 // Billing (pay-as-you-go cloud months via PayPal) — authenticated, own rate-limit bucket.

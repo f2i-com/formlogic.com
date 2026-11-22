@@ -28,6 +28,7 @@ const PUBLIC_PATHS = [
   // OAuth consent renders signed-out too (it routes through login and back) — don't bounce
   // a mid-flow visitor to the landing page on logout/session expiry.
   '/oauth/authorize',
+  '/oauth/device',
   // Signing in to an app on its own domain goes the same way through login.
   '/sign-in/domain',
 ];

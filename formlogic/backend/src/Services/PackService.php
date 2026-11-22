@@ -2066,8 +2066,8 @@ class PackService
             if (empty($form['title'])) {
                 throw new \RuntimeException("Form '{$form['packFormId']}' is missing title");
             }
-            if (isset($form['fields']) && is_array($form['fields']) && count($form['fields']) > 200) {
-                throw new \RuntimeException("Form '{$form['packFormId']}' has too many fields (max 200)");
+            if (isset($form['fields']) && is_array($form['fields']) && count($form['fields']) > 500) {
+                throw new \RuntimeException("Form '{$form['packFormId']}' has too many fields (max 500)");
             }
             // Enforce per-form field size limits (same as FormController)
             if (isset($form['logicScript']) && is_string($form['logicScript']) && strlen($form['logicScript']) > 102400) {
@@ -2075,8 +2075,8 @@ class PackService
             }
             if (isset($form['fields']) && is_array($form['fields'])) {
                 $fieldsJson = json_encode($form['fields']);
-                if ($fieldsJson !== false && strlen($fieldsJson) > 512000) {
-                    throw new \RuntimeException("Form '{$form['packFormId']}' fields data exceeds 500KB limit");
+                if ($fieldsJson !== false && strlen($fieldsJson) > 2097152) {
+                    throw new \RuntimeException("Form '{$form['packFormId']}' fields data exceeds 2MB limit");
                 }
             }
             if (isset($form['settings'])) {

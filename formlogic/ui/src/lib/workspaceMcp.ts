@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
+import { resolveBackendApiUrl } from './apiBase';
 import { currentSessionGeneration, currentSessionOwner, subscribeSessionGeneration } from './sessionGeneration';
 import { parseServerDate } from './utils';
+
+const SUPPORTED_MCP_PROTOCOL_VERSIONS = new Set(['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']);
 
 export interface WorkspaceMcpAttachment {
   id: string;
@@ -96,10 +99,12 @@ async function rpc(id: string, method: string, params: object, signal?: AbortSig
   const live = requireConnection(id);
   const requestId = crypto.randomUUID();
   const csrf = api.getCsrfToken();
-  const response = await fetch('/api/mcp', {
+  const mcpUrl = resolveBackendApiUrl('/mcp');
+  const isSameOrigin = mcpUrl.startsWith('/') || (typeof window !== 'undefined' && new URL(mcpUrl, window.location.origin).origin === window.location.origin);
+  const response = await fetch(mcpUrl, {
     // WebKit sends Origin: null on a POST with no-referrer. Send this site's origin only.
-    method: 'POST', credentials: 'omit', mode: 'same-origin', redirect: 'error', cache: 'no-store', referrerPolicy: 'origin',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Bearer ' + live.token, ...(csrf ? { 'X-CSRF-Token': csrf } : {}) },
+    method: 'POST', credentials: 'omit', mode: isSameOrigin ? 'same-origin' : 'cors', redirect: 'error', cache: 'no-store', referrerPolicy: 'origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Bearer ' + live.token, ...(csrf && isSameOrigin ? { 'X-CSRF-Token': csrf } : {}) },
     body: JSON.stringify({ jsonrpc: '2.0', ...(notify ? {} : { id: requestId }), method, params }),
     signal: signal ? AbortSignal.any([signal, live.controller.signal]) : live.controller.signal,
   });
@@ -129,8 +134,8 @@ export async function connectWorkspaceMcp(options: { appId?: string; creator: bo
       resetIdle(grant.id);
       remember();
       emit();
-      const ready = await rpc(grant.id, 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'FormLogic Workspace Chat', version: '1' } });
-      if (!ready?.capabilities?.tools || ready.protocolVersion !== '2024-11-05') throw new Error('This MCP server did not offer workspace tools.');
+      const ready = await rpc(grant.id, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'FormLogic Workspace Chat', version: '1' } });
+      if (!ready?.capabilities?.tools || !SUPPORTED_MCP_PROTOCOL_VERSIONS.has(String(ready.protocolVersion || ''))) throw new Error('This MCP server did not offer workspace tools.');
       await rpc(grant.id, 'notifications/initialized', {}, undefined, true);
       requireConnection(grant.id);
       selection = { ...selection!, status: 'connected' };

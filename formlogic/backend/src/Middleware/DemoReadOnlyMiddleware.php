@@ -50,6 +50,12 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
             '/api/auth/forgot-password',
             '/api/auth/reset-password',
             '/api/mcp/tokens*',
+            '/api/mcp/public',
+            '/api/mcp/forms/*',
+            '/api/oauth/device',
+            '/api/oauth/device/token',
+            '/api/oauth/device/approve',
+            '/api/oauth/approve',
             '*/reports/run',
             '*/reports/run-batch',
             '*/demo/session',
@@ -76,6 +82,11 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
             $request->getAttribute('demoSandboxVerified') === true
             && preg_match('#^/api/app/[^/]+/forms/[^/]+/responses(?:/[^/]+)?$#', $path) === 1
         ) {
+            return $handler->handle($request);
+        }
+        // Standalone public form submissions (not inside any app): a visitor still carrying the
+        // shared demo cookie must be able to fill and submit an independent published form.
+        if (preg_match('#^/api/forms/[^/]+/responses$#', $path) === 1) {
             return $handler->handle($request);
         }
         foreach ($this->allow as $allowed) {

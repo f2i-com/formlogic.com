@@ -20,6 +20,7 @@ import {
   CreditCard,
   Calculator,
   MessageSquare,
+  LayoutList,
   PartyPopper,
   Heart,
   MapPin,
@@ -30,5 +31,5 @@ import {
 export const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Type, AlignLeft, Mail, Phone, Hash, Link, Link2, Calendar, Clock, CalendarClock,
   ChevronDown, CircleDot, CheckSquare, Star, Sliders, Paperclip, PenTool,
-  CreditCard, Calculator, MessageSquare, PartyPopper, Heart, HelpCircle, MapPin, EyeOff, Camera
+  CreditCard, Calculator, LayoutList, MessageSquare, PartyPopper, Heart, HelpCircle, MapPin, EyeOff, Camera
 };

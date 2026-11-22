@@ -35,7 +35,7 @@ class ReportService
     private const VIZ = ['table', 'bar', 'line', 'area', 'pie', 'donut', 'kpi'];
     // Chart types that group + aggregate into a series (label/value pairs).
     private const SERIES_VIZ = ['bar', 'line', 'area', 'pie', 'donut'];
-    private const SKIP_TYPES = ['welcome_screen', 'thank_you', 'statement', 'signature', 'file_upload'];
+    private const SKIP_TYPES = ['welcome_screen', 'thank_you', 'statement', 'section', 'signature', 'file_upload'];
     private const NUMERIC_TYPES = ['number', 'rating', 'scale'];
     private const DATE_TYPES = ['date', 'datetime'];
     // dateRange quick presets that constrain the query ('all' / unknown values add no constraint).

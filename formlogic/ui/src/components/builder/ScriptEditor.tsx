@@ -40,6 +40,7 @@ function buildSampleAnswers(fields: Array<{ id: string; type: string }>): Record
         out[f.id] = 'test@example.com';
         break;
       case 'calculated':
+      case 'section':
       case 'statement':
       case 'welcome_screen':
       case 'thank_you':
@@ -103,7 +104,7 @@ function onSubmit(ctx) {
  * generic template. Falls back to EXAMPLE_SCRIPT when the form has no usable inputs.
  */
 function buildExampleScript(fields: Array<{ id: string; label: string; type: string }>): string {
-  const NON_INPUT = ['statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'signature', 'file_upload'];
+  const NON_INPUT = ['section', 'statement', 'welcome_screen', 'thank_you', 'calculated', 'linked_record', 'signature', 'file_upload'];
   const input = fields.filter((f) => !NON_INPUT.includes(f.type));
   if (input.length === 0) return EXAMPLE_SCRIPT;
 

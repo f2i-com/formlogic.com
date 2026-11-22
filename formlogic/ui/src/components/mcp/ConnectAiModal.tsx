@@ -3,6 +3,7 @@ import { Plug, Copy, Loader2, Trash2, ShieldAlert, Sparkles, ChevronDown } from 
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
+import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { connectWorkspaceMcp, disconnectWorkspaceMcp, getWorkspaceMcp, invalidateWorkspaceMcp, useWorkspaceMcp } from '../../lib/workspaceMcp';
 import { LoadFailure } from '../ui/LoadFailure';
 import { toast } from '../../stores/toastStore';
@@ -43,9 +44,10 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
   // The shared demo account only ever mints a READ-ONLY link (enforced server-side); reflect that here.
   const isDemo = useAuthStore((s) => s.user?.isDemo === true);
 
-  // The MCP endpoint on THIS deployment — exactly what users paste into Claude/ChatGPT
-  // (the server derives its OAuth issuer/resource from the same origin).
-  const mcpUrl = `${window.location.origin}/api/mcp`;
+  // The MCP endpoint on THIS deployment — derived via resolveBackendApiUrl so deployments
+  // with a separate API origin get the real backend URL instead of window.location.origin.
+  const mcpUrl = new URL(resolveBackendApiUrl('/mcp'), window.location.origin).toString();
+  const publicMcpUrl = new URL(resolveBackendApiUrl('/mcp/public'), window.location.origin).toString();
   useEffect(() => {
     if (isOpen && workspace && !appId && chatScope === 'app') void fetchApps();
   }, [isOpen, workspace, appId, chatScope, fetchApps]);
@@ -164,6 +166,18 @@ export function ConnectAiModal({ isOpen, onClose, appId, appName, creator = fals
             <li><span className="font-medium">ChatGPT:</span> Settings → Apps &amp; Connectors → Create → paste the URL.</li>
             <li>Approve access when your browser opens FormLogic{isDemo ? '' : ' — you can limit it to one app there'}.</li>
           </ol>
+          <div className="pt-2 border-t border-primary-200/70 dark:border-primary-500/20">
+            <p className="text-[11px] font-medium text-gray-600 dark:text-slate-300 mb-1">
+              Filling public forms without an account (or signing in from inside MCP)
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded px-2 py-1 truncate">{publicMcpUrl}</code>
+              <Button variant="outline" size="sm" onClick={() => copy(publicMcpUrl, 'Public MCP URL')} leftIcon={<Copy className="h-3.5 w-3.5" />}>Copy</Button>
+            </div>
+            <p className="mt-1 text-[11px] text-gray-500 dark:text-slate-400">
+              AI assistants can connect without signing up to inspect &amp; fill any published public form (or call <code>start_mcp_login</code> to ask the user to approve account sign-in in their browser).
+            </p>
+          </div>
         </div>}
         {!workspace && <Button variant="secondary" onClick={() => { setFresh(null); setConnectorAccess(false); setResponsesAccess(false); setResponsesWriteAccess(false); setShowWorkspace(true); }}>{attachment ? 'Manage workspace chat access' : 'Connect workspace chat'}</Button>}
 

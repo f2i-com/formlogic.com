@@ -13,6 +13,7 @@ use FormLogic\Services\AppUserService;
 use FormLogic\Services\AuditService;
 use FormLogic\Services\DesktopLinkIssuer;
 use FormLogic\Services\FlowService;
+use FormLogic\Services\McpDeviceAuthService;
 use FormLogic\Services\McpOAuthService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -49,6 +50,7 @@ class McpOAuthController
         private ?ApiKeyService $apiKeys = null,
         private ?FlowService $flows = null,
         private ?AppUserService $appUsers = null,
+        private ?McpDeviceAuthService $deviceAuth = null,
     ) {}
 
     // ── Discovery (public, cache-friendly) ──
@@ -210,6 +212,21 @@ class McpOAuthController
             return $this->oauthError($response, 'invalid_request', 'A backup link covers the whole account and cannot be limited to one app', 400);
         }
         $grantedScopes = $v['scopes'];
+        // Demo account stays strictly read-only on OAuth approvals too (mirrors createToken()).
+        $authUser = $request->getAttribute('user');
+        $demoEmail = getenv('DEMO_USER_EMAIL') ?: 'demo@formlogic.app';
+        $isDemo = is_array($authUser) && strcasecmp((string) ($authUser['email'] ?? ''), $demoEmail) === 0;
+        if ($isDemo) {
+            if (
+                McpOAuthService::isDesktopClient($v['client']['clientId'])
+                || McpOAuthService::isBackupPluginClient($v['client']['clientId'])
+                || McpOAuthService::isAokieCompanionClient($v['client']['clientId'])
+            ) {
+                return $this->oauthError($response, 'access_denied', 'This client cannot link to the shared demo account', 403);
+            }
+            $grantedScopes = ['apps:read', 'forms:read', 'responses:read'];
+            $appId = null;
+        }
         if ($appId !== null) {
             $app = $this->apps->getApp($appId);
             $isCompanion = McpOAuthService::isAokieCompanionClient($v['client']['clientId']);
@@ -334,9 +351,12 @@ class McpOAuthController
             'has_resource' => isset($p['resource']),
         ]);
 
-        // Client identification/authentication. We advertise 'none' + 'client_secret_post'; a Basic
-        // Authorization header is also accepted defensively (some clients default to
-        // client_secret_basic regardless of the metadata).
+        if ($grantType === 'urn:ietf:params:oauth:grant-type:device_code') {
+            return $this->deviceToken($request, $response);
+        }
+
+        // Client identification/authentication. We advertise 'none', 'client_secret_post', and
+        // 'client_secret_basic' (RFC 6749 §2.3.1 uses form-urlencoded decoding for Basic creds).
         $clientId = trim((string) ($p['client_id'] ?? ''));
         $clientSecret = isset($p['client_secret']) && is_string($p['client_secret']) ? $p['client_secret'] : null;
         if (preg_match('/^Basic\s+(.+)$/i', $request->getHeaderLine('Authorization'), $m)) {
@@ -344,10 +364,10 @@ class McpOAuthController
             if (is_string($decoded) && str_contains($decoded, ':')) {
                 [$basicId, $basicSecret] = explode(':', $decoded, 2);
                 if ($clientId === '') {
-                    $clientId = rawurldecode($basicId);
+                    $clientId = urldecode($basicId);
                 }
                 if ($clientSecret === null && $basicSecret !== '') {
-                    $clientSecret = rawurldecode($basicSecret);
+                    $clientSecret = urldecode($basicSecret);
                 }
             }
         }
@@ -430,7 +450,109 @@ class McpOAuthController
             return $this->tokenResponse($response, $body);
         }
 
-        return $this->oauthError($response, 'unsupported_grant_type', 'grant_type must be authorization_code or refresh_token', 400);
+        return $this->oauthError($response, 'unsupported_grant_type', 'grant_type must be authorization_code, refresh_token, or urn:ietf:params:oauth:grant-type:device_code', 400);
+    }
+
+    // ── RFC 8628 Device / Interactive MCP Login endpoints ──
+
+    /** POST /api/oauth/device — start a device authorization challenge (public, CORS *). */
+    public function deviceAuthorize(Request $request, Response $response): Response
+    {
+        if ($this->deviceAuth === null) {
+            return $this->oauthError($response, 'server_error', 'Device authorization is unavailable', 503);
+        }
+        $p = $this->formBody($request);
+        $clientName = trim((string) ($p['client_name'] ?? $p['client_id'] ?? 'AI Assistant (MCP)'));
+        $rawScope = trim((string) ($p['scope'] ?? ''));
+        $scopes = $rawScope !== '' ? preg_split('/\s+/', $rawScope) : null;
+        $scopes = is_array($scopes) ? array_values(array_filter($scopes, static fn ($s) => is_string($s) && $s !== '')) : null;
+        $appId = is_string($p['app_id'] ?? null) && trim($p['app_id']) !== '' ? trim($p['app_id']) : null;
+
+        $started = $this->deviceAuth->startLogin($clientName, $scopes, $appId, McpOAuthService::publicOrigin($request));
+        return $this->jsonResponse($response, [
+            'device_code' => $started['deviceCode'],
+            'user_code' => $started['userCode'],
+            'verification_uri' => $started['verificationUri'],
+            'verification_uri_complete' => $started['verificationUriComplete'],
+            'expires_in' => $started['expiresIn'],
+            'interval' => $started['interval'],
+            'scopes' => $started['scopes'],
+        ])->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** GET /api/oauth/device/info?code=XXXX-XXXX — inspect a pending device code for the approval SPA. */
+    public function deviceInfo(Request $request, Response $response): Response
+    {
+        if ($this->deviceAuth === null) {
+            return $this->oauthError($response, 'server_error', 'Device authorization is unavailable', 503);
+        }
+        $code = trim((string) ($request->getQueryParams()['code'] ?? ''));
+        $info = $this->deviceAuth->lookupByUserCode($code);
+        if ($info === null) {
+            return $this->oauthError($response, 'invalid_request', 'Code not found or expired. Check the code shown by your AI client.', 404);
+        }
+        return $this->jsonResponse($response, $info)->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** POST /api/oauth/device/approve — authenticated browser user approves or denies a device login. */
+    public function deviceApprove(Request $request, Response $response): Response
+    {
+        if ($this->deviceAuth === null) {
+            return $this->oauthError($response, 'server_error', 'Device authorization is unavailable', 503);
+        }
+        $userId = $request->getAttribute('userId');
+        if (!is_string($userId) || $userId === '') {
+            return $this->oauthError($response, 'access_denied', 'Authentication required', 401);
+        }
+        $p = $this->jsonBody($request) ?? [];
+        $code = trim((string) ($p['code'] ?? ''));
+        $deny = ($p['deny'] ?? false) === true;
+        $appId = is_string($p['appId'] ?? null) && trim($p['appId']) !== '' ? trim($p['appId']) : null;
+        if ($appId !== null && !$deny) {
+            $app = $this->apps->getApp($appId);
+            if (!$app || ($app['ownerId'] ?? null) !== $userId) {
+                return $this->oauthError($response, 'access_denied', 'App not found or access denied', 404);
+            }
+        }
+        $approvedScopes = is_array($p['scopes'] ?? null)
+            ? array_values(array_filter($p['scopes'], 'is_string'))
+            : null;
+        $user = $request->getAttribute('user');
+        $demoEmail = getenv('DEMO_USER_EMAIL') ?: 'demo@formlogic.app';
+        $isDemo = is_array($user) && strcasecmp((string) ($user['email'] ?? ''), $demoEmail) === 0;
+
+        $res = $this->deviceAuth->decide($code, $userId, $approvedScopes, $isDemo ? null : $appId, $deny, $isDemo);
+        if (!$res['ok']) {
+            return $this->oauthError($response, 'invalid_request', (string) ($res['error'] ?? 'Could not update sign-in request'), 400);
+        }
+        $this->audit($request, $deny ? 'mcp.device.deny' : 'mcp.device.approve', $userId, ['appId' => $appId, 'readOnly' => $isDemo]);
+        return $this->jsonResponse($response, ['success' => true, 'status' => $res['status'] ?? 'approved'])
+            ->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** POST /api/oauth/device/token (also invoked via grant_type=device_code on /api/oauth/token). */
+    public function deviceToken(Request $request, Response $response): Response
+    {
+        if ($this->deviceAuth === null) {
+            return $this->oauthError($response, 'server_error', 'Device authorization is unavailable', 503);
+        }
+        $p = $this->formBody($request);
+        $deviceCode = trim((string) ($p['device_code'] ?? $p['deviceCode'] ?? ''));
+        if ($deviceCode === '') {
+            return $this->oauthError($response, 'invalid_request', 'device_code is required', 400);
+        }
+        $res = $this->deviceAuth->pollOrRedeem($deviceCode, McpOAuthService::resourceFor($request));
+        $status = (string) ($res['status'] ?? 'expired_token');
+        if ($status !== 'approved') {
+            return $this->oauthError($response, $status, (string) ($res['error'] ?? $res['message'] ?? $status), 400);
+        }
+        return $this->tokenResponse($response, [
+            'access_token' => $res['accessToken'],
+            'token_type' => 'Bearer',
+            'expires_in' => $res['expiresIn'],
+            'scope' => implode(' ', is_array($res['scopes'] ?? null) ? $res['scopes'] : []),
+            'mcp_url' => $res['mcpUrl'],
+        ]);
     }
 
     /**

@@ -29,7 +29,7 @@ if ($uri === '/api' || str_starts_with($uri, '/api/')) {
 // OAuth discovery documents for the MCP connector flow — the backend serves these at the domain ROOT
 // (mirrors the ui/public/.htaccess well-known rules): the RFC 9728 protected-resource subtree and the
 // RFC 8414 authorization-server metadata. /oauth/authorize is an SPA route (fallback below).
-if (preg_match('#^/\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server)$#', $uri)) {
+if (preg_match('#^/\.well-known/(oauth-protected-resource(/.*)?|oauth-authorization-server(/.*)?|openid-configuration)$#', $uri)) {
     require __DIR__ . '/../backend/public/index.php';
     return true;
 }

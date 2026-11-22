@@ -265,7 +265,7 @@ function FormResponseView() {
   const denyAdd = useCallback(() => false, []);
   const allowDelete = useCallback(() => true, []);
 
-  const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement'].includes(f.type));
+  const fields = (form?.fields ?? []).filter((f) => !['welcome_screen', 'thank_you', 'statement', 'section'].includes(f.type));
   const completionTime = record?.metadata?.completionTime ?? 0;
 
   // The responses a list handed over when it opened this one (router state `responseIds`, in

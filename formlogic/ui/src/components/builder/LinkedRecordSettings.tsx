@@ -48,7 +48,7 @@ export function LinkedRecordSettings({
   // live field list; keep the old derivation only as a fallback for any other caller.
   const ownFields = (
     ownFieldsProp ?? appForms.find((f) => f.formId === currentFormId)?.fields ?? []
-  ).filter((f) => !['statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type));
+  ).filter((f) => !['section', 'statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type));
 
   // Load app forms list
   useEffect(() => {
@@ -84,7 +84,7 @@ export function LinkedRecordSettings({
         const form = result.data.form as { fields: Array<{ id: string; label: string; type: string }> };
         // Only show data fields (exclude layout types)
         const dataFields = form.fields.filter(
-          (f) => !['statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type)
+          (f) => !['section', 'statement', 'welcome_screen', 'thank_you', 'linked_record'].includes(f.type)
         );
         setTargetFields(dataFields);
       }

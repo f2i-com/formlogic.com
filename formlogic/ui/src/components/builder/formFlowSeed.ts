@@ -11,7 +11,7 @@ import { fieldSelector } from './formFlowBindingsSerialize';
 
 export const FORM_SUBMISSION_TEMPLATE_ID = 'form-submission';
 
-const NON_ANSWER_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement']);
+const NON_ANSWER_FIELD_TYPES = new Set(['welcome_screen', 'thank_you', 'statement', 'section']);
 
 export interface SeededFormFlow {
   name: string;
