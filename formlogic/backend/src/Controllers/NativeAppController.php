@@ -155,6 +155,10 @@ class NativeAppController
                     }
                     $targetId = is_string($targetId) && trim($targetId) !== '' ? trim($targetId) : null;
                     if ($targetId !== null) {
+                        $targetApp = $this->apps->getApp($targetId);
+                        if (!$targetApp || ($targetApp['ownerId'] ?? null) !== $ownerId) {
+                            throw new \InvalidArgumentException('Choose a target app owned by your account.');
+                        }
                         if (!$this->native->hasManagedDatabase($targetId)) {
                             throw new \InvalidArgumentException('The target app does not have a SQLite database yet. Enable Unified SQLite on that Form App or install its SoftN backend first.');
                         }
@@ -796,10 +800,20 @@ class NativeAppController
             if ($plugin === null && NativeAppService::hasContainerBackend($project)) {
                 $method = is_array($input) && is_string($input['method'] ?? null) ? strtoupper(trim($input['method'])) : '';
                 $path = is_array($input) && is_string($input['path'] ?? null) ? $input['path'] : '';
-                if ($path === '' || !str_starts_with($path, '/') || strlen($path) > 2048 || str_contains($path, '..') || preg_match('/[\x00-\x1f\x7f]/', $path) === 1 || !in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], true)) {
+                if (
+                    $path === ''
+                    || !str_starts_with($path, '/')
+                    || str_starts_with($path, '//')
+                    || strlen($path) > 2048
+                    || str_contains($path, '..')
+                    || str_contains($path, '\\')
+                    || preg_match('/(?:%2e|%2f|%5c|[\x00-\x1f\x7f])/i', $path) === 1
+                    || !in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'], true)
+                ) {
                     throw new \InvalidArgumentException('Provide a valid container API path and method');
                 }
-                if (str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
+                $decodedPath = strtolower(preg_replace('#/+#', '/', rawurldecode($path)) ?? $path);
+                if (str_starts_with($decodedPath, PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
                 if (in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
                     $call = ['method' => $method, 'path' => $path, 'caller' => $owner ? 'owner' : ($project['access'] === 'members' ? 'member' : 'visitor')];
                     $manifest = is_string($project['files']['manifest.json'] ?? null) ? $project['files']['manifest.json'] : null;
@@ -808,12 +822,25 @@ class NativeAppController
                     throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
                 }
                 $rawHeaders = is_array($input['headers'] ?? null) ? $input['headers'] : [];
+                $blockedContainerHeaders = [
+                    'host', 'origin', 'referer', 'connection', 'keep-alive', 'transfer-encoding',
+                    'te', 'trailer', 'upgrade', 'content-length', 'x-real-ip', 'x-http-method-override',
+                    'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
+                ];
                 $headers = [];
                 foreach ($rawHeaders as $k => $v) {
                     if (!is_string($k) || !is_scalar($v)) continue;
                     $lk = strtolower(trim($k));
-                    if ($lk === '' || strlen($lk) > 128 || str_starts_with($lk, 'x-formlogic-')) continue;
-                    $sv = (string) $v;
+                    // Enforce strict token-with-hyphens (blocks underscore CGI spoofing like x_formlogic_user_id).
+                    if ($lk === '' || strlen($lk) > 128 || preg_match('/^[a-z0-9-]+$/', $lk) !== 1) continue;
+                    if (
+                        str_starts_with($lk, 'x-formlogic')
+                        || str_starts_with($lk, 'x-forwarded-')
+                        || str_starts_with($lk, 'proxy-')
+                        || str_starts_with($lk, 'sec-')
+                        || in_array($lk, $blockedContainerHeaders, true)
+                    ) continue;
+                    $sv = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
                     if (strlen($sv) > 8192) continue;
                     $headers[$lk] = $sv;
                     if (count($headers) >= 64) break;
@@ -823,6 +850,9 @@ class NativeAppController
                     $query = ltrim($input['query'], '?');
                 } elseif (is_array($input['query'] ?? null)) {
                     $query = http_build_query($input['query']);
+                }
+                if (strlen($query) > 4096 || preg_match('/[\x00-\x1f\x7f]/', $query) === 1) {
+                    throw new \InvalidArgumentException('Invalid container query string');
                 }
                 $bodyBase64 = '';
                 if (is_string($input['bodyBase64'] ?? null)) {

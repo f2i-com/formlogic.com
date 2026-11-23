@@ -659,15 +659,48 @@ class ExternalAppApiController
                 $recordAudit((int) $result['status'], $errSnippet);
                 if ($rawPassthrough) {
                     $resp = $response->withStatus($result['status']);
-                    $hasContentType = false;
+                    $safePassHeaders = ['cache-control', 'etag', 'last-modified', 'vary', 'content-language', 'x-request-id', 'x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset', 'retry-after'];
+                    $safeContentTypes = [
+                        'application/json',
+                        'application/problem+json',
+                        'application/vnd.api+json',
+                        'text/plain',
+                        'text/csv',
+                        'text/tab-separated-values',
+                        'application/octet-stream',
+                        'image/png',
+                        'image/jpeg',
+                        'image/gif',
+                        'image/webp',
+                    ];
+                    $chosenContentType = null;
+                    $forceAttachment = false;
                     foreach ($result['headers'] as [$hk, $hv]) {
-                        $lhk = strtolower($hk);
-                        if (in_array($lhk, ['set-cookie', 'transfer-encoding', 'content-length'], true)) continue;
-                        if ($lhk === 'content-type') $hasContentType = true;
-                        $resp = $resp->withHeader($hk, $hv);
+                        $lhk = strtolower(trim((string) $hk));
+                        $val = preg_replace('/[\r\n\0]+/', '', (string) $hv) ?? '';
+                        if ($lhk === 'content-type') {
+                            $baseMime = strtolower(trim(explode(';', $val, 2)[0]));
+                            if (in_array($baseMime, $safeContentTypes, true)) {
+                                $chosenContentType = $val;
+                            } else {
+                                // Never serve active web/script types (text/html, image/svg+xml, application/xhtml+xml, etc.)
+                                // inline on the FormLogic API origin — prevents same-origin stored XSS.
+                                $chosenContentType = 'application/octet-stream';
+                                $forceAttachment = true;
+                            }
+                            continue;
+                        }
+                        if (!in_array($lhk, $safePassHeaders, true)) continue;
+                        $resp = $resp->withHeader($lhk, $val);
                     }
-                    if (!$hasContentType) {
-                        $resp = $resp->withHeader('Content-Type', $isJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8');
+                    if ($chosenContentType === null) {
+                        $chosenContentType = $isJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8';
+                    }
+                    $resp = $resp
+                        ->withHeader('Content-Type', $chosenContentType)
+                        ->withHeader('X-Content-Type-Options', 'nosniff');
+                    if ($forceAttachment) {
+                        $resp = $resp->withHeader('Content-Disposition', 'attachment; filename="response.bin"');
                     }
                     if ($method !== 'HEAD' && $result['status'] !== 204) {
                         $resp->getBody()->write($rawText);

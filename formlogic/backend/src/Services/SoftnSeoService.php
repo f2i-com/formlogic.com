@@ -176,7 +176,7 @@ class SoftnSeoService
             $htmlFiles = [];
             foreach ($files as $filePath => $content) {
                 if (!is_string($filePath) || !is_string($content)) continue;
-                if (preg_match('/^(?:server|backend|api|node_modules)\//i', $filePath) === 1) continue;
+                if (preg_match('/^(?:server|backend|api|private|\.git|db|database|migrations|node_modules)\//i', $filePath) === 1) continue;
                 if (preg_match('/\.html?$/i', $filePath) === 1) {
                     $htmlFiles[] = $filePath;
                 }
@@ -184,7 +184,8 @@ class SoftnSeoService
             sort($htmlFiles);
             if ($htmlFiles !== []) {
                 foreach (array_slice($htmlFiles, 0, self::MAX_PAGES) as $filePath) {
-                    $routePath = self::htmlFileToRoutePath($filePath, 'index.html');
+                    $routePath = self::normalizeRoutePath(self::htmlFileToRoutePath($filePath, 'index.html'));
+                    if ($routePath === null) continue;
                     $extracted = self::extractFromHtml($files[$filePath], $appName, $fallbackDesc, $routePath);
                     $pagesByPath[$routePath] = [
                         'path' => $routePath,

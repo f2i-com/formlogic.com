@@ -174,7 +174,7 @@ describe.each(['members', 'application'] as const)('%s recovery', access => {
     await mount(true);
     const old = channels[0];
     let finishNative!: (value: Awaited<ReturnType<typeof api.runNativeRequest>>) => void;
-    let finishWorkspace!: (value: object) => void;
+    let finishWorkspace: ((value: object) => void) | undefined;
     vi.mocked(api.runNativeRequest).mockImplementation(() => new Promise(resolve => { finishNative = resolve; }));
     vi.mocked(workspaceBridge).mockImplementation(async (_slug, _action, _input, navigate, isCurrent) => {
       await new Promise<object>(resolve => { finishWorkspace = resolve; });
@@ -184,6 +184,11 @@ describe.each(['members', 'application'] as const)('%s recovery', access => {
     });
     const nativeCall = call(old, 'nativeRequest', { url: '/api/notes', options: {} });
     const workspaceCall = call(old, 'workspaceDashboard', {});
+    if (access === 'application') {
+      expect(workspaceBridge).not.toHaveBeenCalled();
+      expect(old.port1.postMessage).toHaveBeenCalledWith({ id: 19, result: { error: expect.any(String) } });
+      old.port1.postMessage.mockClear();
+    }
     failRemoval();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await reset();
@@ -191,7 +196,7 @@ describe.each(['members', 'application'] as const)('%s recovery', access => {
     const location = window.location.href;
     await act(async () => {
       finishNative({ error: 'changed', status: 409, code: 'engine_changed' });
-      finishWorkspace({});
+      finishWorkspace?.({});
       await Promise.all([nativeCall, workspaceCall]);
     });
     expect(window.location.href).toBe(location);

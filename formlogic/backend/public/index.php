@@ -710,7 +710,7 @@ $container->set(\FormLogic\Services\MarketplaceCommerceService::class, function 
         $c->get(\FormLogic\Services\MarketplaceSandboxService::class),
         $c->get(\FormLogic\Services\MemberPluginService::class),
         $c->get(PackCatalogService::class),
-        !($settings['settings']['isProduction'] ?? false) || (bool) ($settings['settings']['cloud']['betaMode'] ?? true)
+        !($settings['settings']['isProduction'] ?? false)
     );
 });
 $container->set(\FormLogic\Services\SoftnPackCatalog::class, function () {
@@ -2927,18 +2927,6 @@ $app->get('/app/{slug}[/{rest:.*}]', function ($request, $response) use ($contai
         : $handler->handle($request);
 });
 
-// Clean HTML subpage URLs on custom domains (e.g. https://mysite.com/about.html, /docs/guide.html)
-// receive per-page SEO metadata, canonical URL, JSON-LD, and crawlable HTML snapshot.
-$app->get('/{page:.+\.html?}', function ($request, $response) use ($container, $getArgs) {
-    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, [
-        'page' => (string) ($getArgs($request)['page'] ?? ''),
-    ]);
-})->add(function ($request, $handler) use ($appLookRateLimiter) {
-    return \FormLogic\Controllers\AppLookController::isPreviewBot($request->getHeaderLine('User-Agent'))
-        ? $appLookRateLimiter->process($request, $handler)
-        : $handler->handle($request);
-});
-
 $app->get('/.well-known/assetlinks.json', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->assetLinks($request, $response);
 })->add($publicFormRateLimiter);
@@ -3181,9 +3169,10 @@ $app->delete('/api/packs/catalog/{slug}/ratings', function ($request, $response)
 
 // Marketplace live sandbox demos (private source-hidden hosting + ephemeral SQLite backend)
 $mktSandboxLimiter = new RateLimitMiddleware($rateLimiter, 180, 60, 'mkt_sandbox');
+$mktSessionLimiter = new RateLimitMiddleware($rateLimiter, 15, 60, 'mkt_sandbox_session');
 $app->post('/api/packs/catalog/{slug}/demo/session', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->startDemo($request, $response, $getArgs($request));
-})->add($mktSandboxLimiter)->add($authOptional);
+})->add($mktSessionLimiter)->add($authOptional);
 
 $app->post('/api/packs/catalog/{slug}/demo/reset', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->resetDemo($request, $response, $getArgs($request));
@@ -5032,6 +5021,19 @@ $app->group('/api/app/{slug}', function (RouteCollectorProxy $group) use ($conta
         return $container->get(AppPublicController::class)->clearFormResponses($request, $response, $getArgs($request));
     })->add($authRequired);
 })->add($appAccessGate);
+
+// Clean HTML subpage URLs on custom domains (e.g. https://mysite.com/about.html, /docs/guide.html)
+// registered last and explicitly excluding /api/* and platform runtime prefixes so API/frame routes
+// serving .html files (e.g. /api/app/{slug}/site/{ticket}/index.html) are never hijacked.
+$app->get('/{page:(?!api/|hosted-runtime/|app-editors/|zipp/|\.well-known/).+\.html?}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, [
+        'page' => (string) ($getArgs($request)['page'] ?? ''),
+    ]);
+})->add(function ($request, $handler) use ($appLookRateLimiter) {
+    return \FormLogic\Controllers\AppLookController::isPreviewBot($request->getHeaderLine('User-Agent'))
+        ? $appLookRateLimiter->process($request, $handler)
+        : $handler->handle($request);
+});
 
 // Run app
 $app->run();

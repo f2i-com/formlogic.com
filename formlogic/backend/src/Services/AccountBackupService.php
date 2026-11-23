@@ -548,20 +548,27 @@ final class AccountBackupService
                 // all belong to the same installed version.
                 $dbStaged = $stagingDir . '/native-' . $appId . '.sqlite';
                 $capture = $this->native->captureForBackup($appId, $dbStaged, $this->snapshots, $includeHostSecrets);
-                $projectJson = json_encode($capture['project'], JSON_UNESCAPED_SLASHES);
-                if ($projectJson === false) {
-                    throw new \RuntimeException("Could not serialize the native project for app {$appId}");
+                $isSourceProtected = !empty($ba['settings']['sourceProtected']);
+                if ($includeHostSecrets || !$isSourceProtected) {
+                    $projectJson = json_encode($capture['project'], JSON_UNESCAPED_SLASHES);
+                    if ($projectJson === false) {
+                        throw new \RuntimeException("Could not serialize the native project for app {$appId}");
+                    }
+                    $name = 'native/' . $appId . '/project.json';
+                    $entries[$name] = hash('sha256', $projectJson);
+                    // From a file: the archive holds a string it is given until it is closed, and an account's
+                    // apps together can be several times the largest one (tens of megabytes of media each).
+                    $projectStaged = $stagingDir . '/native-' . $appId . '.project.json';
+                    if (file_put_contents($projectStaged, $projectJson) !== strlen($projectJson)) {
+                        throw new \RuntimeException("Could not stage the native project for app {$appId}");
+                    }
+                    unset($projectJson);
+                    $zip->addFile($projectStaged, $name);
+                } else {
+                    $structure['apps'][$i]['native']['sourceProtected'] = true;
+                    $warnings[] = "Hosted native app '" . ($ba['name'] ?? $appId) . "' is source-protected; only its database records were included in this user backup.";
                 }
-                $name = 'native/' . $appId . '/project.json';
-                $entries[$name] = hash('sha256', $projectJson);
-                // From a file: the archive holds a string it is given until it is closed, and an account's
-                // apps together can be several times the largest one (tens of megabytes of media each).
-                $projectStaged = $stagingDir . '/native-' . $appId . '.project.json';
-                if (file_put_contents($projectStaged, $projectJson) !== strlen($projectJson)) {
-                    throw new \RuntimeException("Could not stage the native project for app {$appId}");
-                }
-                unset($projectJson, $capture['project']);
-                $zip->addFile($projectStaged, $name);
+                unset($capture['project']);
                 $structure['apps'][$i]['native']['version'] = $capture['version'];
                 $structure['apps'][$i]['native']['manifestId'] = $capture['manifestId'];
 

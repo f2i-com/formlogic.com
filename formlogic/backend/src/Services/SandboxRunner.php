@@ -226,7 +226,17 @@ class SandboxRunner
             2 => ['file', $stderrFile !== false ? $stderrFile : (PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null'), 'w'],
         ];
 
-        $proc = @proc_open($cmd, $descriptors, $pipes, null, null, ['bypass_shell' => true]);
+        // Pass only minimal OS/runtime environment variables so DB credentials, JWT secrets,
+        // and API keys in PHP's environment are never inherited by the launcher subprocess.
+        $allowedEnvKeys = ['PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'FL_SANDBOX_CHILD_MODE'];
+        $childEnv = [];
+        foreach ($allowedEnvKeys as $ek) {
+            $ev = getenv($ek);
+            if (is_string($ev) && $ev !== '') {
+                $childEnv[$ek] = $ev;
+            }
+        }
+        $proc = @proc_open($cmd, $descriptors, $pipes, null, $childEnv, ['bypass_shell' => true]);
         if (!is_resource($proc)) {
             if ($stderrFile !== false) {
                 @unlink($stderrFile);

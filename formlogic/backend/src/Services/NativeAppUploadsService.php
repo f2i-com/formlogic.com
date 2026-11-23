@@ -92,7 +92,6 @@ class NativeAppUploadsService
         'image/jpeg',
         'image/gif',
         'image/webp',
-        'application/pdf',
     ];
 
     private string $storageDir;
@@ -229,89 +228,116 @@ class NativeAppUploadsService
             throw new InvalidArgumentException(sprintf('File exceeds this app\'s %d MB per-file upload limit.', $policy['maxFileSizeMb']));
         }
 
-        // Enforce per-app storage quota
-        $stats = $this->getStats($appId, $policy);
-        if ($stats['totalBytes'] + $size > $stats['quotaBytes']) {
-            throw new InvalidArgumentException(sprintf('App upload storage quota (%d MB) would be exceeded. Delete old files or increase the quota.', $policy['maxTotalStorageMb']));
-        }
-
-        // Enforce account plan storage limit when PlanService is available
-        if ($this->plans !== null && $ownerId !== '' && !$this->plans->canUpload($ownerId, $size)) {
-            throw new RuntimeException('Account storage quota exceeded.', 413);
-        }
-
-        // Clean & validate filename and double extensions
-        $safeName = self::sanitizeFilename($originalFilename);
-        $ext = self::extractValidatedExtension($safeName);
-        $rule = self::EXTENSION_RULES[$ext] ?? null;
-        if ($rule === null) {
-            throw new InvalidArgumentException(sprintf('File type .%s is not supported in the sandboxed upload store.', $ext));
-        }
-        if (!$isOwner && !in_array($rule['category'], $policy['allowedCategories'], true)) {
-            throw new InvalidArgumentException(sprintf('Category "%s" uploads are disabled by this app\'s sandbox policy.', $rule['category']));
-        }
-        if ($isOwner && !in_array($rule['category'], $policy['allowedCategories'], true)) {
-            // Even the owner is bounded by the app's allowed categories to keep the sandbox predictable.
-            throw new InvalidArgumentException(sprintf('Enable the "%s" category in Upload Sandbox Policy before uploading .%s files.', $rule['category'], $ext));
-        }
-
-        // Magic-byte MIME verification via finfo
-        $detectedMime = self::detectMime($bytes);
-        if (!self::mimeMatchesRule($detectedMime, $ext, $bytes, $rule)) {
-            throw new InvalidArgumentException(sprintf(
-                'File contents (%s) do not match the .%s file type and were blocked by the upload sandbox.',
-                $detectedMime,
-                $ext,
-            ));
-        }
-
-        // Extra raster image decode check & decompression bomb guard
-        if ($rule['category'] === 'images') {
-            $info = @getimagesizefromstring($bytes);
-            if (!is_array($info) || ($info[0] ?? 0) <= 0 || ($info[1] ?? 0) <= 0) {
-                throw new InvalidArgumentException('Image file appears corrupted or invalid.');
-            }
-            if ($info[0] > self::MAX_IMAGE_DIMENSION || $info[1] > self::MAX_IMAGE_DIMENSION) {
-                throw new InvalidArgumentException('Image dimensions exceed the maximum safe limit (16384px).');
-            }
-        }
-
-        // Polyglot / embedded active web/PHP header scan (covers text, JSON, CSV, PDF, and leading image comments)
-        if (self::containsDangerousPayloadHeader($bytes, $rule['category'])) {
-            throw new InvalidArgumentException('File contains active script or HTML markup and was blocked by the upload sandbox.');
-        }
-
-        $safeFolder = self::sanitizeFolder($folder);
-        $id = self::uuidV4();
-        $storedFilename = $id . '.' . $ext;
-        $sha256 = hash('sha256', $bytes);
-        $status = (!$isOwner && $policy['requireQuarantineReview']) ? 'quarantined' : 'approved';
-        $serveMime = $rule['serveMime'];
-
-        // Write atomically to the isolated per-app sandbox directory
+        // Serialize quota check + disk write + DB insert per app to eliminate concurrent quota TOCTOU races.
         $dir = $this->ensureAppDir($appId);
-        $dest = $dir . DIRECTORY_SEPARATOR . $storedFilename;
-        $tmp = $dir . DIRECTORY_SEPARATOR . '.tmp-' . $id;
-        $written = @file_put_contents($tmp, $bytes, LOCK_EX);
-        if ($written === false || $written !== $size) {
-            @unlink($tmp);
-            throw new RuntimeException('Could not write uploaded file to sandbox storage.');
+        $lockPath = $dir . DIRECTORY_SEPARATOR . '.quota.lock';
+        $lockFp = @fopen($lockPath, 'c');
+        if ($lockFp !== false) {
+            @flock($lockFp, LOCK_EX);
         }
-        @chmod($tmp, 0600);
-        if (!@rename($tmp, $dest)) {
-            @unlink($tmp);
-            throw new RuntimeException('Could not finalize uploaded file in sandbox storage.');
-        }
-
-        $createdAt = gmdate('Y-m-d H:i:s');
         try {
-            $stmt = $this->pdo->prepare('
-                INSERT INTO native_app_uploads
-                    (id, app_id, original_filename, stored_filename, folder, mime_type, category, size_bytes, sha256, status, uploaded_by, uploader_label, notes, created_at)
-                VALUES
-                    (:id, :app_id, :original_filename, :stored_filename, :folder, :mime_type, :category, :size_bytes, :sha256, :status, :uploaded_by, :uploader_label, NULL, :created_at)
-            ');
-            $stmt->execute([
+            // Enforce per-app storage quota
+            $stats = $this->getStats($appId, $policy);
+            if ($stats['totalBytes'] + $size > $stats['quotaBytes']) {
+                throw new InvalidArgumentException(sprintf('App upload storage quota (%d MB) would be exceeded. Delete old files or increase the quota.', $policy['maxTotalStorageMb']));
+            }
+
+            // Enforce account plan storage limit when PlanService is available
+            if ($this->plans !== null && $ownerId !== '' && !$this->plans->canUpload($ownerId, $size)) {
+                throw new RuntimeException('Account storage quota exceeded.', 413);
+            }
+
+            // Clean & validate filename and double extensions
+            $safeName = self::sanitizeFilename($originalFilename);
+            $ext = self::extractValidatedExtension($safeName);
+            $rule = self::EXTENSION_RULES[$ext] ?? null;
+            if ($rule === null) {
+                throw new InvalidArgumentException(sprintf('File type .%s is not supported in the sandboxed upload store.', $ext));
+            }
+            if (!$isOwner && !in_array($rule['category'], $policy['allowedCategories'], true)) {
+                throw new InvalidArgumentException(sprintf('Category "%s" uploads are disabled by this app\'s sandbox policy.', $rule['category']));
+            }
+            if ($isOwner && !in_array($rule['category'], $policy['allowedCategories'], true)) {
+                // Even the owner is bounded by the app's allowed categories to keep the sandbox predictable.
+                throw new InvalidArgumentException(sprintf('Enable the "%s" category in Upload Sandbox Policy before uploading .%s files.', $rule['category'], $ext));
+            }
+
+            // Magic-byte MIME verification via finfo
+            $detectedMime = self::detectMime($bytes);
+            if (!self::mimeMatchesRule($detectedMime, $ext, $bytes, $rule)) {
+                throw new InvalidArgumentException(sprintf(
+                    'File contents (%s) do not match the .%s file type and were blocked by the upload sandbox.',
+                    $detectedMime,
+                    $ext,
+                ));
+            }
+
+            // Extra raster image decode check & decompression bomb guard
+            if ($rule['category'] === 'images') {
+                $info = @getimagesizefromstring($bytes);
+                if (!is_array($info) || ($info[0] ?? 0) <= 0 || ($info[1] ?? 0) <= 0) {
+                    throw new InvalidArgumentException('Image file appears corrupted or invalid.');
+                }
+                if ($info[0] > self::MAX_IMAGE_DIMENSION || $info[1] > self::MAX_IMAGE_DIMENSION) {
+                    throw new InvalidArgumentException('Image dimensions exceed the maximum safe limit (16384px).');
+                }
+            }
+
+            // Polyglot / embedded active web/PHP header scan (covers text, JSON, CSV, PDF, and leading image comments)
+            if (self::containsDangerousPayloadHeader($bytes, $rule['category'])) {
+                throw new InvalidArgumentException('File contains active script or HTML markup and was blocked by the upload sandbox.');
+            }
+
+            $safeFolder = self::sanitizeFolder($folder);
+            $id = self::uuidV4();
+            $storedFilename = $id . '.' . $ext;
+            $sha256 = hash('sha256', $bytes);
+            $status = (!$isOwner && $policy['requireQuarantineReview']) ? 'quarantined' : 'approved';
+            $serveMime = $rule['serveMime'];
+
+            // Write atomically to the isolated per-app sandbox directory
+            $dest = $dir . DIRECTORY_SEPARATOR . $storedFilename;
+            $tmp = $dir . DIRECTORY_SEPARATOR . '.tmp-' . $id;
+            $written = @file_put_contents($tmp, $bytes, LOCK_EX);
+            if ($written === false || $written !== $size) {
+                @unlink($tmp);
+                throw new RuntimeException('Could not write uploaded file to sandbox storage.');
+            }
+            @chmod($tmp, 0600);
+            if (!@rename($tmp, $dest)) {
+                @unlink($tmp);
+                throw new RuntimeException('Could not finalize uploaded file in sandbox storage.');
+            }
+
+            $createdAt = gmdate('Y-m-d H:i:s');
+            try {
+                $stmt = $this->pdo->prepare('
+                    INSERT INTO native_app_uploads
+                        (id, app_id, original_filename, stored_filename, folder, mime_type, category, size_bytes, sha256, status, uploaded_by, uploader_label, notes, created_at)
+                    VALUES
+                        (:id, :app_id, :original_filename, :stored_filename, :folder, :mime_type, :category, :size_bytes, :sha256, :status, :uploaded_by, :uploader_label, NULL, :created_at)
+                ');
+                $stmt->execute([
+                    'id' => $id,
+                    'app_id' => $appId,
+                    'original_filename' => $safeName,
+                    'stored_filename' => $storedFilename,
+                    'folder' => $safeFolder,
+                    'mime_type' => $serveMime,
+                    'category' => $rule['category'],
+                    'size_bytes' => $size,
+                    'sha256' => $sha256,
+                    'status' => $status,
+                    'uploaded_by' => $uploadedBy,
+                    'uploader_label' => $uploaderLabel !== null ? mb_substr(trim($uploaderLabel), 0, 120) : null,
+                    'created_at' => $createdAt,
+                ]);
+            } catch (\Throwable $e) {
+                @unlink($dest);
+                throw $e;
+            }
+
+            return $this->formatRow([
                 'id' => $id,
                 'app_id' => $appId,
                 'original_filename' => $safeName,
@@ -323,30 +349,16 @@ class NativeAppUploadsService
                 'sha256' => $sha256,
                 'status' => $status,
                 'uploaded_by' => $uploadedBy,
-                'uploader_label' => $uploaderLabel !== null ? mb_substr(trim($uploaderLabel), 0, 120) : null,
+                'uploader_label' => $uploaderLabel,
+                'notes' => null,
                 'created_at' => $createdAt,
-            ]);
-        } catch (\Throwable $e) {
-            @unlink($dest);
-            throw $e;
+            ], $slug);
+        } finally {
+            if ($lockFp !== false) {
+                @flock($lockFp, LOCK_UN);
+                @fclose($lockFp);
+            }
         }
-
-        return $this->formatRow([
-            'id' => $id,
-            'app_id' => $appId,
-            'original_filename' => $safeName,
-            'stored_filename' => $storedFilename,
-            'folder' => $safeFolder,
-            'mime_type' => $serveMime,
-            'category' => $rule['category'],
-            'size_bytes' => $size,
-            'sha256' => $sha256,
-            'status' => $status,
-            'uploaded_by' => $uploadedBy,
-            'uploader_label' => $uploaderLabel,
-            'notes' => null,
-            'created_at' => $createdAt,
-        ], $slug);
     }
 
     /**
@@ -373,8 +385,9 @@ class NativeAppUploadsService
             $params['folder'] = self::sanitizeFolder($filters['folder']);
         }
         if (!empty($filters['search']) && is_string($filters['search'])) {
-            $where[] = '(LOWER(original_filename) LIKE :search OR LOWER(folder) LIKE :search2)';
-            $needle = '%' . strtolower(trim($filters['search'])) . '%';
+            $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], strtolower(trim($filters['search'])));
+            $where[] = "(LOWER(original_filename) LIKE :search ESCAPE '\\' OR LOWER(folder) LIKE :search2 ESCAPE '\\')";
+            $needle = '%' . $escaped . '%';
             $params['search'] = $needle;
             $params['search2'] = $needle;
         }
@@ -681,6 +694,18 @@ class NativeAppUploadsService
     {
         $head = strtolower(substr($bytes, 0, 4096));
         if (str_contains($head, '<?php') || str_contains($head, '<?=')) {
+            return true;
+        }
+        // Reject native executables (PE/MZ, ELF, Mach-O) and shell scripts across sandboxed upload categories.
+        if (
+            str_starts_with($bytes, "\x7fELF") ||
+            str_starts_with($bytes, "MZ\x90") ||
+            str_starts_with($bytes, "\xfe\xed\xfa\xce") ||
+            str_starts_with($bytes, "\xce\xfa\xed\xfe") ||
+            str_starts_with($bytes, "\xfe\xed\xfa\xcf") ||
+            str_starts_with($bytes, "\xcf\xfa\xed\xfe") ||
+            str_starts_with($bytes, '#!/')
+        ) {
             return true;
         }
         if ($category === 'documents' || $category === 'images') {

@@ -68,10 +68,24 @@ class PlanService
 
     public function getStorageBytes(string $userId): int
     {
-        $stmt = $this->mysql->getConnection()->prepare('SELECT id FROM forms WHERE user_id = ?');
+        $pdo = $this->mysql->getConnection();
+        $stmt = $pdo->prepare('SELECT id FROM forms WHERE user_id = ?');
         $stmt->execute([$userId]);
         $ids = $stmt->fetchAll(\PDO::FETCH_COLUMN) ?: [];
-        return $this->fileStorage->bytesForForms(array_map('strval', $ids));
+        $total = $this->fileStorage->bytesForForms(array_map('strval', $ids));
+        try {
+            $uStmt = $pdo->prepare('
+                SELECT COALESCE(SUM(u.size_bytes), 0)
+                FROM native_app_uploads u
+                INNER JOIN apps a ON a.id = u.app_id
+                WHERE a.owner_id = ?
+            ');
+            $uStmt->execute([$userId]);
+            $total += (int) $uStmt->fetchColumn();
+        } catch (\Throwable) {
+            // Table may not exist in isolated unit-test schemas.
+        }
+        return $total;
     }
 
     /** Form-count limit for this user; null = unlimited. */

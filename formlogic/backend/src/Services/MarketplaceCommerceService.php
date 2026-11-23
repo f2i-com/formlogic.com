@@ -179,11 +179,9 @@ class MarketplaceCommerceService
                 }
                 $paymentProvider = 'sandbox_checkout';
                 $paymentRef = 'sbx_pay_' . bin2hex(random_bytes(8));
-            } elseif ($requestedProvider === 'paypal' && is_string($options['paymentRef'] ?? null) && trim($options['paymentRef']) !== '') {
-                $paymentProvider = 'paypal';
-                $paymentRef = mb_substr(trim($options['paymentRef']), 0, 120);
             } else {
-                throw new RuntimeException('Payment confirmation is required to license this listing.', 402);
+                // Never accept unverified client-supplied payment references for paid listings.
+                throw new RuntimeException('Server-verified payment confirmation is required to license this listing.', 402);
             }
         } elseif ($isOwner && $priceCents > 0) {
             $paymentProvider = 'publisher_grant';

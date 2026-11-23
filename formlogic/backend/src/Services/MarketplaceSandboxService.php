@@ -76,7 +76,10 @@ class MarketplaceSandboxService
     ) {
         $this->sandboxRoot = $sandboxRoot ?? (dirname(__DIR__, 2) . '/storage/marketplace-sandboxes');
         $secret = $signingSecret ?? (string) ($_ENV['JWT_SECRET'] ?? getenv('JWT_SECRET') ?: '');
-        $this->signingSecret = $secret !== '' ? hash('sha256', 'formlogic-mkt-sandbox:' . $secret) : hash('sha256', 'formlogic-mkt-sandbox:' . __FILE__);
+        if ($secret === '') {
+            throw new RuntimeException('JWT_SECRET must be configured before starting marketplace sandbox demos.');
+        }
+        $this->signingSecret = hash('sha256', 'formlogic-mkt-sandbox:' . $secret);
     }
 
     /** Internal NativeAppService app id for a marketplace catalog listing. */
@@ -321,6 +324,10 @@ class MarketplaceSandboxService
     public function createSession(array $catalog): array
     {
         $this->sweepExpired();
+        $activeDirs = is_dir($this->sandboxRoot) ? (glob($this->sandboxRoot . '/sbx*', GLOB_ONLYDIR) ?: []) : [];
+        if (count($activeDirs) >= 200) {
+            throw new RuntimeException('Live sandbox demos are currently at capacity. Try again shortly.', 429);
+        }
         $demoAppId = (string) ($catalog['demo_app_id'] ?? '');
         $slug = (string) ($catalog['slug'] ?? '');
         if ($demoAppId === '' || empty($catalog['demo_enabled'])) {
@@ -822,9 +829,10 @@ class MarketplaceSandboxService
     {
         $safeTitle = htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $eventUrl = rtrim($publicOrigin, '/') . '/api/packs/catalog/' . rawurlencode($slug) . '/demo/ui-event';
-        $eventUrlJson = json_encode($eventUrl, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        $tokenJson = json_encode($token, JSON_THROW_ON_ERROR);
-        $safeCss = str_ireplace('</style', '', $css);
+        $eventUrlJson = json_encode($eventUrl, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP);
+        $tokenJson = json_encode($token, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP);
+        // Escape `<` inside <style> so nested `</st</styleyle>` cannot break out into HTML/script.
+        $safeCss = str_replace('<', '\\3c ', $css);
 
         return <<<HTML
 <!doctype html>
@@ -967,8 +975,8 @@ JS;
 
         if ($ext === 'html' || $ext === 'htm') {
             $reqUrl = rtrim($publicOrigin, '/') . '/api/packs/catalog/' . rawurlencode($slug) . '/demo/request';
-            $reqUrlJson = json_encode($reqUrl, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-            $tokenJson = json_encode($token, JSON_THROW_ON_ERROR);
+            $reqUrlJson = json_encode($reqUrl, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP);
+            $tokenJson = json_encode($token, JSON_THROW_ON_ERROR | JSON_HEX_TAG | JSON_HEX_AMP);
             $baseHref = htmlspecialchars($frameBase, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             $inject = '<base href="' . $baseHref . '">'
                 . '<script type="importmap">{"imports":{"softn:api":"' . $baseHref . '__fl_softn_api.mjs"}}</script>'
@@ -1289,7 +1297,7 @@ JS;
             throw new RuntimeException('Sandbox database is not initialized yet. Wait for the app to load and try again.', 404);
         }
         $pdo = new \PDO('sqlite:' . $dbPath, null, null, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-        $pdo->exec('PRAGMA busy_timeout = 3000; PRAGMA foreign_keys = ON;');
+        $pdo->exec('PRAGMA trusted_schema = OFF; PRAGMA busy_timeout = 3000; PRAGMA foreign_keys = ON;');
         return $pdo;
     }
 

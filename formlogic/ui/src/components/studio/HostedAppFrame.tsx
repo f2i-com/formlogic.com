@@ -17,12 +17,73 @@ import { bytesToBase64, type NativeMediaFiles } from "../../lib/nativeHosting";
 import type { AppReader, NativeHost } from "../../lib/nativeHost";
 import { OutsideLinkBar } from "./OutsideLinkBar";
 import type { SiteProblem, SoftnConsoleEntry } from "./SiteAppFrame";
+import { isValidAppPlace } from "../../lib/nativeRouteAddress";
 
 const navigate = (path: string) => window.location.assign(path);
 /** The largest request a page sends its app's backend: a photo upload (SoftN takes 5.6 MB) and its envelope. */
 const NATIVE_REQUEST_INPUT = 6 * 1024 * 1024;
 /** Largest base64-encoded upload envelope bridged to FormLogic's sandboxed upload store (server enforces app policy). */
 const NATIVE_UPLOAD_INPUT = 34 * 1024 * 1024;
+const MAX_UPLOAD_IN_FLIGHT = 2;
+const MAX_CONSOLE_MESSAGES = 250;
+const MAX_ERROR_MESSAGES = 50;
+const UPLOAD_ID_RE = /^[a-f0-9-]{36}$/i;
+const CONTAINER_HEADER_NAME_RE = /^[a-z0-9-]+$/;
+const BLOCKED_CONTAINER_HEADERS = new Set([
+  'host', 'origin', 'referer', 'connection', 'keep-alive', 'transfer-encoding',
+  'te', 'trailer', 'upgrade', 'content-length', 'x-real-ip', 'x-http-method-override',
+  'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
+]);
+
+/** Fast lower-bound walk so gigantic payloads reject immediately before exact JSON.stringify sizing. */
+function exceedsInputLimit(value: unknown, limit: number): boolean {
+  let used = 0;
+  const seen = new Set<object>();
+  const walk = (v: unknown, depth: number): boolean => {
+    if (depth > 32) return true;
+    if (v === null || v === undefined) { used += 4; return used > limit; }
+    const t = typeof v;
+    if (t === 'string') { used += (v as string).length + 2; return used > limit; }
+    if (t === 'number') { used += 1; return used > limit; }
+    if (t === 'boolean') { used += 4; return used > limit; }
+    if (t === 'bigint' || t === 'function' || t === 'symbol') return true;
+    if (t === 'object') {
+      const obj = v as object;
+      if (seen.has(obj)) return true;
+      seen.add(obj);
+      try {
+        if (Array.isArray(obj)) {
+          used += 2;
+          if (used > limit) return true;
+          for (let i = 0; i < obj.length; i++) {
+            if (walk(obj[i], depth + 1)) return true;
+          }
+          return false;
+        }
+        const keys = Object.keys(obj as Record<string, unknown>);
+        used += 2;
+        if (used > limit) return true;
+        for (let i = 0; i < keys.length; i++) {
+          const val = (obj as Record<string, unknown>)[keys[i]];
+          if (val === undefined) continue;
+          used += keys[i].length + 3;
+          if (used > limit) return true;
+          if (walk(val, depth + 1)) return true;
+        }
+        return false;
+      } finally {
+        seen.delete(obj);
+      }
+    }
+    return true;
+  };
+  if (walk(value, 0)) return true;
+  try {
+    return JSON.stringify(value).length > limit;
+  } catch {
+    return true;
+  }
+}
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
@@ -284,6 +345,9 @@ export function HostedAppFrame({
     let initializing = false;
     let expired = false;
     let inFlight = 0;
+    let uploadsInFlight = 0;
+    let consoleCount = 0;
+    const seenErrors = new Set<string>();
     let remounting = false;
     let hostTold = false;
     // The files this frame opens with: the props', or the version an earlier frame of this same mount
@@ -374,10 +438,12 @@ export function HostedAppFrame({
       }
       if (result.error) { setError(result.error); return; }
       const nextNative = data && "project" in data && data.project ? {
-        assets: data.project.assets, origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
-        // The owner's choice as it is now: Off takes files away, Allowed without asking gives them. Where
-        // the owner asks, the person's answer stands across a new engine: they were asked about the app.
-        files: data.project.files === 'allow' || (data.project.files === 'ask' && !!mountNative?.files),
+        assets: data.project.assets,
+        media: data.project.media?.sha256,
+        origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
+        // Never silently carry `files: true` across a policy tightening from `'allow'` to `'ask'`:
+        // only explicit `'allow'` grants files without prompting.
+        files: data.project.files === 'allow',
         look: ("look" in data ? readLook(data.look) : null) ?? mountNative?.look,
         visitor: !!data.project.formlogic?.visitors, wallet: !!data.project.formlogic?.payments,
         containerBackend: data.project.containerBackend,
@@ -470,6 +536,7 @@ export function HostedAppFrame({
     async function receive(event: MessageEvent) {
       if (
         !isCurrentMount() ||
+        (event.origin !== "null" && event.origin !== "") ||
         event.source !== frame.current?.contentWindow ||
         event.data?.type !== "formlogic:ready" ||
         channel || initializing || expired
@@ -561,7 +628,7 @@ export function HostedAppFrame({
         // Where the app now is (SoftN's `places: 1`). Passed on only in the shape a place has.
         if (event.data?.type === "place") {
           const place: unknown = event.data.place;
-          if (typeof place === "string" && place.length <= 2000 && /^\/(?!\/)/.test(place)) placeRef.current.onPlace?.(place);
+          if (isValidAppPlace(place)) placeRef.current.onPlace?.(place);
           return;
         }
         // A link the person clicked to another site, a mail address or a phone number (SoftN's
@@ -579,11 +646,13 @@ export function HostedAppFrame({
           return;
         }
         if (event.data?.type === "console") {
+          if (consoleCount >= MAX_CONSOLE_MESSAGES) return;
           const rawLevel = event.data.level;
           const level: SoftnConsoleEntry["level"] =
             rawLevel === "info" || rawLevel === "warn" || rawLevel === "error" || rawLevel === "debug" ? rawLevel : "log";
           const text = typeof event.data.text === "string" ? event.data.text.slice(0, 1600) : "";
           if (text) {
+            consoleCount++;
             if (level === "error") console.error(`[SoftN:${slug}]`, text);
             else if (level === "warn") console.warn(`[SoftN:${slug}]`, text);
             else console.debug(`[SoftN:${slug}]`, text);
@@ -612,28 +681,32 @@ export function HostedAppFrame({
             : undefined;
           const phase = typeof event.data.phase === "string" ? event.data.phase : undefined;
           const loc = file ? `${file}${line ? `:${line}${column ? `:${column}` : ""}` : ""}` : "";
-          const headline = `[SoftN:${slug}] ${loc ? `${loc} — ` : ""}${reason}`;
-          if (snippet || stack || loc) {
-            console.groupCollapsed(headline);
-            if (loc) console.debug("Location:", loc);
-            if (snippet) console.debug(`Source:\n${snippet}`);
-            if (stack) console.debug(`Stack:\n${stack}`);
-            console.groupEnd();
-          } else {
-            console.error(headline);
+          const dedupeKey = `${phase ?? ""}:${loc}:${reason}`;
+          if (!seenErrors.has(dedupeKey) && seenErrors.size < MAX_ERROR_MESSAGES) {
+            seenErrors.add(dedupeKey);
+            const headline = `[SoftN:${slug}] ${loc ? `${loc} — ` : ""}${reason}`;
+            if (snippet || stack || loc) {
+              console.groupCollapsed(headline);
+              if (loc) console.debug("Location:", loc);
+              if (snippet) console.debug(`Source:\n${snippet}`);
+              if (stack) console.debug(`Stack:\n${stack}`);
+              console.groupEnd();
+            } else {
+              console.error(headline);
+            }
+            const problem: SiteProblem = { kind: "error", text: reason };
+            if (file) problem.file = file;
+            if (line) problem.line = line;
+            if (column) problem.column = column;
+            if (snippet) problem.snippet = snippet;
+            if (stack) problem.stack = stack;
+            if (phase) problem.phase = phase;
+            debugRef.current.onProblem?.(problem);
           }
-          const problem: SiteProblem = { kind: "error", text: reason };
-          if (file) problem.file = file;
-          if (line) problem.line = line;
-          if (column) problem.column = column;
-          if (snippet) problem.snippet = snippet;
-          if (stack) problem.stack = stack;
-          if (phase) problem.phase = phase;
-          debugRef.current.onProblem?.(problem);
           // An app that failed after its first page was drawn is still on screen and shows what
-          // went wrong inside it (SoftN v0.0.28 says `phase`); a frame before that sends none,
-          // and meant a load failure.
-          if (phase !== "runtime") {
+          // went wrong inside it (SoftN v0.0.28 says `phase`); once `frameShown` is true, never
+          // allow an untrusted guest error message to hijack the parent load-failure alert banner.
+          if (phase !== "runtime" && !frameShown) {
             setError(
               loc
                 ? `The app could not load (${loc}): ${reason}`
@@ -653,12 +726,6 @@ export function HostedAppFrame({
         const reply = (result: unknown) => {
           if (isCurrentMount()) channel?.port1.postMessage({ id, result });
         };
-        // A structured clone can carry what JSON cannot (a BigInt, an object that contains
-        // itself): that input is refused like an oversized one rather than left unanswered.
-        const measure = (value: object) => { try { return JSON.stringify(value).length; } catch { return Infinity; } };
-        // A request to the app's own backend may carry a photo (SoftN's upload routes take 5.6 MB;
-        // the server holds each route to its own limit), and a save may be as large as the store
-        // keeps (a game's saved state). Every other call is held to the 32 KB it always was.
         const inputLimit = mountNative && !plugin && action === "formlogicUpload" ? NATIVE_UPLOAD_INPUT
           : mountNative && (action === "nativeRequest" || action === "containerHttp") ? NATIVE_REQUEST_INPUT
           : storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
@@ -666,7 +733,7 @@ export function HostedAppFrame({
           !input ||
           typeof input !== "object" ||
           Array.isArray(input) ||
-          measure(input) > inputLimit
+          exceedsInputLimit(input, inputLimit)
         ) {
           reply({ error: "Invalid action input." });
           return;
@@ -701,19 +768,36 @@ export function HostedAppFrame({
           if (webContainer && mountNative?.containerBackend === "host" && action === "containerHttp") {
             const path = typeof input.path === "string" ? input.path : "";
             const method = typeof input.method === "string" ? input.method.toUpperCase() : "GET";
-            if (!path.startsWith("/") || path.includes("..")) throw new Error("Invalid container request path");
+            if (
+              !path.startsWith("/")
+              || path.startsWith("//")
+              || path.length > 2048
+              || path.includes("..")
+              || path.includes("\\")
+              || /(?:%2e|%2f|%5c|[\x00-\x1f\x7f])/i.test(path)
+            ) {
+              throw new Error("Invalid container request path");
+            }
+            const cleanHeaders: Record<string, string> = {};
+            if (input.headers && typeof input.headers === "object" && !Array.isArray(input.headers)) {
+              for (const [k, v] of Object.entries(input.headers as Record<string, unknown>)) {
+                const lk = k.trim().toLowerCase();
+                if (!CONTAINER_HEADER_NAME_RE.test(lk) || lk.startsWith("x-formlogic") || lk.startsWith("x-forwarded-") || lk.startsWith("proxy-") || lk.startsWith("sec-") || BLOCKED_CONTAINER_HEADERS.has(lk)) continue;
+                if (typeof v === "string" && v.length <= 8192) cleanHeaders[lk] = v.replace(/[\r\n\0]+/g, "");
+              }
+            }
             const result = await api.runNativeContainerRequest(slug, {
               method,
               path,
-              query: typeof input.query === "string" ? input.query : "",
-              headers: input.headers && typeof input.headers === "object" && !Array.isArray(input.headers) ? input.headers : {},
+              query: typeof input.query === "string" ? input.query.slice(0, 4096) : "",
+              headers: cleanHeaders,
               bodyBase64: typeof input.bodyBase64 === "string" ? input.bodyBase64 : "",
             }, controller.signal, clientEngine, !!mountNative.visitor);
             if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
             reply(result.error ? { error: result.error } : result.data);
             return;
           }
-          if (mountNative && action === "nativeRequest") {
+          if (mountNative && !(webContainer && mountNative.containerBackend === "host") && action === "nativeRequest") {
             if (typeof input.url !== "string" || !input.options || typeof input.options !== "object" || Array.isArray(input.options)) throw new Error("Invalid app request");
             const url = new URL(input.url, window.location.origin);
             if (url.origin !== window.location.origin && !mountNative.origins?.includes(url.origin)) throw new Error("This URL is not part of the app backend");
@@ -750,18 +834,27 @@ export function HostedAppFrame({
               return;
             }
             if (op === "delete") {
-              const uploadId = typeof input.id === "string" ? input.id : "";
-              if (!uploadId) throw new Error("Upload id is required.");
+              const uploadId = typeof input.id === "string" ? input.id.trim() : "";
+              if (!UPLOAD_ID_RE.test(uploadId)) throw new Error("Invalid upload id.");
               const res = await api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, !!mountNative.visitor);
               reply(res.error ? { error: res.error } : { result: res.data });
               return;
             }
-            const filename = typeof input.filename === "string" ? input.filename : "upload.bin";
-            const contentBase64 = typeof input.contentBase64 === "string" ? input.contentBase64 : "";
-            const mimeType = typeof input.mimeType === "string" ? input.mimeType : undefined;
-            const folder = typeof input.folder === "string" ? input.folder : undefined;
-            const res = await api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, !!mountNative.visitor);
-            reply(res.error ? { error: res.error } : { result: res.data });
+            if (uploadsInFlight >= MAX_UPLOAD_IN_FLIGHT) {
+              reply({ error: "Please wait for the current upload to finish." });
+              return;
+            }
+            uploadsInFlight++;
+            try {
+              const filename = typeof input.filename === "string" ? input.filename : "upload.bin";
+              const contentBase64 = typeof input.contentBase64 === "string" ? input.contentBase64 : "";
+              const mimeType = typeof input.mimeType === "string" ? input.mimeType : undefined;
+              const folder = typeof input.folder === "string" ? input.folder : undefined;
+              const res = await api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, !!mountNative.visitor);
+              reply(res.error ? { error: res.error } : { result: res.data });
+            } finally {
+              uploadsInFlight--;
+            }
             return;
           }
           // FormLogic's wallet, for an app that takes payments: opened by this page over the frame,
@@ -794,8 +887,14 @@ export function HostedAppFrame({
             reply({ result: page.addApp(input, readFromApp) });
             return;
           }
-          // Not for a plugin's page: a plugin is anyone's code, and workspaceOpen moves this page.
-          if (!plugin && ["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)) {
+          // Workspace bridge: never for plugins, never for public (`access: 'application'`) third-party
+          // native apps (which must not read ambient-cookie form data or navigate the parent page), and
+          // never for unverified hosted mounts lacking a current hostedAdmission.
+          if (
+            !plugin
+            && (workspaceOnly || (mountNative ? mountNative.access === "members" : isHostedAdmissionCurrent(hosted, slug)))
+            && ["workspaceInfo", "workspaceRecords", "workspaceOpen", "workspaceDashboard"].includes(action)
+          ) {
             reply({ result: await workspaceBridge(slug, action, input, (path) => {
               if (!isCurrentMount()) return;
               invalidate();
@@ -866,7 +965,7 @@ export function HostedAppFrame({
           ...(largeStorage && limits ? { storageLimits: { value: limits.value, entries: limits.entries, map: limits.map, input: limits.input, queued: limits.queued } } : {}),
           dark: document.documentElement.classList.contains("dark"),
           // Where to start, for a frame that follows the app's page links and so knows its places.
-          ...(event.data.places === 1 && typeof placeRef.current.initialPlace === "string" && placeRef.current.initialPlace.length <= 2000 && /^\/(?!\/)/.test(placeRef.current.initialPlace) ? { place: placeRef.current.initialPlace } : {}),
+          ...(event.data.places === 1 && isValidAppPlace(placeRef.current.initialPlace) ? { place: placeRef.current.initialPlace } : {}),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
           // object here would arrive as "[object Object]" and be refused. A shell from before the
           // handshake ignores the key and runs what it always ran.
@@ -914,7 +1013,7 @@ export function HostedAppFrame({
   // Forward browser Back/Forward navigation from the parent page into the running SoftN frame.
   useEffect(() => {
     if (!navigateTo || blocked || actorRefused || !port.current) return;
-    if (typeof navigateTo.place !== "string" || navigateTo.place.length > 2000 || !/^\/(?!\/)/.test(navigateTo.place)) return;
+    if (!isValidAppPlace(navigateTo.place)) return;
     try { port.current.postMessage({ type: "formlogic:navigate", to: navigateTo.place }); } catch { /* Frame may not support navigate yet. */ }
   }, [navigateTo, blocked, actorRefused]);
   // A newer version to hand to the frame on screen, once: when it arrives, or when the app it is for

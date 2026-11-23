@@ -34,6 +34,7 @@
   const site = told?.getAttribute('data-root') || base.pathname.replace(/[^/]*$/, '');
   const page = told?.getAttribute('data-page') || 'index.html';
   const proof = told?.getAttribute('data-proof') || '';
+  try { told?.removeAttribute('data-proof'); } catch { /* ignore */ }
   const waiting = new Map();
   let port = null;
   let nextId = 1;
@@ -82,8 +83,18 @@
   // someone navigated to inside the frame cannot say it, and is given nothing.
   host.postMessage({ type: 'formlogic:site:hello', proof }, '*');
   const ask = (kind, payload) => connected.then(() => new Promise((resolve, reject) => {
+    if (waiting.size >= 128) {
+      reject(new Error('Too many pending host requests.'));
+      return;
+    }
     const id = nextId++;
-    waiting.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (waiting.delete(id)) reject(new Error('Host request timed out.'));
+    }, 35000);
+    waiting.set(id, {
+      resolve: (val) => { clearTimeout(timer); resolve(val); },
+      reject: (err) => { clearTimeout(timer); reject(err); },
+    });
     port.postMessage({ id, kind, payload });
   }));
   const tell = (kind, payload) => { if (port) port.postMessage({ id: 0, kind, payload }); };
@@ -206,6 +217,9 @@
         filename = String(parsed.filename || filename);
         mimeType = String(parsed.mimeType || mimeType);
         contentBase64 = String(parsed.contentBase64 || '');
+        if (contentBase64.length > Math.ceil(MAX_CLIENT_UPLOAD_BYTES * 4 / 3) + 128) {
+          return answered({ status: 413, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'File exceeds the maximum upload size (25 MB).' }) });
+        }
         if (typeof parsed.folder === 'string') folder = parsed.folder;
       } else {
         return answered({ status: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Upload requires FormData with a file or JSON { filename, contentBase64 }.' }) });

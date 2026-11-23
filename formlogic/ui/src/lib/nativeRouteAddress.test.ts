@@ -92,5 +92,24 @@ describe('nativeRouteAddress', () => {
       expect(extractPlatformAppSubpath('/app/demo/about.html', 'demo')).toBe('/about.html');
       expect(extractPlatformAppSubpath('/apps/123/web', 'demo')).toBeNull();
     });
+
+    it('rejects traversal, encoded separators, backslashes, and control chars in app places', () => {
+      for (const bad of [
+        '/../secret',
+        '/docs/../secret.html',
+        '/%2e%2e/secret',
+        '/docs%2fsecret',
+        '/docs%5csecret',
+        '/docs\\secret',
+        '/foo\x00bar',
+        '/foo\nbar',
+        '//evil.example/x',
+      ]) {
+        expect(readAppPlace({ pathname: '/', hash: `#${bad}`, slug: 'mysite', onDomain: true })).toBeNull();
+        expect(readAppPlace({ pathname: `/app/mysite${bad}`, slug: 'mysite', onDomain: false })).toBeNull();
+      }
+      expect(buildAppAddress('/../secret', { pathname: '/', slug: 'mysite', onDomain: true })).toBeNull();
+      expect(buildAppAddress('/%2e%2e/secret', { pathname: '/app/mysite', slug: 'mysite', onDomain: false })).toBeNull();
+    });
   });
 });

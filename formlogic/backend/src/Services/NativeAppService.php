@@ -208,7 +208,7 @@ class NativeAppService
      * environment) stays with PHP: the guest cannot read process.env, but the runtime should
      * not hold secrets it has no use for. Compared case-insensitively (Windows).
      */
-    private const NODE_ENV_ALLOWLIST = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_OPTIONS', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'];
+    private const NODE_ENV_ALLOWLIST = ['PATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE', 'LANG', 'LC_ALL', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE'];
 
     /**
      * Workers across every app here, and how many of them any one app may hold. A worker is held

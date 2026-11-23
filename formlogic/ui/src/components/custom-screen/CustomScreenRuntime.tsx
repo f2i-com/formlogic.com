@@ -352,7 +352,7 @@ export function CustomScreenRuntime({
       // survives a srcdoc reload, so the dying predecessor can still post —
       // acting on it could start an ownerless subscription after the reload
       // cleanup already ran. Refuse with an honest error instead.
-      if (typeof m.gen === 'number' && m.gen !== generation) {
+      if (m.gen !== generation) {
         iframeRef.current.contentWindow?.postMessage(
           { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
           '*'

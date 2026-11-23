@@ -52,12 +52,21 @@ export const HOST_JS_DOCUMENT = '/hosted-runtime/host.html';
  * will fall back — is the document every hosted app has always been mounted on.
  */
 export function usesWebContainer(client: Record<string, string>): boolean {
-  try {
-    const manifest = JSON.parse(client['manifest.json']);
-    const hasContainerFlag = manifest?.engine === 2 || manifest?.container === true || (manifest?.backend && typeof manifest.backend === 'object' && !Array.isArray(manifest.backend));
-    return Boolean(hasContainerFlag) &&
-      (typeof manifest.main !== 'string' || !manifest.main || /\.html?$/i.test(manifest.main));
-  } catch { return false; }
+  if (!client || typeof client !== 'object') return false;
+  const rawManifest = client['manifest.json'];
+  if (typeof rawManifest === 'string' && rawManifest.trim() !== '') {
+    try {
+      const manifest = JSON.parse(rawManifest);
+      const hasContainerFlag = manifest?.engine === 2 || manifest?.container === true || (manifest?.backend && typeof manifest.backend === 'object' && !Array.isArray(manifest.backend));
+      return Boolean(hasContainerFlag) &&
+        (typeof manifest.main !== 'string' || !manifest.main || /\.html?$/i.test(manifest.main));
+    } catch {
+      return false;
+    }
+  }
+  // Zero-config HTML container bundle (matches @softn/formlogic-host isContainerBundle).
+  const keys = Object.keys(client);
+  return keys.some((k) => /(?:^|\/)index\.html?$/i.test(k)) && !keys.some((k) => k.endsWith('.ui'));
 }
 
 export function frameSource(id: string | undefined, web = false): string {

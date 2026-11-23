@@ -308,6 +308,10 @@ class FormController
         }
 
         $data['userId'] = $userId;
+        // nativeTableBinding is strictly server-managed (FormSqliteDatabaseService / NativeAppController).
+        if (isset($data['settings']) && is_array($data['settings'])) {
+            unset($data['settings']['nativeTableBinding']);
+        }
 
         if (($refusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
             return $this->jsonResponse($response, $refusal, 403);
@@ -359,6 +363,15 @@ class FormController
 
         if (!is_array($data)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 422);
+        }
+        // Preserve server-managed SQLite table binding; clients may never forge or retarget it.
+        if (isset($data['settings']) && is_array($data['settings'])) {
+            $existingSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+            if (array_key_exists('nativeTableBinding', $existingSettings)) {
+                $data['settings']['nativeTableBinding'] = $existingSettings['nativeTableBinding'];
+            } else {
+                unset($data['settings']['nativeTableBinding']);
+            }
         }
 
         // A save replaces the whole list of fields, so one made from an older copy (another tab, a

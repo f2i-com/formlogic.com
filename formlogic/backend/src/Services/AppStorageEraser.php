@@ -13,8 +13,11 @@ namespace FormLogic\Services;
  */
 class AppStorageEraser
 {
-    public function __construct(private ?NativeAppService $native = null, private ?string $hostedPath = null)
-    {
+    public function __construct(
+        private ?NativeAppService $native = null,
+        private ?string $hostedPath = null,
+        private ?string $nativeUploadsPath = null,
+    ) {
         $this->native ??= new NativeAppService();
     }
 
@@ -27,5 +30,23 @@ class AppStorageEraser
         }
         $this->native->remove($appId);
         HostedAppService::eraseStorage($appId, $this->hostedPath);
+        $this->eraseNativeUploadsDir($appId);
+    }
+
+    private function eraseNativeUploadsDir(string $appId): void
+    {
+        $root = rtrim($this->nativeUploadsPath ?? (dirname(__DIR__, 2) . '/storage/native-app-uploads'), '/\\');
+        $dir = $root . DIRECTORY_SEPARATOR . hash('sha256', $appId);
+        if (!is_dir($dir) || is_link($dir)) {
+            return;
+        }
+        $entries = @scandir($dir);
+        if (is_array($entries)) {
+            foreach ($entries as $entry) {
+                if ($entry === '.' || $entry === '..') continue;
+                @unlink($dir . DIRECTORY_SEPARATOR . $entry);
+            }
+        }
+        @rmdir($dir);
     }
 }

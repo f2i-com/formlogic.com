@@ -54,19 +54,12 @@ class WebhookService
         if (in_array(strtolower($host), self::SSRF_BLOCKED_HOSTS, true)) {
             throw new \InvalidArgumentException('Webhook URL host is not allowed');
         }
-        $resolvedIps = gethostbynamel($host);
-        if ($resolvedIps === false || empty($resolvedIps)) {
-            throw new \InvalidArgumentException('Unable to resolve webhook URL hostname');
+        $dnsError = null;
+        $approvedIp = null;
+        if (!IpSafety::resolvesToPublicHost($host, $dnsError, $approvedIp) || $approvedIp === null) {
+            throw new \InvalidArgumentException($dnsError ?: 'Webhook URL resolves to a private or reserved IP address');
         }
-        foreach ($resolvedIps as $ip) {
-            // Same classifier as form scripts and the MCP metadata fetch: bytes, not
-            // spellings, plus CGNAT / 192.0.0.0/24 / 198.18.0.0/15, which the plain
-            // filter_var check here used to let through.
-            if (!IpSafety::isPublicIp($ip)) {
-                throw new \InvalidArgumentException('Webhook URL resolves to a private or reserved IP address');
-            }
-        }
-        return $resolvedIps[0];
+        return $approvedIp;
     }
 
     public function createWebhook(string $formId, string $userId, string $url, array $events, ?string $description = null): array

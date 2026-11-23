@@ -664,6 +664,18 @@ class ChatToolsService
                 $id = (string) ($args['appId'] ?? $scopedApp ?? '');
                 $this->assertAppScope($ctx, $id);
                 $owned = $this->ownApp($id, $userId);
+                $sourceProtected = !empty($owned['settings']['sourceProtected']);
+                if ($sourceProtected && in_array($name, [
+                    'edit_softn_app',
+                    'get_native_app_project',
+                    'publish_native_app_project',
+                    'update_native_app_files',
+                    'list_native_app_versions',
+                    'get_native_app_version',
+                    'restore_native_app_version',
+                ], true)) {
+                    throw new \InvalidArgumentException('This Marketplace app is source-protected; its source files and version history cannot be viewed or modified.');
+                }
                 $native = $this->native ??= new NativeAppService();
                 $softn = $this->softnApps();
                 $named = ['appId' => $id, 'softnApp' => !empty($owned['settings']['softnApp'])];

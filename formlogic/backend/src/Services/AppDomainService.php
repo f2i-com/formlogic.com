@@ -491,6 +491,7 @@ class AppDomainService
             'slug' => (string) $row['app_slug'],
             'name' => (string) $row['app_name'],
             'status' => (string) $row['app_status'],
+            'domain' => $domain,
             'nativeConfig' => $this->decodeJson($row['native_config'] ?? null),
             // What the domain's root shows: the app itself ('runtime_direct') or its launch page.
             'mode' => (string) ($row['domain_mode'] ?? ''),

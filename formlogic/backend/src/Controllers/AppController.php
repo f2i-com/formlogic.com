@@ -163,6 +163,13 @@ class AppController
         // of an app in the bin would own the app's source, keys and records. createApp takes
         // an id only from the restore paths, which read it from the server's own snapshot.
         unset($data['id']);
+        // Server-managed settings (shared database pointers and Marketplace source-protection/license
+        // metadata) are never accepted from untrusted client payloads on create/update.
+        if (isset($data['settings']) && is_array($data['settings'])) {
+            foreach (['sharedDatabaseAppId', 'linkedSoftnAppId', 'sourceProtected', 'marketplaceCatalogId', 'marketplaceSlug', 'marketplaceLicenseId'] as $serverKey) {
+                unset($data['settings'][$serverKey]);
+            }
+        }
         if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null)) !== null) {
             return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
         }
@@ -315,6 +322,16 @@ class AppController
         }
 
         $data = $request->getParsedBody() ?? [];
+        if (isset($data['settings']) && is_array($data['settings'])) {
+            $existingSettings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            foreach (['sharedDatabaseAppId', 'linkedSoftnAppId', 'sourceProtected', 'marketplaceCatalogId', 'marketplaceSlug', 'marketplaceLicenseId'] as $serverKey) {
+                if (array_key_exists($serverKey, $existingSettings)) {
+                    $data['settings'][$serverKey] = $existingSettings[$serverKey];
+                } else {
+                    unset($data['settings'][$serverKey]);
+                }
+            }
+        }
 
         // If the name is being changed, it must be non-blank (mirrors create + the
         // client-side guard) so an app can't be saved with an empty title.

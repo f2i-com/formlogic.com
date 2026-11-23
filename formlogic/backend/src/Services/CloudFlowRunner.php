@@ -1333,8 +1333,26 @@ class CloudFlowRunner
             throw new \RuntimeException('could not initialize the HTTP client');
         }
         $headers[] = 'Content-Type: application/json';
+        $responseBuf = '';
+        $overflowed = false;
+        $maxBytes = self::MAX_HTTP_RESPONSE_BYTES;
         $opts = [
-            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_RETURNTRANSFER => false,
+            CURLOPT_WRITEFUNCTION => static function ($ch, string $chunk) use (&$responseBuf, &$overflowed, $maxBytes): int {
+                $len = strlen($chunk);
+                $remaining = $maxBytes - strlen($responseBuf);
+                if ($remaining <= 0) {
+                    $overflowed = true;
+                    return 0;
+                }
+                if ($len > $remaining) {
+                    $responseBuf .= substr($chunk, 0, $remaining);
+                    $overflowed = true;
+                    return 0;
+                }
+                $responseBuf .= $chunk;
+                return $len;
+            },
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_TIMEOUT => self::HTTP_TIMEOUT_SECONDS,
@@ -1350,15 +1368,15 @@ class CloudFlowRunner
             $opts[CURLOPT_POSTFIELDS] = $body;
         }
         curl_setopt_array($ch, $opts);
-        $result = curl_exec($ch);
-        if ($result === false) {
+        $ok = curl_exec($ch);
+        if ($ok === false && !$overflowed) {
             $err = curl_error($ch);
             curl_close($ch);
             throw new \RuntimeException($err !== '' ? $err : 'request failed');
         }
         $status = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        return ['status' => $status, 'body' => substr((string) $result, 0, self::MAX_HTTP_RESPONSE_BYTES)];
+        return ['status' => $status, 'body' => $responseBuf];
     }
 
     /** The {id, slug, name} app context for $app selectors, or null for workspace flows. */

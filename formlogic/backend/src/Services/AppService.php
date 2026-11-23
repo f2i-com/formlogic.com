@@ -310,9 +310,13 @@ class AppService
         }
 
         $forbiddenHeaders = [
-            'set-cookie', 'cookie', 'host', 'location', 'transfer-encoding', 'content-length',
-            'content-security-policy', 'strict-transport-security', 'x-frame-options',
-            'x-content-type-options', 'www-authenticate', 'proxy-authenticate', 'connection', 'upgrade',
+            'set-cookie', 'cookie', 'host', 'location', 'refresh', 'transfer-encoding', 'content-length',
+            'content-type', 'content-disposition', 'content-encoding',
+            'content-security-policy', 'content-security-policy-report-only',
+            'strict-transport-security', 'x-frame-options', 'x-content-type-options',
+            'referrer-policy', 'permissions-policy',
+            'cross-origin-opener-policy', 'cross-origin-embedder-policy', 'cross-origin-resource-policy',
+            'www-authenticate', 'proxy-authenticate', 'connection', 'upgrade',
         ];
         $customHeaders = [];
         if (is_array($value['customHeaders'] ?? null)) {

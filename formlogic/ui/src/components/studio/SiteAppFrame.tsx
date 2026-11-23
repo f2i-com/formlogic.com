@@ -13,6 +13,7 @@ import { resolveBackendApiUrl } from '../../lib/apiBase';
 import type { NativeLook } from '../../lib/appLook';
 import { NATIVE_IN_FLIGHT_RETRY_SECONDS, nativeTooManyRequests } from '../../lib/nativeRefusal';
 import { currentSessionGeneration, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
+import { isValidAppPlace } from '../../lib/nativeRouteAddress';
 import { AppSplash } from './AppSplash';
 
 /**
@@ -79,9 +80,16 @@ export interface SiteAppFrameProps {
 
 /** What an app may keep in this browser, as the JSON it is kept as. */
 const STORAGE_LIMIT = 1024 * 1024;
+const STORAGE_MAX_ENTRIES = 5000;
+const STORAGE_MAX_KEY = 512;
 const STORAGE_FULL = 'This app tried to keep more than 1 MB in this browser.';
 /** The largest body an app sends its backend, as the text it came as. */
 const BODY_LIMIT = 2 * 1024 * 1024;
+const UPLOAD_BASE64_LIMIT = 34 * 1024 * 1024;
+const MAX_UPLOADS_IN_FLIGHT = 2;
+const MAX_UPLOAD_OPS_IN_FLIGHT = 4;
+const MAX_CONSOLE_ENTRIES = 250;
+const UPLOAD_ID_RE = /^[a-f0-9-]{36}$/i;
 const PATH_LIMIT = 2000;
 /** Requests to the backend at once. More wait their turn, up to WAITING of them. */
 const IN_FLIGHT = 6;
@@ -233,7 +241,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
 
   // Forward host browser Back/Forward navigation into the active site frame.
   useEffect(() => {
-    if (!navigateTo || !ROUTE.test(navigateTo.place) || !activeLine.current?.open) return;
+    if (!navigateTo || !isValidAppPlace(navigateTo.place) || !activeLine.current?.open) return;
     try { activeLine.current.port.postMessage({ navigate: navigateTo.place }); } catch { /* ignore */ }
   }, [navigateTo]);
 
@@ -245,13 +253,24 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
     // Only while this frame is on screen, in the session it was opened in.
     const current = () => mounted && isSessionGenerationCurrent(admitted);
     const controller = new AbortController();
-    const storageKey = `formlogic-site-storage:${appId}:${userId || 'anyone'}`;
+    const storageKey = `formlogic-site-storage:${encodeURIComponent(appId)}:${userId ? encodeURIComponent(userId) : 'anyone'}`;
     let kept = readKept(storageKey);
-    // Where the visitor was in the app, kept for this tab: a frame opened afresh (a newer version,
-    // this page loaded again, the app brought back) starts there, as a site loaded again would.
-    const routeKey = `formlogic-site-route:${appId}`;
+    // Where the visitor was in the app, kept for this tab and bound to the signed-in user so
+    // signing out or switching accounts never leaks one user's route to another.
+    const routeKey = `formlogic-site-route:${encodeURIComponent(appId)}`;
+    const routeOwnerKey = `formlogic-site-route-owner:${encodeURIComponent(appId)}`;
+    const routeOwner = userId ? encodeURIComponent(userId) : 'anyone';
     const lastRoute = (): string | null => {
-      try { const was = window.sessionStorage.getItem(routeKey); return was && was.length <= PATH_LIMIT && ROUTE.test(was) ? was : null; } catch { return null; }
+      try {
+        const owner = window.sessionStorage.getItem(routeOwnerKey);
+        if (owner !== null && owner !== routeOwner) {
+          window.sessionStorage.removeItem(routeKey);
+          window.sessionStorage.removeItem(routeOwnerKey);
+          return null;
+        }
+        const was = window.sessionStorage.getItem(routeKey);
+        return isValidAppPlace(was) ? was : null;
+      } catch { return null; }
     };
     let greeted = 0;
     let helloAt = 0;
@@ -260,6 +279,9 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
     let checking = 0;
     let line: Line | null = null;
     let inFlight = 0;
+    let uploadsInFlight = 0;
+    let uploadOpsInFlight = 0;
+    let consoleCount = 0;
     const waiting: Job[] = [];
     const told = new Set<string>();
 
@@ -294,18 +316,17 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
         try { window.localStorage.removeItem(storageKey); } catch { /* Nothing was kept there. */ }
         return;
       }
+      if (held && next.size > STORAGE_MAX_ENTRIES) { tell('error', STORAGE_FULL); return; }
       const now = Date.now();
       if (now - burst.since > 1000) burst = { since: now, count: 0 };
+      const json = JSON.stringify(Object.fromEntries(next));
+      if (held && json.length > STORAGE_LIMIT) { tell('error', STORAGE_FULL); return; }
       if (++burst.count <= KEEP_AT_ONCE && !writing) {
-        const json = JSON.stringify(Object.fromEntries(next));
-        if (held && json.length > STORAGE_LIMIT) { tell('error', STORAGE_FULL); return; }
         kept = next;
         try { window.localStorage.setItem(storageKey, json); } catch { /* Kept for this visit only. */ }
         return;
       }
-      // Saving in a loop: measured roughly here (each name and value, and what JSON puts round
-      // them), and written a moment later, once for however many changes came in that moment.
-      if (held && [...next].reduce((size, [name, value]) => size + name.length + value.length + 6, 2) > STORAGE_LIMIT) { tell('error', STORAGE_FULL); return; }
+      // Exact serialized size verified above before mutating `kept`, preventing burst-mode escape-expansion bypasses.
       kept = next;
       if (!writing) writing = window.setTimeout(write, KEEP_EVERY);
     };
@@ -371,7 +392,13 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
           return;
         }
         case 'storage:set': {
-          if (typeof payload.key === 'string' && typeof payload.value === 'string') keep(new Map(kept).set(payload.key, payload.value), true);
+          if (typeof payload.key === 'string' && typeof payload.value === 'string') {
+            if (payload.key.length > STORAGE_MAX_KEY || payload.value.length > STORAGE_LIMIT) {
+              tell('error', STORAGE_FULL);
+              return;
+            }
+            keep(new Map(kept).set(payload.key, payload.value), true);
+          }
           return;
         }
         case 'storage:remove': {
@@ -403,55 +430,87 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
           return;
         }
         case 'console': {
+          if (consoleCount >= MAX_CONSOLE_ENTRIES) return;
           const level = payload.level === 'info' || payload.level === 'warn' || payload.level === 'error' || payload.level === 'debug' ? payload.level : 'log';
           const text = typeof payload.text === 'string' ? payload.text.slice(0, 1200) : '';
-          if (text) latest.current.onConsole?.({ level, text, at: Date.now() });
+          if (text) {
+            consoleCount++;
+            latest.current.onConsole?.({ level, text, at: Date.now() });
+          }
           return;
         }
         case 'upload': {
           const id = message.id;
           if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
-          const filename = typeof payload.filename === 'string' ? payload.filename : 'upload.bin';
+          const filename = typeof payload.filename === 'string' ? payload.filename.slice(0, 200) : 'upload.bin';
           const contentBase64 = typeof payload.contentBase64 === 'string' ? payload.contentBase64 : '';
-          const mimeType = typeof payload.mimeType === 'string' ? payload.mimeType : undefined;
-          const folder = typeof payload.folder === 'string' ? payload.folder : undefined;
+          if (!contentBase64 || contentBase64.length > UPLOAD_BASE64_LIMIT) {
+            answer(from, { id, ok: false, error: 'Uploaded file exceeds the maximum allowed size.' });
+            return;
+          }
+          if (uploadsInFlight >= MAX_UPLOADS_IN_FLIGHT) {
+            answer(from, { id, ok: false, error: 'Too many uploads in progress. Try again shortly.' });
+            return;
+          }
+          const mimeType = typeof payload.mimeType === 'string' ? payload.mimeType.slice(0, 128) : undefined;
+          const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
+          uploadsInFlight++;
           void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
             answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Upload failed.' });
+          }).finally(() => {
+            uploadsInFlight--;
           });
           return;
         }
         case 'uploads:list': {
           const id = message.id;
           if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
-          const folder = typeof payload.folder === 'string' ? payload.folder : undefined;
+          if (uploadOpsInFlight >= MAX_UPLOAD_OPS_IN_FLIGHT) {
+            answer(from, { id, ok: false, error: 'Too many upload requests in progress.' });
+            return;
+          }
+          const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
+          uploadOpsInFlight++;
           void api.listAppRuntimeUploads(slug, folder, controller.signal).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
             answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Could not list uploads.' });
+          }).finally(() => {
+            uploadOpsInFlight--;
           });
           return;
         }
         case 'uploads:delete': {
           const id = message.id;
           if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
-          const uploadId = typeof payload.id === 'string' ? payload.id : '';
-          if (!uploadId) { answer(from, { id, ok: false, error: 'Upload id is required.' }); return; }
+          const uploadId = typeof payload.id === 'string' ? payload.id.trim() : '';
+          if (!UPLOAD_ID_RE.test(uploadId)) { answer(from, { id, ok: false, error: 'Invalid upload id.' }); return; }
+          if (uploadOpsInFlight >= MAX_UPLOAD_OPS_IN_FLIGHT) {
+            answer(from, { id, ok: false, error: 'Too many upload requests in progress.' });
+            return;
+          }
+          uploadOpsInFlight++;
           void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
             answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Could not delete upload.' });
+          }).finally(() => {
+            uploadOpsInFlight--;
           });
           return;
         }
         case 'ready': setShownKey(frameKey); return;
         case 'route': {
-          if (typeof payload.path !== 'string' || payload.path.length > PATH_LIMIT || !ROUTE.test(payload.path)) return;
-          try { window.sessionStorage.setItem(routeKey, payload.path); } catch { /* Not remembered. */ }
+          if (!isValidAppPlace(payload.path)) return;
+          try {
+            window.sessionStorage.setItem(routeKey, payload.path);
+            window.sessionStorage.setItem(routeOwnerKey, routeOwner);
+          } catch { /* Not remembered. */ }
           latest.current.onRoute?.(payload.path);
           return;
         }
@@ -479,7 +538,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
     // ── Hello ──────────────────────────────────────────────────────────────────────────────────
     const receive = (event: MessageEvent) => {
       const inFrame = frame.current?.contentWindow;
-      if (!current() || !inFrame || event.source !== inFrame) return;
+      if (!current() || !inFrame || event.source !== inFrame || (event.origin !== 'null' && event.origin !== '')) return;
       const hello = record(event.data);
       if (!hello || hello.type !== 'formlogic:site:hello') return;
       // The frame's window stays the same window whatever page is in it, and a sandboxed frame may
@@ -503,7 +562,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
         storage: Object.fromEntries(kept),
         // Only the first page of a frame is told where the visitor was. A page the app went to
         // itself afterwards (its own link home) is where the app meant to go.
-        route: greeted++ === 0 ? (typeof app.initialRoute === 'string' && app.initialRoute.length <= PATH_LIMIT && ROUTE.test(app.initialRoute) ? app.initialRoute : lastRoute()) : null,
+        route: greeted++ === 0 ? (isValidAppPlace(app.initialRoute) ? app.initialRoute : lastRoute()) : null,
       };
       // To '*': a sandboxed frame has no origin, so no origin named here would ever be its own.
       // Who gets the line was settled by the proof above.

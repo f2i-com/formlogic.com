@@ -17,7 +17,7 @@ vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequ
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
 import { HostedAppFrame } from './HostedAppFrame';
 import { NATIVE_PROTOCOL } from '../../lib/softn/protocol';
-import { bumpSessionGeneration } from '../../lib/sessionGeneration';
+import { bumpSessionGeneration, setSessionOwner } from '../../lib/sessionGeneration';
 import { api } from '../../lib/api';
 import { workspaceBridge } from '../../lib/softn/workspaceBridge';
 import { toast } from '../../stores/toastStore';
@@ -330,7 +330,17 @@ it('invalidates before a trusted workspace navigation and ignores late callbacks
     return { opened: true };
   });
   try {
-    const { iframe } = await mountNative();
+    setSessionOwner('member-1');
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <HostedAppFrame
+        slug="notes"
+        client={{ 'manifest.json': '{}' }}
+        version={1}
+        native={{ access: 'members', storageScope: { access: 'members', appId: 'app-one', userId: 'member-1' }, assets: {} }}
+      />
+    ));
+    const { iframe } = spyOnFrame();
     await act(async () => sendReady(iframe, 1));
     await act(async () => call(channels[0], {}, 1, 'workspaceDashboard'));
     expect(window.location.hash).toBe('#workspace-storage-test');
@@ -338,7 +348,18 @@ it('invalidates before a trusted workspace navigation and ignores late callbacks
     await act(async () => call(channels[0], { operation: 'set', key: 'old', value: 'stale' }, 2));
     expect(localStorage.getItem(storageKey)).toBeNull();
     onlyDisposal(channels[0]);
-  } finally { history.replaceState(null, '', previous); }
+  } finally {
+    setSessionOwner(null);
+    history.replaceState(null, '', previous);
+  }
+});
+
+it('refuses workspaceBridge calls from public (access: application) native apps', async () => {
+  const { iframe } = await mountNative();
+  await act(async () => sendReady(iframe, 1));
+  await act(async () => call(channels[0], {}, 1, 'workspaceInfo'));
+  await act(async () => call(channels[0], {}, 2, 'workspaceDashboard'));
+  expect(workspaceBridge).not.toHaveBeenCalled();
 });
 
 it('takes saves apart from the four backend calls, and tells the frame it may send them in a lane of their own', async () => {

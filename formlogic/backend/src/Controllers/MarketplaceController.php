@@ -616,7 +616,7 @@ class MarketplaceController
             return $this->jsonError($response, 'Sign in to purchase or claim this listing.', 401);
         }
         $catalog = $this->catalog->getCatalogBySlug((string) ($args['slug'] ?? ''));
-        if (!$catalog) {
+        if (!$catalog || (($catalog['visibility'] ?? 'public') === 'private' && (string) ($catalog['publisher_id'] ?? '') !== $userId)) {
             return $this->jsonError($response, 'Listing not found', 404);
         }
         $body = $request->getParsedBody();
@@ -708,7 +708,7 @@ class MarketplaceController
         }
 
         $catalog = $this->catalog->getCatalogBySlug($slug);
-        if (!$catalog) {
+        if (!$catalog || (($catalog['visibility'] ?? 'public') === 'private' && (string) ($catalog['publisher_id'] ?? '') !== $userId)) {
             return $this->jsonError($response, 'Listing not found', 404);
         }
         try {

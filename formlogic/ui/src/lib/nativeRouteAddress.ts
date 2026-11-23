@@ -62,7 +62,30 @@ const FORM_APP_RESERVED_PREFIXES = [
 ];
 
 export function isValidAppPlace(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= MAX_PLACE_LENGTH && /^\/(?!\/)/.test(value);
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_PLACE_LENGTH) return false;
+  if (!/^\/(?!\/)/.test(value)) return false;
+  if (/[\x00-\x1f\x7f\\]/.test(value)) return false;
+  const pathPart = value.split(/[?#]/, 1)[0];
+  if (/(?:^|\/)\.{1,2}(?:\/|$)/.test(pathPart)) return false;
+  if (/%2e|%2f|%5c/i.test(pathPart)) return false;
+  try {
+    const parsed = new URL(value, 'https://app.invalid');
+    if (parsed.origin !== 'https://app.invalid') return false;
+    if (!parsed.pathname.startsWith('/') || parsed.pathname.startsWith('//')) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+function normalizePathname(raw: string): string {
+  const pathOnly = raw.split(/[?#]/, 1)[0];
+  try {
+    const parsed = new URL(pathOnly.startsWith('/') ? pathOnly : `/${pathOnly}`, 'https://app.invalid');
+    return parsed.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  } catch {
+    return pathOnly.toLowerCase().replace(/\/+$/, '') || '/';
+  }
 }
 
 /**
@@ -92,19 +115,21 @@ export function extractPlatformAppSubpath(pathname: string, slug: string): strin
  */
 export function isFormAppSubroute(subpath: string): boolean {
   if (!subpath || subpath === '/') return false;
-  const clean = subpath.split(/[?#]/, 1)[0].toLowerCase().replace(/\/+$/, '') || '/';
+  const clean = normalizePathname(subpath);
   if (FORM_APP_RESERVED_EXACT.has(clean)) return true;
   return FORM_APP_RESERVED_PREFIXES.some(prefix => clean.startsWith(prefix));
 }
 
-function isDomainReservedPath(pathname: string): boolean {
-  const clean = pathname.split(/[?#]/, 1)[0].toLowerCase().replace(/\/+$/, '') || '/';
+export function isDomainReservedPath(pathname: string): boolean {
+  const clean = normalizePathname(pathname);
   if (DOMAIN_RESERVED_EXACT.has(clean)) return true;
   return DOMAIN_RESERVED_PREFIXES.some(prefix => clean.startsWith(prefix));
 }
 
 function hashPlace(hash: string): string | null {
-  return /^#\/(?!\/)/.test(hash) && hash.length <= MAX_PLACE_LENGTH + 1 ? hash.slice(1) : null;
+  if (!/^#\/(?!\/)/.test(hash) || hash.length > MAX_PLACE_LENGTH + 1) return null;
+  const candidate = hash.slice(1);
+  return isValidAppPlace(candidate) ? candidate : null;
 }
 
 /**

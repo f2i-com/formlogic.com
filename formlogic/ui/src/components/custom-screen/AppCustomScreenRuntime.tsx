@@ -173,7 +173,7 @@ export function AppCustomScreenRuntime({
       // survives a srcdoc swap, so the dying predecessor can still post — executing
       // its requests against the new screen's forms/trust would be a stale-document
       // confused-deputy. Refuse with an honest error instead.
-      if (typeof m.gen === 'number' && m.gen !== generation) {
+      if (m.gen !== generation) {
         iframeRef.current.contentWindow?.postMessage(
           { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
           '*'

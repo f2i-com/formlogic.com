@@ -130,7 +130,7 @@ class PackService
                 // stripping; this is the untrusted-input vector.)
                 $importSettings = $packForm['settings'] ?? [];
                 if (is_array($importSettings)) {
-                    unset($importSettings['notifications']);
+                    unset($importSettings['notifications'], $importSettings['nativeTableBinding']);
                 }
 
                 // Showing a form's answers to anyone who has its link is the owner's to turn on,
@@ -177,7 +177,15 @@ class PackService
                 // App settings: strip the author's notifications, remap landingPage (@pack:->UUID),
                 // and defer defaultRoleId until roles exist (carried as defaultRoleName).
                 $appSettings = is_array($packApp['settings'] ?? null) ? $packApp['settings'] : [];
-                unset($appSettings['notifications']);
+                unset(
+                    $appSettings['notifications'],
+                    $appSettings['sharedDatabaseAppId'],
+                    $appSettings['linkedSoftnAppId'],
+                    $appSettings['sourceProtected'],
+                    $appSettings['marketplaceCatalogId'],
+                    $appSettings['marketplaceSlug'],
+                    $appSettings['marketplaceLicenseId']
+                );
                 // The Aokie Companion's remote monitoring / takeover consent is the installer's to
                 // give (through the audited policy endpoint), never a pack's to ship granted.
                 if (is_array($appSettings['aokieCompanion'] ?? null)) {
@@ -881,8 +889,13 @@ class PackService
         if ($hosted) {
             $packApp['hostedProject'] = ['version' => 1, 'client' => $hosted['client'], 'actions' => $hosted['actions']];
         }
-        $nativeProject = ($this->native ??= new NativeAppService())->get($appId);
-        if ($nativeProject) { unset($nativeProject['updatedAt']); $nativeProject['version'] = 0; $packApp['nativeProject'] = $nativeProject; unset($packApp['hostedProject']); }
+        $isSourceProtected = !empty($app['settings']['sourceProtected']);
+        if (!$isSourceProtected) {
+            $nativeProject = ($this->native ??= new NativeAppService())->get($appId);
+            if ($nativeProject) { unset($nativeProject['updatedAt']); $nativeProject['version'] = 0; $packApp['nativeProject'] = $nativeProject; unset($packApp['hostedProject']); }
+        } else {
+            unset($packApp['hostedProject']);
+        }
         if ($exportServices !== []) {
             $packApp['services'] = $exportServices;
         }

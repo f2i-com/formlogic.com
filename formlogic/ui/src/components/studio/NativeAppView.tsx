@@ -13,7 +13,7 @@ import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
 import { SiteAppFrame, type SiteProblem, type SoftnConsoleEntry } from './SiteAppFrame';
-import { buildAppAddress, readAppPlace } from '../../lib/nativeRouteAddress';
+import { buildAppAddress, isDomainReservedPath, readAppPlace, resolveAppBasePrefix } from '../../lib/nativeRouteAddress';
 import { AppSplash } from './AppSplash';
 import { WalletSheet } from '../apps/WalletSheet';
 import { AddAppSheet } from '../apps/AddAppSheet';
@@ -200,6 +200,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
         const inPlace = !project.site && !next.site && next.access === project.access && scope.appId === was.appId && scope.access === was.access &&
           (scope.access !== 'members' || (was.access === 'members' && scope.userId === was.userId)) &&
           next.files === project.files && !!next.listen === !!project.listen && !!next.offers === !!project.offers &&
+          (next.containerBackend ?? null) === (project.containerBackend ?? null) &&
           JSON.stringify(next.origins ?? []) === JSON.stringify(project.origins ?? []) &&
           JSON.stringify(next.formlogic ?? null) === JSON.stringify(project.formlogic ?? null);
         if (!inPlace) { reopenWith(project, whole, engine); return; }
@@ -295,11 +296,24 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     if (nextUrl === currentUrl) return;
     const shouldPush = !project?.site && !wasPopstate && !isInitialSync;
     try {
+      // Defense-in-depth containment: assert resolved target stays inside the app prefix (or non-reserved domain route).
+      const resolved = new URL(nextUrl, window.location.origin);
+      if (resolved.origin !== window.location.origin) return;
+      if (onDomain) {
+        if (isDomainReservedPath(resolved.pathname)) return;
+      } else {
+        const base = resolveAppBasePrefix(window.location.pathname, slug, false);
+        if (base !== null) {
+          const lowerRes = resolved.pathname.toLowerCase();
+          const lowerBase = base.toLowerCase();
+          if (lowerRes !== lowerBase && !lowerRes.startsWith(`${lowerBase}/`)) return;
+        }
+      }
       if (shouldPush) window.history.pushState(window.history.state, '', nextUrl);
       else window.history.replaceState(window.history.state, '', nextUrl);
       // Keep canonical link aligned with the currently displayed clean page URL.
       const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
-      if (canonical) canonical.href = `${window.location.origin}${nextUrl.split('#', 1)[0]}`;
+      if (canonical) canonical.href = `${window.location.origin}${resolved.pathname}${resolved.search}`;
     } catch { /* The address stays as it was. */ }
   }, [slug, onDomain, project?.site]);
   const followRoute = useCallback((path: string) => {

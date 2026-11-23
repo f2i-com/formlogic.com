@@ -401,11 +401,34 @@ function setPurgeList(ids: string[]): void {
 export function clearNativeMemberStorage(userId: string): Promise<boolean> {
   if (!validIdentity(userId)) return Promise.resolve(true);
   setPurgeList([...new Set([...purgeList(), userId])]);
-  const prefix = `${MEMBER_PREFIX}${encodeURIComponent(userId)}:`;
+  const encodedUser = encodeURIComponent(userId);
+  const prefix = `${MEMBER_PREFIX}${encodedUser}:`;
   const run = async (): Promise<boolean> => {
     try {
       // Both: a map left in localStorage by an older FormLogic is this member's too.
       await localStore.removePrefix(prefix);
+      // Clear built JS site per-member localStorage and route sessionStorage keys so
+      // signing out / deleting an account leaves no member site data or route history behind.
+      try {
+        const siteKeysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k && k.startsWith('formlogic-site-storage:') && (k.endsWith(`:${userId}`) || k.endsWith(`:${encodedUser}`))) {
+            siteKeysToRemove.push(k);
+          }
+        }
+        for (const k of siteKeysToRemove) window.localStorage.removeItem(k);
+      } catch { /* ignore storage unavailability */ }
+      try {
+        const routeKeysToRemove: string[] = [];
+        for (let i = 0; i < window.sessionStorage.length; i++) {
+          const k = window.sessionStorage.key(i);
+          if (k && k.startsWith('formlogic-site-route:')) {
+            routeKeysToRemove.push(k);
+          }
+        }
+        for (const k of routeKeysToRemove) window.sessionStorage.removeItem(k);
+      } catch { /* ignore storage unavailability */ }
       const store = await mapStore();
       if (store.kind === 'indexeddb') await store.removePrefix(prefix);
       if (pendingMemberPurges.get(userId) === purge) pendingMemberPurges.delete(userId);

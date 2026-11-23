@@ -71,10 +71,13 @@ final class NativeAppUploadsController
         }
         $userId = $this->requestUserId($request);
         $user = $request->getAttribute('user');
-        $label = is_array($user) ? (string) ($user['email'] ?? $user['name'] ?? 'Owner') : 'Owner';
+        $label = is_array($user) && is_string($user['name'] ?? null) && trim($user['name']) !== ''
+            ? trim($user['name'])
+            : 'Owner';
 
         try {
-            [$filename, $bytes, $folder] = $this->extractIncomingUpload($request);
+            $policy = $this->uploads->getPolicy($app);
+            [$filename, $bytes, $folder] = $this->extractIncomingUpload($request, $policy['maxFileSizeMb'] * 1024 * 1024);
             $record = $this->uploads->storeBytes($app, $filename, $bytes, $folder, $userId, $label, true);
             return $this->json($response, [
                 'upload' => $record,
@@ -144,7 +147,7 @@ final class NativeAppUploadsController
             return $this->json($response, ['error' => 'Uploaded file not found.'], 404);
         }
         $forceDownload = ($request->getQueryParams()['download'] ?? '') === '1';
-        return $this->streamSandboxedFile($response, (string) $app['id'], $row, $forceDownload, true);
+        return $this->streamSandboxedFile($response, (string) $app['id'], $row, $forceDownload, true, false);
     }
 
     /** @param array<string, string> $args */
@@ -201,12 +204,13 @@ final class NativeAppUploadsController
         }
 
         try {
-            [$filename, $bytes, $folder] = $this->extractIncomingUpload($request);
+            [$filename, $bytes, $folder] = $this->extractIncomingUpload($request, $policy['maxFileSizeMb'] * 1024 * 1024);
             $record = $this->uploads->storeBytes($app, $filename, $bytes, $folder, $userId, $userLabel, $isOwner);
+            $publicRecord = $isOwner ? $record : $this->redactRuntimeRecord($record, $userId);
             return $this->json($response, [
-                'upload' => $record,
-                'url' => $record['url'],
-                'quarantined' => $record['status'] === 'quarantined',
+                'upload' => $publicRecord,
+                'url' => $publicRecord['url'],
+                'quarantined' => $publicRecord['status'] === 'quarantined',
             ], 201);
         } catch (InvalidArgumentException $e) {
             return $this->json($response, ['error' => $e->getMessage(), 'code' => 'sandbox_rejected'], 422);
@@ -219,11 +223,14 @@ final class NativeAppUploadsController
     /** @param array<string, string> $args */
     public function runtimeList(Request $request, Response $response, array $args): Response
     {
-        [$app, , $isOwner, , , $denied] = $this->resolveRuntimeActor($request, (string) ($args['slug'] ?? ''));
+        [$app, $userId, $isOwner, $isMember, , $denied] = $this->resolveRuntimeActor($request, (string) ($args['slug'] ?? ''));
         if ($denied !== null || $app === null) {
             return $this->json($response, ['error' => $denied ?? 'App not found or access denied.'], 403);
         }
         $policy = $this->uploads->getPolicy($app);
+        if (!$this->canActorAccessUploads($policy['access'], $isOwner, $isMember)) {
+            return $this->json($response, ['error' => 'File uploads are not accessible for this app.', 'code' => 'uploads_forbidden'], 403);
+        }
         $query = $request->getQueryParams();
         $listed = $this->uploads->listUploads((string) $app['id'], (string) $app['slug'], [
             'status' => $isOwner ? null : 'approved',
@@ -231,8 +238,11 @@ final class NativeAppUploadsController
             'limit' => min(100, (int) ($query['limit'] ?? 50)),
             'offset' => max(0, (int) ($query['offset'] ?? 0)),
         ]);
+        $uploads = $isOwner
+            ? $listed['uploads']
+            : array_map(fn(array $rec): array => $this->redactRuntimeRecord($rec, $userId), $listed['uploads']);
         return $this->json($response, [
-            'uploads' => $listed['uploads'],
+            'uploads' => $uploads,
             'total' => $listed['total'],
             'policy' => [
                 'access' => $policy['access'],
@@ -246,9 +256,13 @@ final class NativeAppUploadsController
     /** @param array<string, string> $args */
     public function runtimeServe(Request $request, Response $response, array $args): Response
     {
-        [$app, , $isOwner, , , $denied] = $this->resolveRuntimeActor($request, (string) ($args['slug'] ?? ''));
+        [$app, , $isOwner, $isMember, , $denied, $nativeAccess] = $this->resolveRuntimeActor($request, (string) ($args['slug'] ?? ''));
         if ($denied !== null || $app === null) {
             return $this->json($response, ['error' => $denied ?? 'App not found or access denied.'], 403);
+        }
+        $policy = $this->uploads->getPolicy($app);
+        if (!$this->canActorAccessUploads($policy['access'], $isOwner, $isMember)) {
+            return $this->json($response, ['error' => 'File uploads are not accessible for this app.', 'code' => 'uploads_forbidden'], 403);
         }
         $row = $this->uploads->getUploadRow((string) $app['id'], (string) ($args['uploadId'] ?? ''));
         if ($row === null) {
@@ -258,7 +272,8 @@ final class NativeAppUploadsController
             return $this->json($response, ['error' => 'This uploaded file is pending owner review in quarantine.'], 403);
         }
         $forceDownload = ($request->getQueryParams()['download'] ?? '') === '1';
-        return $this->streamSandboxedFile($response, (string) $app['id'], $row, $forceDownload, $isOwner);
+        $isPublicRuntime = $nativeAccess === 'application' && $policy['access'] === 'anyone' && ($row['status'] ?? '') === 'approved';
+        return $this->streamSandboxedFile($response, (string) $app['id'], $row, $forceDownload, $isOwner, $isPublicRuntime);
     }
 
     /** @param array<string, string> $args */
@@ -312,33 +327,37 @@ final class NativeAppUploadsController
     /**
      * Resolves the app + caller admission for `/api/app/{slug}/native/uploads*`.
      *
-     * @return array{0: ?array<string, mixed>, 1: ?string, 2: bool, 3: bool, 4: ?string, 5: ?string}
+     * @return array{0: ?array<string, mixed>, 1: ?string, 2: bool, 3: bool, 4: ?string, 5: ?string, 6: string}
      */
     private function resolveRuntimeActor(Request $request, string $slug): array
     {
         $app = $this->apps->getAppBySlug($slug);
         if (!$app) {
-            return [null, null, false, false, null, 'App not found.'];
+            return [null, null, false, false, null, 'App not found.', 'members'];
         }
         $userId = $this->requestUserId($request);
         $user = $request->getAttribute('user');
-        $userLabel = is_array($user)
-            ? ((string) ($user['email'] ?? $user['name'] ?? '') ?: 'Member')
+        $userLabel = is_array($user) && is_string($user['name'] ?? null) && trim($user['name']) !== ''
+            ? trim($user['name'])
             : ($userId !== null ? 'Member' : 'Visitor');
         $isOwner = $userId !== null && (string) ($app['ownerId'] ?? '') === $userId;
-        $isMember = $isOwner || ($userId !== null && $this->appUsers->getAppUser((string) $app['id'], $userId) !== null);
+        $membership = (!$isOwner && $userId !== null)
+            ? $this->appUsers->getAppUser((string) $app['id'], $userId)
+            : null;
+        $isMember = $isOwner || (is_array($membership) && ($membership['status'] ?? '') === 'active');
 
         if (!$this->apps->isRuntimeVisible($app, $userId)) {
-            return [null, $userId, false, false, $userLabel, 'App is not published.'];
+            return [null, $userId, false, false, $userLabel, 'App is not published.', 'members'];
         }
         $summary = $this->native->summary((string) $app['id']);
-        $nativeAccess = is_array($summary) && is_string($summary['access'] ?? null)
-            ? (string) $summary['access']
-            : 'application';
+        // Fail closed to 'members' when no native bundle summary exists or access is unset.
+        $nativeAccess = is_array($summary) && ($summary['access'] ?? null) === 'application'
+            ? 'application'
+            : 'members';
         if ($nativeAccess === 'members' && !$isMember) {
-            return [null, $userId, false, false, $userLabel, 'Sign in as an app member to access this app\'s files.'];
+            return [null, $userId, false, false, $userLabel, 'Sign in with an active app membership to access this app\'s files.', 'members'];
         }
-        return [$app, $userId, $isOwner, $isMember, $userLabel, null];
+        return [$app, $userId, $isOwner, $isMember, $userLabel, null, $nativeAccess];
     }
 
     private function canActorUpload(string $policyAccess, bool $isOwner, bool $isMember): bool
@@ -352,12 +371,41 @@ final class NativeAppUploadsController
         };
     }
 
+    private function canActorAccessUploads(string $policyAccess, bool $isOwner, bool $isMember): bool
+    {
+        return match ($policyAccess) {
+            'disabled' => $isOwner,
+            'owner' => $isOwner,
+            'members' => $isOwner || $isMember,
+            'anyone' => true,
+            default => false,
+        };
+    }
+
+    /**
+     * Strips owner-internal moderation notes and user PII (UUIDs/emails) from non-owner runtime responses.
+     *
+     * @param array<string, mixed> $record
+     * @return array<string, mixed>
+     */
+    private function redactRuntimeRecord(array $record, ?string $callerUserId): array
+    {
+        $canDelete = $callerUserId !== null && $callerUserId !== '' && ($record['uploadedBy'] ?? null) === $callerUserId;
+        unset($record['notes'], $record['uploadedBy']);
+        if (is_string($record['uploaderLabel'] ?? null) && str_contains($record['uploaderLabel'], '@')) {
+            $record['uploaderLabel'] = null;
+        }
+        $record['canDelete'] = $canDelete;
+        return $record;
+    }
+
     /**
      * Supports both `multipart/form-data` (field `file`) and JSON `{ filename, contentBase64, folder? }`.
+     * Enforces `$maxBytes` before buffering/decoding into memory to prevent worker OOM DoS.
      *
      * @return array{0: string, 1: string, 2: string}
      */
-    private function extractIncomingUpload(Request $request): array
+    private function extractIncomingUpload(Request $request, int $maxBytes = 26214400): array
     {
         $uploadedFiles = $request->getUploadedFiles();
         if (isset($uploadedFiles['file'])) {
@@ -365,9 +413,21 @@ final class NativeAppUploadsController
             if ($file->getError() !== UPLOAD_ERR_OK) {
                 throw new InvalidArgumentException('File upload did not complete cleanly.');
             }
+            $reportedSize = $file->getSize();
+            if ($reportedSize !== null && $reportedSize > $maxBytes) {
+                throw new InvalidArgumentException(sprintf('File exceeds this app\'s %d MB per-file upload limit.', (int) ceil($maxBytes / (1024 * 1024))));
+            }
+            $stream = $file->getStream();
+            if ($stream->isSeekable()) {
+                $stream->rewind();
+            }
+            $bytes = $stream->read($maxBytes + 1);
+            if (strlen($bytes) > $maxBytes) {
+                throw new InvalidArgumentException(sprintf('File exceeds this app\'s %d MB per-file upload limit.', (int) ceil($maxBytes / (1024 * 1024))));
+            }
             $body = $request->getParsedBody();
             $folder = is_array($body) && is_string($body['folder'] ?? null) ? $body['folder'] : '';
-            return [(string) ($file->getClientFilename() ?? 'upload.bin'), (string) $file->getStream(), $folder];
+            return [(string) ($file->getClientFilename() ?? 'upload.bin'), $bytes, $folder];
         }
 
         $body = $request->getParsedBody();
@@ -383,6 +443,10 @@ final class NativeAppUploadsController
         if (str_contains($b64, ',')) {
             $b64 = substr($b64, strpos($b64, ',') + 1);
         }
+        $maxEncodedLen = (int) ceil($maxBytes * 4 / 3) + 128;
+        if (strlen($b64) > $maxEncodedLen) {
+            throw new InvalidArgumentException(sprintf('File exceeds this app\'s %d MB per-file upload limit.', (int) ceil($maxBytes / (1024 * 1024))));
+        }
         $bytes = base64_decode($b64, true);
         if ($bytes === false || $bytes === '') {
             throw new InvalidArgumentException('Invalid base64 upload content.');
@@ -391,7 +455,7 @@ final class NativeAppUploadsController
     }
 
     /** @param array<string, mixed> $row */
-    private function streamSandboxedFile(Response $response, string $appId, array $row, bool $forceDownload, bool $isOwner): Response
+    private function streamSandboxedFile(Response $response, string $appId, array $row, bool $forceDownload, bool $isOwner, bool $isPublicRuntime = false): Response
     {
         $path = $this->uploads->resolveFilePath($appId, (string) $row['stored_filename']);
         if ($path === null) {
@@ -410,7 +474,7 @@ final class NativeAppUploadsController
             ? 'private, no-store'
             : 'private, max-age=3600';
 
-        return $response
+        $out = $response
             ->withBody(new Stream($stream))
             ->withHeader('Content-Type', $mime)
             ->withHeader('Content-Length', (string) filesize($path))
@@ -418,9 +482,15 @@ final class NativeAppUploadsController
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SANDBOXED_IMAGE)
             ->withHeader('X-Frame-Options', 'DENY')
-            ->withHeader('Cross-Origin-Resource-Policy', 'cross-origin')
-            ->withHeader('Access-Control-Allow-Origin', '*')
             ->withHeader('Cache-Control', $cacheControl);
+        if ($isPublicRuntime) {
+            $out = $out
+                ->withHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+                ->withHeader('Access-Control-Allow-Origin', '*');
+        } else {
+            $out = $out->withHeader('Cross-Origin-Resource-Policy', 'same-origin');
+        }
+        return $out;
     }
 
     /** @param array<string, mixed> $payload */

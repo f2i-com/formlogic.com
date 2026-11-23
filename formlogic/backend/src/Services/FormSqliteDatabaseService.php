@@ -59,6 +59,9 @@ final class FormSqliteDatabaseService
         $sharedDbAppId = is_string($settings['sharedDatabaseAppId'] ?? null) && $settings['sharedDatabaseAppId'] !== ''
             ? (string) $settings['sharedDatabaseAppId']
             : $this->native->sharedDatabaseAppId($appId);
+        if ($sharedDbAppId !== null && $sharedDbAppId !== $appId) {
+            $this->requireOwnedApp($sharedDbAppId, $ownerId);
+        }
         $canonicalDbAppId = $sharedDbAppId ?? $appId;
         $hasManagedDb = $this->native->hasManagedDatabase($canonicalDbAppId);
         $unifiedSqlite = !empty($settings['unifiedSqlite']) || $hasManagedDb;
@@ -209,6 +212,9 @@ final class FormSqliteDatabaseService
         $sharedDbAppId = is_string($settings['sharedDatabaseAppId'] ?? null) && $settings['sharedDatabaseAppId'] !== ''
             ? (string) $settings['sharedDatabaseAppId']
             : null;
+        if ($sharedDbAppId !== null && $sharedDbAppId !== $appId) {
+            $this->requireOwnedApp($sharedDbAppId, $ownerId);
+        }
         $canonicalDbAppId = $sharedDbAppId ?? $appId;
 
         if ($canonicalDbAppId === $appId) {
@@ -241,6 +247,9 @@ final class FormSqliteDatabaseService
         $sharedDbAppId = is_string($settings['sharedDatabaseAppId'] ?? null) && $settings['sharedDatabaseAppId'] !== ''
             ? (string) $settings['sharedDatabaseAppId']
             : null;
+        if ($sharedDbAppId !== null && $sharedDbAppId !== $appId) {
+            $this->requireOwnedApp($sharedDbAppId, $ownerId);
+        }
         $canonicalDbAppId = $sharedDbAppId ?? $appId;
         if (!$this->native->hasManagedDatabase($canonicalDbAppId)) {
             return $this->enableForApp($appId, $ownerId);
@@ -261,7 +270,12 @@ final class FormSqliteDatabaseService
     public function syncSingleFormSchema(string $databaseAppId, array $form, ?string $preferredTable = null): ?array
     {
         $formId = (string) ($form['id'] ?? '');
-        if ($formId === '') {
+        if (!$formId) {
+            return null;
+        }
+        $formOwnerId = (string) ($form['userId'] ?? '');
+        $targetApp = $this->apps->getApp($databaseAppId);
+        if (!$targetApp || $formOwnerId === '' || (string) ($targetApp['ownerId'] ?? '') !== $formOwnerId) {
             return null;
         }
         $fSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
@@ -273,7 +287,10 @@ final class FormSqliteDatabaseService
         }
 
         $existingBinding = is_array($fSettings['nativeTableBinding'] ?? null) ? $fSettings['nativeTableBinding'] : null;
-        $alreadyBoundToDb = $existingBinding !== null && ($existingBinding['appId'] ?? null) === $databaseAppId && is_string($existingBinding['table'] ?? null) && $existingBinding['table'] !== '';
+        $existingTable = is_string($existingBinding['table'] ?? null) ? $existingBinding['table'] : '';
+        $alreadyBoundToDb = $existingBinding !== null
+            && ($existingBinding['appId'] ?? null) === $databaseAppId
+            && preg_match('/^[A-Za-z][A-Za-z0-9_]{0,62}$/D', $existingTable) === 1;
 
         $fields = is_array($form['fields'] ?? null) ? $form['fields'] : [];
         $fieldDefs = $this->extractSqlColumnsFromFields($fields);
@@ -623,6 +640,9 @@ final class FormSqliteDatabaseService
         $sharedDbAppId = is_string($settings['sharedDatabaseAppId'] ?? null) && $settings['sharedDatabaseAppId'] !== ''
             ? (string) $settings['sharedDatabaseAppId']
             : null;
+        if ($sharedDbAppId !== null && $sharedDbAppId !== $formAppId) {
+            $this->requireOwnedApp($sharedDbAppId, $ownerId);
+        }
         $canonicalDbAppId = $sharedDbAppId ?? $formAppId;
 
         if (!$this->native->hasManagedDatabase($canonicalDbAppId)) {
@@ -715,6 +735,11 @@ final class FormSqliteDatabaseService
             if ($binding === null || empty($binding['managedByForm']) || !is_string($binding['appId'] ?? null)) {
                 return;
             }
+            $formOwnerId = (string) ($form['userId'] ?? '');
+            $boundApp = $this->apps->getApp((string) $binding['appId']);
+            if (!$boundApp || $formOwnerId === '' || (string) ($boundApp['ownerId'] ?? '') !== $formOwnerId) {
+                return;
+            }
             $this->syncSingleFormSchema((string) $binding['appId'], $form, is_string($binding['table'] ?? null) ? $binding['table'] : null);
         } catch (\Throwable $e) {
             error_log('FormSqliteDatabaseService::maybeSyncFormOnUpdate: ' . $e->getMessage());
@@ -734,8 +759,15 @@ final class FormSqliteDatabaseService
             $canonicalDbAppId = is_string($settings['sharedDatabaseAppId'] ?? null) && $settings['sharedDatabaseAppId'] !== ''
                 ? (string) $settings['sharedDatabaseAppId']
                 : $appId;
+            $appOwnerId = (string) ($app['ownerId'] ?? '');
+            if ($canonicalDbAppId !== $appId) {
+                $dbApp = $this->apps->getApp($canonicalDbAppId);
+                if (!$dbApp || $appOwnerId === '' || (string) ($dbApp['ownerId'] ?? '') !== $appOwnerId) {
+                    return;
+                }
+            }
             $form = $this->forms->getForm($formId);
-            if (!$form) return;
+            if (!$form || $appOwnerId === '' || (string) ($form['userId'] ?? '') !== $appOwnerId) return;
             $fSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
             if (!empty($fSettings['nativeTableBinding']['table'])) return;
             $this->syncSingleFormSchema($canonicalDbAppId, $form, $displayName);

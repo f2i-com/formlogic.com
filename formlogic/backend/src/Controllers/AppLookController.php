@@ -93,10 +93,15 @@ final class AppLookController
             }
             return $this->sitePage($response, $slug === null ? $this->domainHead($host) : null);
         }
+        $verifiedDomain = null;
         try {
             if ($slug === null) {
                 $resolved = $host !== '' ? $this->domains->resolveAppSlugByHost($host) : null;
-                if ($resolved !== null) { $app = $this->apps->getAppBySlug($resolved['slug']); $onDomain = true; }
+                if ($resolved !== null) {
+                    $app = $this->apps->getAppBySlug($resolved['slug']);
+                    $onDomain = true;
+                    $verifiedDomain = (string) ($resolved['domain'] ?? $host);
+                }
             } else {
                 $app = $this->apps->getAppBySlug($slug);
             }
@@ -104,10 +109,17 @@ final class AppLookController
             $app = null;
         }
         if (!$app || ($app['status'] ?? '') !== 'published' || empty($app['settings']['softnApp'])) return $this->sitePage($response);
+        if ($this->seo !== null) {
+            $assessment = $this->seo->assessIndexability($app);
+            // Never leak metadata/preview cards for private members-only apps to unauthenticated link-preview bots.
+            if ($assessment['access'] !== 'application') {
+                return $this->sitePage($response);
+            }
+        }
         try { $look = $this->look->resolve($app); } catch (\Throwable) { $look = null; }
         if ($look === null) return $this->sitePage($response);
         try {
-            $base = $onDomain ? $this->domainBase($request, $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
             return $this->sitePage($response);
         }
@@ -176,17 +188,23 @@ final class AppLookController
         $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
         $app = null;
         $onDomain = false;
+        $verifiedDomain = null;
         try {
             if ($slug === null) {
                 if ($host === '' || $this->domains->isThisSiteHost($host)) {
                     $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n</urlset>\n";
                     $response->getBody()->write($xml);
-                    return $response->withHeader('Content-Type', 'application/xml; charset=utf-8')->withHeader('Cache-Control', 'public, max-age=300');
+                    return $response
+                        ->withHeader('Content-Type', 'application/xml; charset=utf-8')
+                        ->withHeader('Cache-Control', 'public, max-age=300')
+                        ->withHeader('Vary', 'Host')
+                        ->withHeader('X-Content-Type-Options', 'nosniff');
                 }
                 $resolved = $this->domains->resolveAppSlugByHost($host);
                 if ($resolved !== null) {
                     $app = $this->apps->getAppBySlug($resolved['slug']);
                     $onDomain = true;
+                    $verifiedDomain = (string) ($resolved['domain'] ?? $host);
                 }
             } else {
                 $app = $this->apps->getAppBySlug($slug);
@@ -197,16 +215,22 @@ final class AppLookController
         if (!$app || empty($app['settings']['softnApp'])) {
             return $this->notFound($response);
         }
+        // Return 404 for unpublished/private/noindex apps so /sitemap.xml cannot act as a draft slug existence oracle.
+        $assessment = $this->seo->assessIndexability($app);
+        if (!$assessment['indexable']) {
+            return $this->notFound($response);
+        }
         try {
-            $base = $onDomain ? $this->domainBase($request, $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
-            $base = $this->domainBase($request, $host ?: 'localhost');
+            return $this->notFound($response);
         }
         $xml = $this->seo->buildSitemapXml($app, $base, $onDomain);
         $response->getBody()->write($xml);
         return $response
             ->withHeader('Content-Type', 'application/xml; charset=utf-8')
             ->withHeader('Cache-Control', 'public, max-age=300')
+            ->withHeader('Vary', 'Host')
             ->withHeader('X-Content-Type-Options', 'nosniff');
     }
 
@@ -215,7 +239,7 @@ final class AppLookController
     {
         $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
         $domainApp = null;
-        $base = $this->domainBase($request, $host ?: 'localhost');
+        $base = rtrim(AppUrl::frontendBase($request), '/');
         if ($this->seo !== null && $host !== '') {
             try {
                 if (!$this->domains->isThisSiteHost($host)) {
@@ -224,10 +248,9 @@ final class AppLookController
                         $candidate = $this->apps->getAppBySlug($resolved['slug']);
                         if (is_array($candidate) && !empty($candidate['settings']['softnApp'])) {
                             $domainApp = $candidate;
+                            $base = $this->domainBase($request, (string) ($resolved['domain'] ?? $host));
                         }
                     }
-                } else {
-                    $base = rtrim(AppUrl::frontendBase($request), '/');
                 }
             } catch (\Throwable) {
                 $domainApp = null;
@@ -240,6 +263,7 @@ final class AppLookController
         return $response
             ->withHeader('Content-Type', 'text/plain; charset=utf-8')
             ->withHeader('Cache-Control', 'public, max-age=300')
+            ->withHeader('Vary', 'Host')
             ->withHeader('X-Content-Type-Options', 'nosniff');
     }
 
@@ -354,9 +378,10 @@ final class AppLookController
             $html = substr($html, 0, $end) . "\n" . implode("\n", $extra) . "\n" . substr($html, $end);
         }
         if ($seo['indexable'] && $seo['snapshotHtml'] !== '') {
-            $replaced = preg_replace(
+            $snapshot = '<div id="root">' . $seo['snapshotHtml'] . '</div>';
+            $replaced = preg_replace_callback(
                 '~<div\s+id=["\']root["\']\s*>\s*</div>~i',
-                '<div id="root">' . $seo['snapshotHtml'] . '</div>',
+                static fn(): string => $snapshot,
                 $html,
                 1
             );
@@ -377,6 +402,7 @@ final class AppLookController
         if ($this->seo === null) return null;
         $app = null;
         $onDomain = false;
+        $verifiedDomain = null;
         try {
             if ($slug === null) {
                 if ($host === '' || $this->domains->isThisSiteHost($host)) return null;
@@ -384,6 +410,7 @@ final class AppLookController
                 if ($resolved === null || ($resolved['mode'] ?? '') !== 'runtime_direct') return null;
                 $app = $this->apps->getAppBySlug($resolved['slug']);
                 $onDomain = true;
+                $verifiedDomain = (string) ($resolved['domain'] ?? $host);
             } else {
                 $app = $this->apps->getAppBySlug($slug);
             }
@@ -391,27 +418,31 @@ final class AppLookController
             return null;
         }
         if (!$app || empty($app['settings']['softnApp'])) return null;
-        $published = ($app['status'] ?? '') === 'published';
-        if (!$published && $onDomain) return null;
+        // Never leak draft app names/theme colors to unauthenticated requests on either custom or platform hosts.
+        if (($app['status'] ?? '') !== 'published') return null;
         try {
             $look = $this->look->resolve($app);
         } catch (\Throwable) {
             $look = null;
         }
         try {
-            $base = $onDomain ? $this->domainBase($request, $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
-            $base = $this->domainBase($request, $host ?: 'localhost');
+            return null;
         }
         $seoPage = $this->seo->resolvePage($app, $subpath, $base, $onDomain, $look);
-        $name = $seoPage['indexable'] && $seoPage['title'] !== ''
+        // Never leak private/members-only app titles or theme colors via public SEO head injection.
+        if (!$seoPage['indexable']) {
+            return null;
+        }
+        $name = $seoPage['title'] !== ''
             ? $seoPage['title']
             : trim((string) ($app['name'] ?? ''));
         if ($name === '') return null;
         return [
             'head' => [
                 'name' => $name,
-                'description' => $seoPage['indexable'] ? $seoPage['description'] : '',
+                'description' => $seoPage['description'],
                 'themeColor' => $seoPage['themeColor'],
             ],
             'seo' => $seoPage,
