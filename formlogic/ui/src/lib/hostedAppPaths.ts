@@ -1,4 +1,4 @@
-export const SOFTN_SECTIONS = ['overview', 'data', 'api', 'members', 'edit', 'automations', 'history', 'domains', 'settings'] as const;
+export const SOFTN_SECTIONS = ['overview', 'data', 'api', 'members', 'files', 'edit', 'automations', 'history', 'domains', 'settings'] as const;
 export type SoftnSection = (typeof SOFTN_SECTIONS)[number];
 
 /** Keep section links available without loading project import, export or editing code. */

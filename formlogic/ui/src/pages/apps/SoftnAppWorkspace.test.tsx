@@ -46,6 +46,27 @@ vi.mock('../../lib/api', () => ({ api: {
   getAppAi: mocks.getAppAi,
   getNativeDataSummary: mocks.getNativeDataSummary, getAppUsers: mocks.getAppUsers, listFlows: mocks.listFlows, getAppForms: mocks.getAppForms,
   getAppSignInCodes: mocks.getAppSignInCodes,
+  listNativeAppUploads: async () => ({
+    data: {
+      uploads: [],
+      total: 0,
+      stats: { totalFiles: 0, approvedFiles: 0, quarantinedFiles: 0, totalBytes: 0, quotaBytes: 250 * 1024 * 1024 },
+      policy: { access: 'owner', maxFileSizeMb: 10, maxTotalStorageMb: 250, allowedCategories: ['images', 'documents'], requireQuarantineReview: false },
+    },
+  }),
+  getNativeAppSeo: async () => ({
+    data: {
+      indexable: true,
+      indexabilityReason: 'Public and indexable.',
+      published: true,
+      access: 'application',
+      settings: { allowIndexing: true, defaultDescription: '', extraRoutes: [] },
+      pages: [{ path: '/', title: 'Recipes', description: '', canonicalUrl: 'https://forms.example/app/recipes', source: 'index.html' }],
+      sitemapUrl: 'https://forms.example/app/recipes/sitemap.xml',
+      robotsUrl: 'https://forms.example/robots.txt',
+      customDomain: null,
+    },
+  }),
   getPassKinds: async () => ({ data: { passes: [] } }),
   isAdminActing: () => false, isDemoMode: () => false,
 } }));
@@ -373,7 +394,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('Data');
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:bookings:structure');
       expect([...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.getAttribute('href'))).toEqual([
-        '/apps/app-1/web', '/apps/app-1/web/edit', '/apps/app-1/web/data', '/apps/app-1/web/api', '/apps/app-1/web/automations', '/apps/app-1/web/members', '/apps/app-1/web/domains', '/apps/app-1/web/history', '/apps/app-1/web/settings']);
+        '/apps/app-1/web', '/apps/app-1/web/edit', '/apps/app-1/web/data', '/apps/app-1/web/api', '/apps/app-1/web/automations', '/apps/app-1/web/members', '/apps/app-1/web/files', '/apps/app-1/web/domains', '/apps/app-1/web/history', '/apps/app-1/web/settings']);
       // The data manager asks for another table: the address follows, and the default view is left out of it.
       await act(async () => mocks.dataManager!.onNavigate('rooms', 'browse'));
       expect(container.querySelector('[data-testid="data-manager"]')!.textContent).toBe('data:rooms:browse');
@@ -436,7 +457,7 @@ describe('SoftnAppWorkspace', () => {
       expect(section()).toBe('History');
       expect(container.querySelector('[data-testid="softn-history"]')!.textContent).toBe('history of Recipes, version 3, open undefined, file undefined');
       const names = [...container.querySelectorAll('nav[aria-label="App sections"] a')].map(a => a.textContent);
-      expect(names.slice(-4)).toEqual(['Members', 'Domains', 'History', 'Settings']);
+      expect(names.slice(-5)).toEqual(['Members', 'Files', 'Domains', 'History', 'Settings']);
       expect(mocks.history).toMatchObject({ backend: true, readOnly: false, waiting: null });
       await act(async () => root.unmount());
       // A JavaScript app or a SoftN app with no backend has versions too.

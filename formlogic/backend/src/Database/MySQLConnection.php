@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '28bad589672a8953ff1026df88842916';
+    public const SCHEMA_STAMP = '60e17b5c2f91596a85bb0f490d46c7a8';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -3710,6 +3710,32 @@ class MySQLConnection
         if ($pdo->query("SHOW COLUMNS FROM flow_definition_versions LIKE 'ir_digest'")->rowCount() === 0) {
             $pdo->exec('ALTER TABLE flow_definition_versions ADD COLUMN ir_digest CHAR(64) NULL AFTER definition_locks_json');
         }
+
+        // Sandboxed per-app user file uploads for SoftN and hosted JavaScript apps.
+        // Binary payloads are stored outside the webroot under storage/native-app-uploads/<sha256(app_id)>/
+        // with UUID filenames, magic-byte inspection, per-app quota enforcement, and optional owner quarantine.
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS native_app_uploads (
+                id VARCHAR(36) NOT NULL PRIMARY KEY,
+                app_id VARCHAR(36) NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                stored_filename VARCHAR(120) NOT NULL,
+                folder VARCHAR(120) NOT NULL DEFAULT '',
+                mime_type VARCHAR(120) NOT NULL,
+                category VARCHAR(32) NOT NULL DEFAULT 'documents',
+                size_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                sha256 CHAR(64) NOT NULL,
+                status VARCHAR(24) NOT NULL DEFAULT 'approved',
+                uploaded_by VARCHAR(36) NULL,
+                uploader_label VARCHAR(120) NULL,
+                notes TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE,
+                INDEX idx_native_app_uploads_app_status (app_id, status, created_at),
+                INDEX idx_native_app_uploads_app_folder (app_id, folder),
+                INDEX idx_native_app_uploads_sha (app_id, sha256)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
     }
 
     /**

@@ -240,6 +240,17 @@ describe('the hello', () => {
     expect(open().context.route).toBeNull();
   });
 
+  it('boots explicit HTML subpages directly from the signed site URL and reports error file/line numbers', async () => {
+    await mount({ initialRoute: '/about.html#team' });
+    expect(iframe().getAttribute('src')).toBe('/api/app/notes/site/t1-abc/about.html#team');
+    const app = open();
+    app.tell('error', { message: 'Cannot read properties of null', file: 'about.html', line: 19, column: 12, stack: 'TypeError\n    at about.html:19:12' });
+    await app.heard();
+    expect(problems).toEqual([
+      { kind: 'error', text: 'Cannot read properties of null', file: 'about.html', line: 19, column: 12, stack: 'TypeError\n    at about.html:19:12' },
+    ]);
+  });
+
   it('tells the owner, once, of an app that picks its screens from the address path', async () => {
     const onProblem = vi.fn();
     await mount({ onProblem });

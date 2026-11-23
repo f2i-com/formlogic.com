@@ -7,7 +7,7 @@
 //   - what the app keeps in localStorage, which this page keeps for this app and person;
 //   - what the browser refused the app, and errors in it, for its owner to be shown.
 // Nothing the frame says is trusted: every request is checked here, and again by the server.
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { api } from '../../lib/api';
 import { resolveBackendApiUrl } from '../../lib/apiBase';
 import type { NativeLook } from '../../lib/appLook';
@@ -20,7 +20,22 @@ import { AppSplash } from './AppSplash';
  * that its owner should know (`note`). `text` is the app's own words where it is an error: shown
  * as text, never as markup.
  */
-export type SiteProblem = { kind: 'blocked' | 'error' | 'note'; text: string };
+export type SiteProblem = {
+  kind: 'blocked' | 'error' | 'note';
+  text: string;
+  file?: string;
+  line?: number;
+  column?: number;
+  snippet?: string;
+  stack?: string;
+  phase?: string;
+};
+
+export type SoftnConsoleEntry = {
+  level: 'log' | 'info' | 'warn' | 'error' | 'debug';
+  text: string;
+  at: number;
+};
 
 export interface SiteAppFrameProps {
   slug: string;
@@ -40,12 +55,16 @@ export interface SiteAppFrameProps {
   userId: string | null;
   /** What the browser refused the app, or an error in it: for the app's owner to be shown. Each is told once. */
   onProblem?: (problem: SiteProblem) => void;
+  /** Console debug/log lines emitted by the app for the owner's debug console. */
+  onConsole?: (entry: SoftnConsoleEntry) => void;
   /**
    * Where in the app to start, when whoever shows it knows (the address the visitor opened names
    * a place in the app): a path of the app's own, from its root. Read once, as the frame opens;
    * without it the app starts where this tab last had it, else at its first page.
    */
   initialRoute?: string | null;
+  /** Imperative navigation driven by host browser Back/Forward (`popstate`). */
+  navigateTo?: { place: string; seq: number } | null;
   /** The app says where the visitor now is (a path of its own, from its root), for the page's address to follow. */
   onRoute?: (path: string) => void;
   /**
@@ -165,11 +184,38 @@ function blockedText(what: unknown, where: unknown): string {
     : `The browser stopped the app from ${doing} ${asked}. A hosted app reaches another site only when its owner names it: Settings, Outside sites.`;
 }
 
-export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins, userId, onProblem, onLost, initialRoute, onRoute, look, className = '' }: SiteAppFrameProps) {
+/**
+ * Resolves the iframe entry URL: if the visitor opened an explicit HTML subpage (e.g. `/about.html`
+ * or `/docs/guide.html#team`), boot that HTML file directly under the signed site ticket URL.
+ */
+function resolveSiteEntryUrl(baseSiteUrl: string, entry: string, initialRoute?: string | null): string {
+  const base = resolveBackendApiUrl(baseSiteUrl);
+  if (!initialRoute || !ROUTE.test(initialRoute) || initialRoute.length > PATH_LIMIT) return base;
+  const hashAt = initialRoute.indexOf('#');
+  const noHash = hashAt >= 0 ? initialRoute.slice(0, hashAt) : initialRoute;
+  const hash = hashAt >= 0 ? initialRoute.slice(hashAt) : '';
+  const qAt = noHash.indexOf('?');
+  const routePath = qAt >= 0 ? noHash.slice(0, qAt) : noHash;
+  const query = qAt >= 0 ? noHash.slice(qAt) : '';
+  if (!/\.html?$/i.test(routePath) || routePath.includes('..') || routePath.includes('\\')) return base;
+  const encodedEntry = entry.split('/').map(encodeURIComponent).join('/');
+  const siteRoot = base.endsWith(`/${encodedEntry}`)
+    ? base.slice(0, base.length - encodedEntry.length)
+    : base.replace(/[^/]*$/, '');
+  const encodedTarget = routePath.replace(/^\/+/, '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  return encodedTarget ? `${siteRoot}${encodedTarget}${query}${hash}` : base;
+}
+
+export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins, userId, onProblem, onConsole, onLost, initialRoute, navigateTo, onRoute, look, className = '' }: SiteAppFrameProps) {
   const { proof } = site;
   // The address comes under the API's own base, as every address this page is given does: joined
   // to wherever this installation's API is, which need not be where this page is.
-  const url = resolveBackendApiUrl(site.url);
+  // Read `initialRoute` once per site URL so in-app navigations never reload the iframe unnecessarily.
+  const [openingRoute, setOpeningRoute] = useState(() => ({ siteUrl: site.url, route: initialRoute }));
+  if (openingRoute.siteUrl !== site.url) {
+    setOpeningRoute({ siteUrl: site.url, route: initialRoute });
+  }
+  const url = resolveSiteEntryUrl(site.url, site.entry, openingRoute.siteUrl === site.url ? openingRoute.route : initialRoute);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // Bumped to load the app's address once more in a new frame, when the frame has lost the app.
   const [revival, setRevival] = useState(0);
@@ -179,10 +225,17 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
   const opened = JSON.stringify([slug, appId, userId, url, proof, generation]);
   const frameKey = `${opened}#${revival}`;
   const frame = useRef<HTMLIFrameElement>(null);
+  const activeLine = useRef<Line | null>(null);
   const [shownKey, setShownKey] = useState<string | null>(null);
   // Read when a page in the frame says hello, not a reason to open the line again.
-  const latest = useRef({ name, version, backendOrigins, onProblem, onLost, initialRoute, onRoute });
-  useLayoutEffect(() => { latest.current = { name, version, backendOrigins, onProblem, onLost, initialRoute, onRoute }; }, [name, version, backendOrigins, onProblem, onLost, initialRoute, onRoute]);
+  const latest = useRef({ name, version, backendOrigins, onProblem, onConsole, onLost, initialRoute, onRoute });
+  useLayoutEffect(() => { latest.current = { name, version, backendOrigins, onProblem, onConsole, onLost, initialRoute, onRoute }; }, [name, version, backendOrigins, onProblem, onConsole, onLost, initialRoute, onRoute]);
+
+  // Forward host browser Back/Forward navigation into the active site frame.
+  useEffect(() => {
+    if (!navigateTo || !ROUTE.test(navigateTo.place) || !activeLine.current?.open) return;
+    try { activeLine.current.port.postMessage({ navigate: navigateTo.place }); } catch { /* ignore */ }
+  }, [navigateTo]);
 
   // A layout effect: listening before the browser can run anything else, so a hello is never
   // missed (a page says it once), and its cleanup shuts the line before another frame opens.
@@ -210,12 +263,24 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
     const waiting: Job[] = [];
     const told = new Set<string>();
 
-    const tell = (kind: SiteProblem['kind'], said: string) => {
+    const tell = (
+      kind: SiteProblem['kind'],
+      said: string,
+      extra?: Partial<Pick<SiteProblem, 'file' | 'line' | 'column' | 'snippet' | 'stack' | 'phase'>>,
+    ) => {
       const text = said.trim().slice(0, 600);
-      const once = `${kind}:${text}`;
+      const locKey = extra?.file ? `@${extra.file}:${extra.line ?? 0}` : '';
+      const once = `${kind}:${locKey}:${text}`;
       if (!text || told.has(once) || told.size >= PROBLEMS) return;
       told.add(once);
-      latest.current.onProblem?.({ kind, text });
+      const entry: SiteProblem = { kind, text };
+      if (extra?.file) entry.file = extra.file;
+      if (typeof extra?.line === 'number' && extra.line > 0) entry.line = extra.line;
+      if (typeof extra?.column === 'number' && extra.column > 0) entry.column = extra.column;
+      if (extra?.snippet) entry.snippet = extra.snippet;
+      if (extra?.stack) entry.stack = extra.stack;
+      if (extra?.phase) entry.phase = extra.phase;
+      latest.current.onProblem?.(entry);
     };
 
     // ── Storage ────────────────────────────────────────────────────────────────────────────────
@@ -319,9 +384,68 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
         case 'storage:clear': keep(new Map(), false); return;
         case 'blocked': tell('blocked', blockedText(payload.what, payload.where)); return;
         case 'error': {
-          if (typeof payload.message === 'string') tell('error', payload.message);
+          if (typeof payload.message === 'string') {
+            const file = typeof payload.file === 'string' && payload.file.trim() ? payload.file.trim().slice(0, 200) : undefined;
+            const line = typeof payload.line === 'number' && Number.isFinite(payload.line) && payload.line > 0 ? Math.floor(payload.line) : undefined;
+            const column = typeof payload.column === 'number' && Number.isFinite(payload.column) && payload.column > 0 ? Math.floor(payload.column) : undefined;
+            const stack = typeof payload.stack === 'string' && payload.stack.trim() ? payload.stack.trim().slice(0, 2000) : undefined;
+            const loc = file ? `${file}${line ? `:${line}${column ? `:${column}` : ''}` : ''}` : '';
+            if (loc || stack) {
+              console.groupCollapsed(`[SoftN Site:${slug}] ${loc ? `${loc} — ` : ''}${payload.message.trim().slice(0, 300)}`);
+              if (loc) console.debug('Location:', loc);
+              if (stack) console.debug(stack);
+              console.groupEnd();
+            }
+            tell('error', payload.message, { file, line, column, stack });
+          }
           // A page that failed before it was ready says why in the frame: it is not left covered.
           setShownKey(frameKey);
+          return;
+        }
+        case 'console': {
+          const level = payload.level === 'info' || payload.level === 'warn' || payload.level === 'error' || payload.level === 'debug' ? payload.level : 'log';
+          const text = typeof payload.text === 'string' ? payload.text.slice(0, 1200) : '';
+          if (text) latest.current.onConsole?.({ level, text, at: Date.now() });
+          return;
+        }
+        case 'upload': {
+          const id = message.id;
+          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
+          const filename = typeof payload.filename === 'string' ? payload.filename : 'upload.bin';
+          const contentBase64 = typeof payload.contentBase64 === 'string' ? payload.contentBase64 : '';
+          const mimeType = typeof payload.mimeType === 'string' ? payload.mimeType : undefined;
+          const folder = typeof payload.folder === 'string' ? payload.folder : undefined;
+          void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal).then((res) => {
+            if (res.error) answer(from, { id, ok: false, error: res.error });
+            else answer(from, { id, ok: true, value: res.data });
+          }).catch((err: unknown) => {
+            answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Upload failed.' });
+          });
+          return;
+        }
+        case 'uploads:list': {
+          const id = message.id;
+          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
+          const folder = typeof payload.folder === 'string' ? payload.folder : undefined;
+          void api.listAppRuntimeUploads(slug, folder, controller.signal).then((res) => {
+            if (res.error) answer(from, { id, ok: false, error: res.error });
+            else answer(from, { id, ok: true, value: res.data });
+          }).catch((err: unknown) => {
+            answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Could not list uploads.' });
+          });
+          return;
+        }
+        case 'uploads:delete': {
+          const id = message.id;
+          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return;
+          const uploadId = typeof payload.id === 'string' ? payload.id : '';
+          if (!uploadId) { answer(from, { id, ok: false, error: 'Upload id is required.' }); return; }
+          void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal).then((res) => {
+            if (res.error) answer(from, { id, ok: false, error: res.error });
+            else answer(from, { id, ok: true, value: res.data });
+          }).catch((err: unknown) => {
+            answer(from, { id, ok: false, error: err instanceof Error ? err.message : 'Could not delete upload.' });
+          });
           return;
         }
         case 'ready': setShownKey(frameKey); return;
@@ -345,7 +469,12 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
         default: return;
       }
     };
-    const hangUp = (old: Line) => { old.open = false; old.port.onmessage = null; old.port.close(); };
+    const hangUp = (old: Line) => {
+      old.open = false;
+      old.port.onmessage = null;
+      old.port.close();
+      if (activeLine.current === old) activeLine.current = null;
+    };
 
     // ── Hello ──────────────────────────────────────────────────────────────────────────────────
     const receive = (event: MessageEvent) => {
@@ -363,6 +492,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
       const channel = new MessageChannel();
       const mine: Line = { port: channel.port1, open: true };
       line = mine;
+      activeLine.current = mine;
       channel.port1.onmessage = (message: MessageEvent) => { if (mine.open && current()) hear(mine, message.data); };
       const app = latest.current;
       helloAt = Date.now();

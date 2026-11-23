@@ -39,6 +39,7 @@ formlogic/backend/storage/booking-test/
 # (scripts/softn-knowledge.mjs; fetch-softn-release.mjs writes it after every install).
 /formlogic/backend/resources/softn-knowledge.json
 /formlogic/backend/storage/native-apps/
+/formlogic/backend/storage/native-app-uploads/
 
 /formlogic/ui/public/app-editors/
 /formlogic/ui/public/.app-editors-*/

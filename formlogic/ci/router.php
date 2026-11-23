@@ -56,6 +56,19 @@ if (preg_match('#^/(app/[^/]+(/native)?/?)?$#', $uri) && preg_match('~(facebooke
     return true;
 }
 
+// SEO endpoints (robots.txt, sitemap.xml, /app/<slug>/sitemap.xml) and non-static SoftN HTML
+// subpages (/about.html, /app/<slug>/about.html) served through the backend (mirrors .htaccess).
+if (in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
+    if (preg_match('#^/(robots\.txt|sitemap\.xml|app/[^/]+/sitemap\.xml)$#', $uri)) {
+        require __DIR__ . '/../backend/public/index.php';
+        return true;
+    }
+    if (!is_file($dist . $uri) && preg_match('#^/(app/[^/]+(/native)?/?|.*\.html?)$#i', $uri)) {
+        require __DIR__ . '/../backend/public/index.php';
+        return true;
+    }
+}
+
 // The hosted runtime, the embedded editors and the site's ZIPP folder, with the headers the
 // .htaccess files give them in production (ui/public/zipp/.htaccess for the last).
 if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#', $uri)) {

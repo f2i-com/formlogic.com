@@ -17,6 +17,9 @@ export function pagePlace(pathname: string): string {
   if (/^\/apps\/(?!new(?:\/|$))[^/]+\/(?:studio|settings|records|forms|users|roles|relations|deploy)(?:\/|$)/.test(pathname)) {
     return pathname.replace(/^(\/apps\/[^/]+)\/.*$/, '$1/manage');
   }
+  if (/^\/app\/[^/]+\/native(?:\/|$)/.test(pathname)) {
+    return pathname.replace(/^(\/app\/[^/]+\/native)(?:\/.*)?$/, '$1');
+  }
   if (/^\/app\/[^/]+(?:\/(?!native(?:\/|$)|project(?:\/|$)).*)?$/.test(pathname)) {
     return pathname.replace(/^(\/app\/[^/]+)(?:\/.*)?$/, '$1');
   }

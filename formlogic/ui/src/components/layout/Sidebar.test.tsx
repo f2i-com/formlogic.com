@@ -228,7 +228,7 @@ describe('Sidebar (app-first)', () => {
     expect(menu.querySelector('[aria-current="page"]')?.textContent).toBe('Data');
     const linksIn = (name: string) => [...menu.querySelectorAll(`[role="group"][aria-label="${name}"] a`)].map(link => link.textContent);
     expect(linksIn('Build')).toEqual(['Edit', 'Data', 'API', 'Automations']);
-    expect(linksIn('Manage')).toEqual(['Members', 'Domains', 'History', 'Settings']);
+    expect(linksIn('Manage')).toEqual(['Members', 'Files', 'Domains', 'History', 'Settings']);
     expect(container.querySelector('nav[aria-label="Workspace"]')).toBeNull();
     expect(container.querySelector('a[href="/settings"]')).toBeNull();
     await act(async () => { container.querySelector<HTMLAnchorElement>('a[aria-label="All apps"]')!.click(); });
@@ -245,7 +245,7 @@ describe('Sidebar (app-first)', () => {
       await renderSidebar('/apps/draft/web/overview', <RegisteredPage app={app} items={items} leave={vi.fn()} />);
       const menu = container.querySelector('nav[aria-label="App sections"]')!;
       const links = [...menu.querySelectorAll('a')].map(a => a.getAttribute('aria-label'));
-      expect(links).toEqual(['Overview', 'Edit', 'Data', 'Members', 'Domains', 'History', 'Settings']);
+      expect(links).toEqual(['Overview', 'Edit', 'Data', 'Members', 'Files', 'Domains', 'History', 'Settings']);
       expect(menu.querySelector('[aria-current="page"]')?.getAttribute('aria-label')).toBe('Overview');
       expect(menu.querySelector('[aria-label="Data"]')?.getAttribute('title')).toBe('Data');
     } finally {

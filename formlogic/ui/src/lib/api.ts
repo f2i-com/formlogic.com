@@ -14,6 +14,68 @@ import type { AppAiAdminView, AppAiLimits, AppAiMode, AppAiOwnChoice, AppAiSiteS
 import type { AppPaymentsAdminView, AppPaymentsSiteSettings, AppPaymentsView, WalletSheetData } from './appPayments';
 
 export type { ClientEngineId };
+
+export type NativeAppUploadAccess = 'disabled' | 'owner' | 'members' | 'anyone';
+export type NativeAppUploadCategory = 'images' | 'documents' | 'audio' | 'video' | 'archives';
+
+export interface NativeAppUploadPolicy {
+  access: NativeAppUploadAccess;
+  maxFileSizeMb: number;
+  maxTotalStorageMb: number;
+  allowedCategories: NativeAppUploadCategory[];
+  requireQuarantineReview: boolean;
+}
+
+export interface NativeAppUploadRecord {
+  id: string;
+  appId: string;
+  originalFilename: string;
+  folder: string;
+  mimeType: string;
+  category: string;
+  sizeBytes: number;
+  sha256: string;
+  status: 'approved' | 'quarantined';
+  uploadedBy: string | null;
+  uploaderLabel: string | null;
+  notes: string | null;
+  url: string;
+  createdAt: string;
+}
+
+export interface NativeAppUploadStats {
+  totalFiles: number;
+  approvedFiles: number;
+  quarantinedFiles: number;
+  totalBytes: number;
+  quotaBytes: number;
+}
+
+export interface NativeAppSeoSettings {
+  allowIndexing: boolean;
+  defaultDescription: string;
+  extraRoutes: string[];
+}
+
+export interface NativeAppSeoPage {
+  path: string;
+  title: string;
+  description: string;
+  canonicalUrl: string;
+  source: string;
+}
+
+export interface NativeAppSeoOverview {
+  indexable: boolean;
+  indexabilityReason: string;
+  published: boolean;
+  access: 'application' | 'members';
+  settings: NativeAppSeoSettings;
+  pages: NativeAppSeoPage[];
+  sitemapUrl: string;
+  robotsUrl: string;
+  customDomain: string | null;
+}
 import type {
   ClaimResult,
   ConnectorCommand,
@@ -2763,6 +2825,152 @@ class ApiClient {
    */
   async listenNative(slug: string, audioBase64: string, signal?: AbortSignal, visitor = false): Promise<ApiResponse<{ text: string; seconds: number }>> {
     return unwrapData(await this.request<{ data: { text: string; seconds: number } }>(`/app/${encodeURIComponent(slug)}/native/listen`, { method: 'POST', body: JSON.stringify({ audio: audioBase64 }), signal, ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}) }));
+  }
+
+  /** Upload a file from inside a running SoftN or built JS app into its sandboxed per-app storage. */
+  async uploadAppRuntimeFile(
+    slug: string,
+    payload: { filename: string; contentBase64: string; mimeType?: string; folder?: string },
+    signal?: AbortSignal,
+    visitor = false,
+  ): Promise<ApiResponse<{ upload: NativeAppUploadRecord; url: string; quarantined?: boolean }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native/uploads`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal,
+      ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
+    });
+  }
+
+  /** List sandboxed uploads visible inside a running SoftN or built JS app. */
+  async listAppRuntimeUploads(
+    slug: string,
+    folder?: string,
+    signal?: AbortSignal,
+    visitor = false,
+  ): Promise<ApiResponse<{ uploads: NativeAppUploadRecord[]; policy: Pick<NativeAppUploadPolicy, 'access' | 'maxFileSizeMb' | 'allowedCategories' | 'requireQuarantineReview'> }>> {
+    const query = folder ? `?folder=${encodeURIComponent(folder)}` : '';
+    return this.request(`/app/${encodeURIComponent(slug)}/native/uploads${query}`, {
+      signal,
+      ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
+    });
+  }
+
+  /** Delete an upload from inside a running SoftN or built JS app (owner or original uploader only). */
+  async deleteAppRuntimeUpload(
+    slug: string,
+    uploadId: string,
+    signal?: AbortSignal,
+    visitor = false,
+  ): Promise<ApiResponse<{ deleted: boolean }>> {
+    return this.request(`/app/${encodeURIComponent(slug)}/native/uploads/${encodeURIComponent(uploadId)}`, {
+      method: 'DELETE',
+      signal,
+      ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
+    });
+  }
+
+  /** Owner management: list sandboxed uploads, usage stats, and policy for a SoftN app. */
+  async listNativeAppUploads(
+    appId: string,
+    params?: { status?: 'all' | 'approved' | 'quarantined'; category?: string; search?: string; limit?: number; offset?: number },
+  ): Promise<ApiResponse<{
+    uploads: NativeAppUploadRecord[];
+    total: number;
+    stats: NativeAppUploadStats;
+    policy: NativeAppUploadPolicy;
+  }>> {
+    const query = new URLSearchParams();
+    if (params?.status && params.status !== 'all') query.set('status', params.status);
+    if (params?.category && params.category !== 'all') query.set('category', params.category);
+    if (params?.search) query.set('search', params.search);
+    if (params?.limit) query.set('limit', String(params.limit));
+    if (params?.offset) query.set('offset', String(params.offset));
+    const qs = query.toString();
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/uploads${qs ? `?${qs}` : ''}`);
+  }
+
+  /** Owner management: upload a file directly into the app's sandboxed storage. */
+  async uploadNativeAppFile(appId: string, file: File, folder = ''): Promise<ApiResponse<{ upload: NativeAppUploadRecord; url: string }>> {
+    const generation = currentSessionGeneration();
+    if (this.isAdminActing()) return { error: ApiClient.ACTING_BLOCKED_MESSAGE, status: 403 };
+    const formData = new FormData();
+    formData.append('file', file);
+    if (folder.trim()) formData.append('folder', folder.trim());
+    try {
+      const headers: Record<string, string> = {};
+      const csrfToken = this.getCsrfToken();
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(`${this.baseUrl}/apps/${encodeURIComponent(appId)}/native/uploads`, {
+        method: 'POST',
+        body: formData,
+        headers,
+        credentials: 'include',
+      });
+      noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (response.status === 401) this.handleUnauthorized(generation);
+        return { error: data?.message || data?.error || 'Upload failed.', status: response.status, code: data?.code };
+      }
+      return { data };
+    } catch (error) {
+      logger.error('Native app file upload failed:', error);
+      return { error: error instanceof Error ? error.message : 'Network error' };
+    }
+  }
+
+  /** Owner management: update sandboxed upload policy for a SoftN app. */
+  async updateNativeAppUploadPolicy(appId: string, policy: Partial<NativeAppUploadPolicy>): Promise<ApiResponse<{ policy: NativeAppUploadPolicy }>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/uploads/policy`, {
+      method: 'PUT',
+      body: JSON.stringify(policy),
+    });
+  }
+
+  /** Owner management: approve, quarantine, rename, or annotate an uploaded file. */
+  async updateNativeAppUpload(
+    appId: string,
+    uploadId: string,
+    patch: { status?: 'approved' | 'quarantined'; folder?: string; notes?: string },
+  ): Promise<ApiResponse<{ upload: NativeAppUploadRecord }>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/uploads/${encodeURIComponent(uploadId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    });
+  }
+
+  /** Owner management: permanently delete one sandboxed upload. */
+  async deleteNativeAppUpload(appId: string, uploadId: string): Promise<ApiResponse<{ deleted: boolean }>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/uploads/${encodeURIComponent(uploadId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /** Owner management: permanently delete multiple sandboxed uploads. */
+  async bulkDeleteNativeAppUploads(appId: string, ids: string[]): Promise<ApiResponse<{ deleted: number }>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/uploads/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    });
+  }
+
+  /** Owner management: get download/preview URL for an uploaded file. */
+  getNativeAppUploadDownloadUrl(appId: string, uploadId: string, download = false): string {
+    return `${this.baseUrl}/apps/${encodeURIComponent(appId)}/native/uploads/${encodeURIComponent(uploadId)}/download${download ? '?download=1' : ''}`;
+  }
+
+  /** Owner management: inspect SEO settings, discovered crawlable pages, sitemap & robots URLs. */
+  async getNativeAppSeo(appId: string): Promise<ApiResponse<NativeAppSeoOverview>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/seo`);
+  }
+
+  /** Owner management: update SEO indexing & metadata settings for a SoftN app. */
+  async updateNativeAppSeo(appId: string, settings: Partial<NativeAppSeoSettings>): Promise<ApiResponse<NativeAppSeoOverview>> {
+    return this.request(`/apps/${encodeURIComponent(appId)}/native/seo`, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
   }
 
   async getAppHosting(id: string): Promise<ApiResponse<{ deployment: import('./hosting').HostedDeployment | null; engine?: AppEngine; enginePolicy?: OwnerEnginePolicy; actor?: unknown }>> {

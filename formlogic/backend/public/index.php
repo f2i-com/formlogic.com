@@ -1027,6 +1027,21 @@ $container->set(\FormLogic\Controllers\NativeAppController::class, function (Con
 $container->set(\FormLogic\Services\AppListening::class, function (Container $c) {
     return new \FormLogic\Services\AppListening($c->get(\FormLogic\Services\AppAiService::class), $c->get(AIService::class));
 });
+// Sandboxed per-app file uploads for SoftN and hosted JavaScript apps.
+$container->set(\FormLogic\Services\NativeAppUploadsService::class, function (Container $c) {
+    return new \FormLogic\Services\NativeAppUploadsService(
+        $c->get(MySQLConnection::class)->getConnection(),
+        $c->get(\FormLogic\Services\PlanService::class),
+    );
+});
+$container->set(\FormLogic\Controllers\NativeAppUploadsController::class, function (Container $c) {
+    return new \FormLogic\Controllers\NativeAppUploadsController(
+        $c->get(AppService::class),
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\NativeAppUploadsService::class),
+    );
+});
 // App AI, visitors and payments (docs/HOSTED_APPS.md, "App AI, visitors and payments").
 $container->set(\FormLogic\Services\AppAiSiteSettings::class, fn () => new \FormLogic\Services\AppAiSiteSettings());
 $container->set(\FormLogic\Services\AppVisitors::class, function (Container $c) {
@@ -1118,8 +1133,19 @@ $container->set(\FormLogic\Services\NativePhoneVerification::class, function (Co
 $container->set(\FormLogic\Services\AppLookService::class, function (Container $c) {
     return new \FormLogic\Services\AppLookService($c->get(\FormLogic\Services\NativeAppService::class));
 });
+$container->set(\FormLogic\Services\SoftnSeoService::class, function (Container $c) {
+    return new \FormLogic\Services\SoftnSeoService(
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\AppLookService::class),
+    );
+});
 $container->set(\FormLogic\Controllers\AppLookController::class, function (Container $c) {
-    return new \FormLogic\Controllers\AppLookController($c->get(AppService::class), $c->get(\FormLogic\Services\AppLookService::class), $c->get(\FormLogic\Services\AppDomainService::class));
+    return new \FormLogic\Controllers\AppLookController(
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\AppLookService::class),
+        $c->get(\FormLogic\Services\AppDomainService::class),
+        $c->get(\FormLogic\Services\SoftnSeoService::class),
+    );
 });
 
 $container->set(AppService::class, function (Container $c) {
@@ -1655,6 +1681,9 @@ $app->add(new BodySizeLimitMiddleware(
         // A recording FormLogic's page made for an app, to be put into words (NativeAppController::listen):
         // a WAV of a minute at most in base64, which the service holds to 2.2 MB decoded (AppListening).
         ['path' => '#^/api/app/[^/]+/native/listen$#', 'method' => 'POST', 'maxBytes' => 3 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => false],
+        // Sandboxed per-app uploads (up to 25 MB decoded; 36 MB covers multipart or base64 JSON envelope).
+        ['path' => '#^/api/apps/[a-zA-Z0-9_-]+/native/uploads$#', 'method' => 'POST', 'maxBytes' => 36 * 1024 * 1024, 'contentTypes' => array_merge($multipart, ['application/json']), 'auth' => true],
+        ['path' => '#^/api/app/[^/]+/native/uploads$#', 'method' => 'POST', 'maxBytes' => 36 * 1024 * 1024, 'contentTypes' => array_merge($multipart, ['application/json']), 'auth' => false],
 
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
@@ -2874,9 +2903,41 @@ $app->get('/', function ($request, $response) use ($container) {
         : $handler->handle($request);
 });
 
+$app->get('/robots.txt', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->robots($request, $response);
+});
+
+$app->get('/sitemap.xml', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sitemap($request, $response, []);
+});
+
+$app->get('/app/{slug}/sitemap.xml', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sitemap($request, $response, ['slug' => (string) ($getArgs($request)['slug'] ?? '')]);
+});
+
 $app->get('/app/{slug}[/{rest:.*}]', function ($request, $response) use ($container, $getArgs) {
-    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, ['slug' => (string) ($getArgs($request)['slug'] ?? '')]);
-})->add($appLookRateLimiter);
+    $args = $getArgs($request);
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, [
+        'slug' => (string) ($args['slug'] ?? ''),
+        'rest' => (string) ($args['rest'] ?? ''),
+    ]);
+})->add(function ($request, $handler) use ($appLookRateLimiter) {
+    return \FormLogic\Controllers\AppLookController::isPreviewBot($request->getHeaderLine('User-Agent'))
+        ? $appLookRateLimiter->process($request, $handler)
+        : $handler->handle($request);
+});
+
+// Clean HTML subpage URLs on custom domains (e.g. https://mysite.com/about.html, /docs/guide.html)
+// receive per-page SEO metadata, canonical URL, JSON-LD, and crawlable HTML snapshot.
+$app->get('/{page:.+\.html?}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->sharePage($request, $response, [
+        'page' => (string) ($getArgs($request)['page'] ?? ''),
+    ]);
+})->add(function ($request, $handler) use ($appLookRateLimiter) {
+    return \FormLogic\Controllers\AppLookController::isPreviewBot($request->getHeaderLine('User-Agent'))
+        ? $appLookRateLimiter->process($request, $handler)
+        : $handler->handle($request);
+});
 
 $app->get('/.well-known/assetlinks.json', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\AppDomainController::class)->assetLinks($request, $response);
@@ -4133,6 +4194,37 @@ $app->put('/api/apps/{id}/payments', function ($request, $response) use ($contai
 $app->post('/api/apps/{id}/native/{operation:import}', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->manage($request, $response, $getArgs($request));
 })->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+
+// Sandboxed per-app user file uploads management (owner panel).
+$app->get('/api/apps/{id}/native/uploads', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerList($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/native/uploads', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerUpload($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/native/uploads/policy', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerUpdatePolicy($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->post('/api/apps/{id}/native/uploads/bulk-delete', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerBulkDelete($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->patch('/api/apps/{id}/native/uploads/{uploadId:[a-f0-9-]{36}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerUpdateUpload($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+$app->get('/api/apps/{id}/native/uploads/{uploadId:[a-f0-9-]{36}}/download', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerDownload($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->delete('/api/apps/{id}/native/uploads/{uploadId:[a-f0-9-]{36}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->ownerDelete($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
+
+// SoftN SEO settings, crawlable pages overview, and indexing controls (owner panel).
+$app->get('/api/apps/{id}/native/seo', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->ownerGetSeo($request, $response, $getArgs($request));
+})->add($hostingReadLimiter)->add($authRequired);
+$app->put('/api/apps/{id}/native/seo', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\AppLookController::class)->ownerPutSeo($request, $response, $getArgs($request));
+})->add($cloudWriteGate)->add($hostingLimiter)->add($authRequired);
 // An app's page and its backend calls, for whoever is asking (a member by account, a visitor without
 // one by address), in each app apart: a token bucket of 120 that refills at 120 a minute. A busy page
 // that goes over is slowed to two calls a second and told how long to wait (`retryAfter`), where a
@@ -4169,6 +4261,21 @@ $listenLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'app_listen', tru
 $app->post('/api/app/{slug}/native/listen', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppController::class)->listen($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($listenLimiter)->add($authOptional);
+// Sandboxed per-app file uploads for running SoftN and built JavaScript apps (gated by AppAccessGateMiddleware).
+$nativeUploadWriteLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'native_uploads_write', true, true, null, true);
+$nativeUploadReadLimiter = new RateLimitMiddleware($rateLimiter, 240, 60, 'native_uploads_read', true, true, null, true, false, true);
+$app->post('/api/app/{slug}/native/uploads', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeUpload($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($nativeUploadWriteLimiter)->add($authOptional);
+$app->get('/api/app/{slug}/native/uploads', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeList($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($nativeUploadReadLimiter)->add($authOptional);
+$app->get('/api/app/{slug}/native/uploads/{uploadId:[a-f0-9-]{36}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeServe($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($nativeUploadReadLimiter)->add($authOptional);
+$app->delete('/api/app/{slug}/native/uploads/{uploadId:[a-f0-9-]{36}}', function ($request, $response) use ($container, $getArgs) {
+    return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeDelete($request, $response, $getArgs($request));
+})->add($appAccessGate)->add($nativeUploadWriteLimiter)->add($authOptional);
 // A JavaScript app's built site, file by file (SiteAppController). Its page runs with no origin and
 // sends no session, so the address admits the request: a ticket signed for this app and version,
 // handed out only by the runtime descriptor above, which rides the gate and the membership checks.

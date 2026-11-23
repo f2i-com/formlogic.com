@@ -8,6 +8,7 @@ import NativeAppPage from '../../pages/apps/NativeAppPage';
 import { MarketplaceDemoFrame } from '../marketplace/MarketplaceDemoFrame';
 import { AppSplash } from '../studio/AppSplash';
 import { rememberedLook } from '../../lib/appLook';
+import { extractPlatformAppSubpath, isFormAppSubroute } from '../../lib/nativeRouteAddress';
 import { AppRuntimeRoot } from './AppRuntimeRoot';
 import { AppRuntimeAuthGuard } from './AppRuntimeAuthGuard';
 import { startFlowDispatcher } from '../../client-runtime/flows/flowDispatcher';
@@ -159,7 +160,7 @@ export function DomainNativeApp({ slug, access }: { slug: string; access: 'appli
 const NATIVE_ENTRY_FRESH_MS = 30_000;
 const nativeEntryCache = new Map<string, { entry: NativeEntryInfo; at: number }>();
 
-function AppEntryContent({ slug, isHome }: { slug: string; isHome: boolean }) {
+function AppEntryContent({ slug, checkNative }: { slug: string; checkNative: boolean }) {
   const userId = useAuthStore(state => state.user?.id);
   const cacheKey = `${slug}:${userId ?? 'anon'}`;
   const cachedRecord = nativeEntryCache.get(cacheKey) ?? null;
@@ -170,12 +171,12 @@ function AppEntryContent({ slug, isHome }: { slug: string; isHome: boolean }) {
   const entry = cached ?? (loaded?.key === cacheKey ? loaded.entry : null);
 
   useEffect(() => {
-    if (entry && (!isHome || (cachedRecord && Date.now() - cachedRecord.at < NATIVE_ENTRY_FRESH_MS))) return;
+    if (entry && (!checkNative || (cachedRecord && Date.now() - cachedRecord.at < NATIVE_ENTRY_FRESH_MS))) return;
     let cancelled = false;
     void api.getNativeEntry(slug).then(result => {
       if (cancelled) return;
       if (result.error) {
-        if (isHome) setError(result.error);
+        if (checkNative) setError(result.error);
       } else {
         const resolved = result.data ?? { home: false };
         nativeEntryCache.set(cacheKey, { entry: resolved, at: Date.now() });
@@ -183,24 +184,26 @@ function AppEntryContent({ slug, isHome }: { slug: string; isHome: boolean }) {
       }
     });
     return () => { cancelled = true; };
-  }, [slug, cacheKey, isHome, entry, cachedRecord]);
+  }, [slug, cacheKey, checkNative, entry, cachedRecord]);
 
-  if (isHome && error) return <p role="alert" className="p-6 text-slate-800 dark:text-slate-200">{error}</p>;
-  // Only block on the splash while the server says whether the root URL is a native/demo SoftN app.
-  // Sub-routes (forms, records, reports, profile) mount AppRuntimeRoot directly and keep it mounted
-  // across all internal navigations (including back to the Dashboard root) so the sidebar menu never flashes.
-  if (isHome && !entry) return <div className="h-dvh"><AppSplash look={rememberedLook(slug)} /></div>;
-  if (isHome && entry?.demoSandboxSlug) return <DemoSoftnSandboxPage entry={entry} slug={slug} />;
-  if (isHome && entry?.home) {
+  if (checkNative && error) return <p role="alert" className="p-6 text-slate-800 dark:text-slate-200">{error}</p>;
+  // Only block on the splash while the server says whether this route belongs to a native/demo SoftN app.
+  // Form App sub-routes (forms, records, reports, profile) mount AppRuntimeRoot directly and keep it mounted
+  // across all internal navigations so the sidebar menu never flashes, while SoftN clean page paths
+  // (e.g. /app/mysite/about.html) mount NativeAppPage directly with that page opened.
+  if (checkNative && !entry) return <div className="h-dvh"><AppSplash look={rememberedLook(slug)} /></div>;
+  if (checkNative && entry?.demoSandboxSlug) return <DemoSoftnSandboxPage entry={entry} slug={slug} />;
+  if (checkNative && entry?.home) {
     return entry.access === 'members' ? <MemberNativeApp slug={slug} /> : <NativeAppPage />;
   }
   return <AppRuntimeRoot />;
 }
 
-/** The normal app URL also serves an imported website, including custom-domain launches. */
+/** The normal app URL also serves an imported website (and its clean subpage paths like /about.html), including custom-domain launches. */
 export function AppEntryRouter() {
   const { appSlug = '' } = useParams();
   const location = useLocation();
-  const isHome = location.pathname.replace(/\/$/, '') === `/app/${appSlug}`;
-  return <AppEntryContent key={appSlug} slug={appSlug} isHome={isHome} />;
+  const subpath = extractPlatformAppSubpath(location.pathname, appSlug) ?? '';
+  const checkNative = subpath === '' || !isFormAppSubroute(subpath);
+  return <AppEntryContent key={appSlug} slug={appSlug} checkNative={checkNative} />;
 }

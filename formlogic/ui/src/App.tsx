@@ -112,8 +112,20 @@ const OAuthDeviceApprove = lazyWithRetry(() => import('./pages/OAuthDeviceApprov
  */
 function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const launchHost = React.useMemo(() => getLaunchHost(), []);
+  const boundaryKey = React.useMemo(() => {
+    if (launchHost) {
+      const clean = location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+      const reserved =
+        ['/login', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/privacy', '/terms', '/sign-in/complete'].includes(clean)
+        || clean.startsWith('/form/')
+        || clean.startsWith('/app/');
+      if (!reserved) return `domain:${launchHost}`;
+    }
+    return pagePlace(location.pathname);
+  }, [launchHost, location.pathname]);
   return (
-    <ErrorBoundary key={pagePlace(location.pathname)}>
+    <ErrorBoundary key={boundaryKey}>
       {children}
     </ErrorBoundary>
   );
@@ -380,7 +392,7 @@ function AppRoutes() {
         {/* Platform-aware app download page — the launch-page "Get the app" fallback (FL-NATIVE-001) */}
         <Route path="/download" element={<DownloadPage />} />
         {/* App runtime - accessible with platform auth */}
-        <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
+        <Route path="/app/:appSlug/native/*" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
         {/* 404 catch-all */}
@@ -436,7 +448,7 @@ function AppRoutes() {
         <Route path="/form/:formId" element={<FormResponse />} />
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
         <Route path="/download" element={<DownloadPage />} />
-        <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
+        <Route path="/app/:appSlug/native/*" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
         <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 
@@ -537,7 +549,7 @@ function AppRoutes() {
       <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
       <Route path="/download" element={<DownloadPage />} />
       {/* App runtime (full screen, separate layout) */}
-      <Route path="/app/:appSlug/native" element={<NativeAppPage />} />
+      <Route path="/app/:appSlug/native/*" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
       <Route path="/app/:appSlug/*" element={<AppRuntimeRoot />} />
 

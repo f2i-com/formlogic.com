@@ -16,10 +16,13 @@ import { outsideLinkOf, type OutsideLink } from "../../lib/outsideLink";
 import { bytesToBase64, type NativeMediaFiles } from "../../lib/nativeHosting";
 import type { AppReader, NativeHost } from "../../lib/nativeHost";
 import { OutsideLinkBar } from "./OutsideLinkBar";
+import type { SiteProblem, SoftnConsoleEntry } from "./SiteAppFrame";
 
 const navigate = (path: string) => window.location.assign(path);
 /** The largest request a page sends its app's backend: a photo upload (SoftN takes 5.6 MB) and its envelope. */
 const NATIVE_REQUEST_INPUT = 6 * 1024 * 1024;
+/** Largest base64-encoded upload envelope bridged to FormLogic's sandboxed upload store (server enforces app policy). */
+const NATIVE_UPLOAD_INPUT = 34 * 1024 * 1024;
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
 type FrameEngine = { id: string; revision: string };
@@ -76,7 +79,10 @@ export function HostedAppFrame({
   update,
   onUpdate,
   initialPlace,
+  navigateTo,
   onPlace,
+  onProblem,
+  onConsole,
 }: {
   /**
    * Where in the app to start, when the page that shows it knows (its address names a place in
@@ -85,11 +91,17 @@ export function HostedAppFrame({
    * frame takes it as untrusted and starts on the main page for anything that is no place of the app.
    */
   initialPlace?: string | null;
+  /** Imperative place navigation driven by browser Back/Forward (`popstate`). */
+  navigateTo?: { place: string; seq: number } | null;
   /**
    * The frame says where the app now is (a page link followed, back to the main page, a named
    * page inside it), for the page's address to follow. The same kind of string, to hand back as it came.
    */
   onPlace?: (place: string) => void;
+  /** Structured script/runtime errors with source file, line number, code frame, and stack trace. */
+  onProblem?: (problem: SiteProblem) => void;
+  /** Console debug output emitted by the SoftN app runtime. */
+  onConsole?: (entry: SoftnConsoleEntry) => void;
   /**
    * A newer version of this same app's files, to hand to the frame it is running in (SoftN v0.0.39's
    * `formlogic:update`) rather than open a new frame, in which the app would start from nothing.
@@ -229,6 +241,8 @@ export function HostedAppFrame({
   // Read when the frame is handed the app and when it says where it is: not reasons to open it again.
   const placeRef = useRef({ initialPlace, onPlace });
   useLayoutEffect(() => { placeRef.current = { initialPlace, onPlace }; }, [initialPlace, onPlace]);
+  const debugRef = useRef({ onProblem, onConsole });
+  useLayoutEffect(() => { debugRef.current = { onProblem, onConsole }; }, [onProblem, onConsole]);
   // Source/engine props cannot revive rejected authority. Only a fresh server
   // admission object can release this quarantine, even for the same actor.
   const [quarantined, setQuarantined] = useState(-1);
@@ -564,13 +578,68 @@ export function HostedAppFrame({
           if (link) setOutside({ key: frameKey, link });
           return;
         }
+        if (event.data?.type === "console") {
+          const rawLevel = event.data.level;
+          const level: SoftnConsoleEntry["level"] =
+            rawLevel === "info" || rawLevel === "warn" || rawLevel === "error" || rawLevel === "debug" ? rawLevel : "log";
+          const text = typeof event.data.text === "string" ? event.data.text.slice(0, 1600) : "";
+          if (text) {
+            if (level === "error") console.error(`[SoftN:${slug}]`, text);
+            else if (level === "warn") console.warn(`[SoftN:${slug}]`, text);
+            else console.debug(`[SoftN:${slug}]`, text);
+            debugRef.current.onConsole?.({ level, text, at: Date.now() });
+          }
+          return;
+        }
         if (event.data?.type === "error") {
+          const reason = typeof event.data.reason === "string" && event.data.reason.trim()
+            ? event.data.reason.trim().slice(0, 600)
+            : "The app encountered an error.";
+          const file = typeof event.data.file === "string" && event.data.file.trim()
+            ? event.data.file.trim().slice(0, 240)
+            : undefined;
+          const line = typeof event.data.line === "number" && Number.isFinite(event.data.line) && event.data.line > 0
+            ? Math.floor(event.data.line)
+            : undefined;
+          const column = typeof event.data.column === "number" && Number.isFinite(event.data.column) && event.data.column > 0
+            ? Math.floor(event.data.column)
+            : undefined;
+          const snippet = typeof event.data.snippet === "string" && event.data.snippet.trim()
+            ? event.data.snippet.slice(0, 1500)
+            : undefined;
+          const stack = typeof event.data.stack === "string" && event.data.stack.trim()
+            ? event.data.stack.slice(0, 2400)
+            : undefined;
+          const phase = typeof event.data.phase === "string" ? event.data.phase : undefined;
+          const loc = file ? `${file}${line ? `:${line}${column ? `:${column}` : ""}` : ""}` : "";
+          const headline = `[SoftN:${slug}] ${loc ? `${loc} — ` : ""}${reason}`;
+          if (snippet || stack || loc) {
+            console.groupCollapsed(headline);
+            if (loc) console.debug("Location:", loc);
+            if (snippet) console.debug(`Source:\n${snippet}`);
+            if (stack) console.debug(`Stack:\n${stack}`);
+            console.groupEnd();
+          } else {
+            console.error(headline);
+          }
+          const problem: SiteProblem = { kind: "error", text: reason };
+          if (file) problem.file = file;
+          if (line) problem.line = line;
+          if (column) problem.column = column;
+          if (snippet) problem.snippet = snippet;
+          if (stack) problem.stack = stack;
+          if (phase) problem.phase = phase;
+          debugRef.current.onProblem?.(problem);
           // An app that failed after its first page was drawn is still on screen and shows what
           // went wrong inside it (SoftN v0.0.28 says `phase`); a frame before that sends none,
           // and meant a load failure.
-          if (event.data.phase !== "runtime") setError(
-            "The app could not load. Check its interface and logic files.",
-          );
+          if (phase !== "runtime") {
+            setError(
+              loc
+                ? `The app could not load (${loc}): ${reason}`
+                : "The app could not load. Check its interface and logic files.",
+            );
+          }
           return;
         }
         const { id, action, input } = event.data ?? {};
@@ -590,7 +659,8 @@ export function HostedAppFrame({
         // A request to the app's own backend may carry a photo (SoftN's upload routes take 5.6 MB;
         // the server holds each route to its own limit), and a save may be as large as the store
         // keeps (a game's saved state). Every other call is held to the 32 KB it always was.
-        const inputLimit = mountNative && (action === "nativeRequest" || action === "containerHttp") ? NATIVE_REQUEST_INPUT
+        const inputLimit = mountNative && !plugin && action === "formlogicUpload" ? NATIVE_UPLOAD_INPUT
+          : mountNative && (action === "nativeRequest" || action === "containerHttp") ? NATIVE_REQUEST_INPUT
           : storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
         if (
           !input ||
@@ -668,6 +738,30 @@ export function HostedAppFrame({
           if (mountNative && plugin?.onCamera && action === "pluginCamera") {
             plugin.onCamera();
             reply({ result: { opened: true } });
+            return;
+          }
+          // Sandboxed per-app file uploads (FormLogic inspects magic bytes, enforces policy & quotas).
+          if (mountNative && !plugin && action === "formlogicUpload") {
+            const op = typeof input.op === "string" ? input.op : "upload";
+            if (op === "list") {
+              const folder = typeof input.folder === "string" ? input.folder : undefined;
+              const res = await api.listAppRuntimeUploads(slug, folder, controller.signal, !!mountNative.visitor);
+              reply(res.error ? { error: res.error } : { result: res.data });
+              return;
+            }
+            if (op === "delete") {
+              const uploadId = typeof input.id === "string" ? input.id : "";
+              if (!uploadId) throw new Error("Upload id is required.");
+              const res = await api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, !!mountNative.visitor);
+              reply(res.error ? { error: res.error } : { result: res.data });
+              return;
+            }
+            const filename = typeof input.filename === "string" ? input.filename : "upload.bin";
+            const contentBase64 = typeof input.contentBase64 === "string" ? input.contentBase64 : "";
+            const mimeType = typeof input.mimeType === "string" ? input.mimeType : undefined;
+            const folder = typeof input.folder === "string" ? input.folder : undefined;
+            const res = await api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, !!mountNative.visitor);
+            reply(res.error ? { error: res.error } : { result: res.data });
             return;
           }
           // FormLogic's wallet, for an app that takes payments: opened by this page over the frame,
@@ -817,6 +911,12 @@ export function HostedAppFrame({
       if (recovery.current?.key === frameKey) recovery.current = null;
     };
   }, [slug, mountClient, mountVersion, mountNative, webContainer, storageEpoch, engineId, engineRevision, admission, blocked, decided, frameKey, mountBase, hosted, workspaceOnly, actorRefused, hostedAdmissionId, plugin]);
+  // Forward browser Back/Forward navigation from the parent page into the running SoftN frame.
+  useEffect(() => {
+    if (!navigateTo || blocked || actorRefused || !port.current) return;
+    if (typeof navigateTo.place !== "string" || navigateTo.place.length > 2000 || !/^\/(?!\/)/.test(navigateTo.place)) return;
+    try { port.current.postMessage({ type: "formlogic:navigate", to: navigateTo.place }); } catch { /* Frame may not support navigate yet. */ }
+  }, [navigateTo, blocked, actorRefused]);
   // A newer version to hand to the frame on screen, once: when it arrives, or when the app it is for
   // has drawn. A frame that cannot be handed one answers `reopen` here, at once.
   const onScreen = shownKey === frameKey;

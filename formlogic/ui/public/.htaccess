@@ -175,6 +175,21 @@ Options -Indexes
   RewriteCond %{DOCUMENT_ROOT}/api/.env -f
   RewriteRule ^$ api/public/index.php [QSA,L]
 
+  # SEO endpoints (robots.txt, per-domain & per-app sitemap.xml) and clean crawlable SoftN HTML
+  # pages (/about.html, /docs/guide.html, /app/<slug>, /app/<slug>/about.html) served through the
+  # backend so search engines receive per-page metadata, canonical links, JSON-LD, and semantic
+  # HTML snapshots while existing static files are never intercepted.
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteCond %{DOCUMENT_ROOT}/api/.env -f
+  RewriteRule ^(robots\.txt|sitemap\.xml|app/[^/]+/sitemap\.xml)$ api/public/index.php [QSA,L]
+
+  RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{DOCUMENT_ROOT}/api/public/index.php -f
+  RewriteCond %{DOCUMENT_ROOT}/api/.env -f
+  RewriteRule ^(app/[^/]+(/native)?/?|.*\.html?)$ api/public/index.php [QSA,L,NC]
+
   # The app engine's brotli twin (scripts/precompress-engine.mjs wrote it at build): sent in place
   # of the engine to a browser that asks for brotli, so the one file the page, the app frame and
   # both editors run is about a quarter of its size on the wire, compressed once at the best

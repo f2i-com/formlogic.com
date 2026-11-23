@@ -45,8 +45,9 @@ describe('pagePlace', () => {
       expect(pagePlace(address)).toBe(place);
     }
     expect(pagePlace('/app/agrilog-123/records')).not.toBe(pagePlace('/app/repairbench-456/records'));
-    // Standalone /native and /project routes stay separate pages
+    // Standalone /native (including clean page subpaths like /about.html) and /project routes stay separate pages
     expect(pagePlace('/app/agrilog-123/native')).toBe('/app/agrilog-123/native');
+    expect(pagePlace('/app/agrilog-123/native/about.html')).toBe('/app/agrilog-123/native');
     expect(pagePlace('/app/agrilog-123/project')).toBe('/app/agrilog-123/project');
   });
 

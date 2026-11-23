@@ -8,6 +8,8 @@ use FormLogic\Helpers\AppUrl;
 use FormLogic\Services\AppDomainService;
 use FormLogic\Services\AppLookService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\SoftnSeoService;
+use InvalidArgumentException;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 
@@ -26,7 +28,12 @@ final class AppLookController
      */
     public const PREVIEW_BOTS = 'facebookexternalhit|Twitterbot|Slackbot|Discordbot|LinkedInBot|WhatsApp|TelegramBot|SkypeUriPreview|redditbot|Pinterestbot|Embedly|vkShare|Iframely|Mastodon|Bluesky';
 
-    public function __construct(private AppService $apps, private AppLookService $look, private AppDomainService $domains) {}
+    public function __construct(
+        private AppService $apps,
+        private AppLookService $look,
+        private AppDomainService $domains,
+        private ?SoftnSeoService $seo = null,
+    ) {}
 
     /** GET /api/app/{slug}/look/{name}: one image of the app's look, for anyone its manifest is for. */
     public function image(Request $request, Response $response, array $args): Response
@@ -73,10 +80,17 @@ final class AppLookController
     public function sharePage(Request $request, Response $response, array $args): Response
     {
         $slug = isset($args['slug']) ? (string) $args['slug'] : null;
+        $subpath = self::extractSubpath($args);
         $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
         $app = null;
         $onDomain = false;
         if (!self::isPreviewBot($request->getHeaderLine('User-Agent'))) {
+            if ($this->seo !== null) {
+                $seoBundle = $this->resolvePageSeoForBrowser($request, $host, $slug, $subpath);
+                if ($seoBundle !== null) {
+                    return $this->sitePage($response, $seoBundle['head'], $seoBundle['seo']);
+                }
+            }
             return $this->sitePage($response, $slug === null ? $this->domainHead($host) : null);
         }
         try {
@@ -98,8 +112,16 @@ final class AppLookController
             return $this->sitePage($response);
         }
         $appSlug = (string) $app['slug'];
-        $url = $onDomain ? $base . '/' : $base . '/app/' . rawurlencode($appSlug);
-        $name = mb_substr(trim((string) ($app['name'] ?? '')), 0, 120);
+        $seoPage = $this->seo !== null ? $this->seo->resolvePage($app, $subpath, $base, $onDomain, $look) : null;
+        $url = $seoPage !== null && $seoPage['indexable']
+            ? $seoPage['canonicalUrl']
+            : ($onDomain ? $base . ($subpath === '/' ? '/' : $subpath) : $base . '/app/' . rawurlencode($appSlug) . ($subpath === '/' ? '' : $subpath));
+        $name = $seoPage !== null && $seoPage['indexable'] && $seoPage['title'] !== ''
+            ? $seoPage['title']
+            : mb_substr(trim((string) ($app['name'] ?? '')), 0, 120);
+        $description = $seoPage !== null && $seoPage['indexable'] && $seoPage['description'] !== ''
+            ? $seoPage['description']
+            : $look['description'];
         $e = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
         $head = [
             '<meta charset="utf-8">',
@@ -110,10 +132,13 @@ final class AppLookController
             '<meta property="og:title" content="' . $e($name) . '">',
             '<meta name="twitter:title" content="' . $e($name) . '">',
         ];
-        if ($look['description'] !== '') {
-            $head[] = '<meta name="description" content="' . $e($look['description']) . '">';
-            $head[] = '<meta property="og:description" content="' . $e($look['description']) . '">';
-            $head[] = '<meta name="twitter:description" content="' . $e($look['description']) . '">';
+        if ($seoPage !== null && !$seoPage['indexable']) {
+            $head[] = '<meta name="robots" content="noindex, nofollow">';
+        }
+        if ($description !== '') {
+            $head[] = '<meta name="description" content="' . $e($description) . '">';
+            $head[] = '<meta property="og:description" content="' . $e($description) . '">';
+            $head[] = '<meta name="twitter:description" content="' . $e($description) . '">';
         }
         if ($look['shareImage'] !== null) {
             $image = $base . AppLookService::imagePath($appSlug, 'share.png', $look['version']);
@@ -131,7 +156,7 @@ final class AppLookController
         }
         if ($look['themeColor'] !== null) $head[] = '<meta name="theme-color" content="' . $e($look['themeColor']) . '">';
         $html = "<!doctype html>\n<html lang=\"en\"><head>\n" . implode("\n", $head) . "\n</head><body><h1><a href=\"" . $e($url) . '">' . $e($name) . '</a></h1>'
-            . ($look['description'] !== '' ? '<p>' . $e($look['description']) . '</p>' : '') . "</body></html>\n";
+            . ($description !== '' ? '<p>' . $e($description) . '</p>' : '') . "</body></html>\n";
         $response->getBody()->write($html);
         return $response
             ->withHeader('Content-Type', 'text/html; charset=utf-8')
@@ -139,6 +164,123 @@ final class AppLookController
             ->withHeader('Cache-Control', 'private, no-store')
             ->withHeader('Vary', 'User-Agent')
             ->withHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    /** GET /sitemap.xml (custom domain) and GET /app/{slug}/sitemap.xml (platform host). */
+    public function sitemap(Request $request, Response $response, array $args): Response
+    {
+        if ($this->seo === null) {
+            return $this->notFound($response);
+        }
+        $slug = isset($args['slug']) ? (string) $args['slug'] : null;
+        $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
+        $app = null;
+        $onDomain = false;
+        try {
+            if ($slug === null) {
+                if ($host === '' || $this->domains->isThisSiteHost($host)) {
+                    $xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n</urlset>\n";
+                    $response->getBody()->write($xml);
+                    return $response->withHeader('Content-Type', 'application/xml; charset=utf-8')->withHeader('Cache-Control', 'public, max-age=300');
+                }
+                $resolved = $this->domains->resolveAppSlugByHost($host);
+                if ($resolved !== null) {
+                    $app = $this->apps->getAppBySlug($resolved['slug']);
+                    $onDomain = true;
+                }
+            } else {
+                $app = $this->apps->getAppBySlug($slug);
+            }
+        } catch (\Throwable) {
+            $app = null;
+        }
+        if (!$app || empty($app['settings']['softnApp'])) {
+            return $this->notFound($response);
+        }
+        try {
+            $base = $onDomain ? $this->domainBase($request, $host) : rtrim(AppUrl::frontendBase($request), '/');
+        } catch (\Throwable) {
+            $base = $this->domainBase($request, $host ?: 'localhost');
+        }
+        $xml = $this->seo->buildSitemapXml($app, $base, $onDomain);
+        $response->getBody()->write($xml);
+        return $response
+            ->withHeader('Content-Type', 'application/xml; charset=utf-8')
+            ->withHeader('Cache-Control', 'public, max-age=300')
+            ->withHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    /** GET /robots.txt (app-aware for custom domains, platform defaults for main host). */
+    public function robots(Request $request, Response $response): Response
+    {
+        $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
+        $domainApp = null;
+        $base = $this->domainBase($request, $host ?: 'localhost');
+        if ($this->seo !== null && $host !== '') {
+            try {
+                if (!$this->domains->isThisSiteHost($host)) {
+                    $resolved = $this->domains->resolveAppSlugByHost($host);
+                    if ($resolved !== null) {
+                        $candidate = $this->apps->getAppBySlug($resolved['slug']);
+                        if (is_array($candidate) && !empty($candidate['settings']['softnApp'])) {
+                            $domainApp = $candidate;
+                        }
+                    }
+                } else {
+                    $base = rtrim(AppUrl::frontendBase($request), '/');
+                }
+            } catch (\Throwable) {
+                $domainApp = null;
+            }
+        }
+        $txt = $this->seo !== null
+            ? $this->seo->buildRobotsTxt($domainApp, $base)
+            : "User-agent: *\nAllow: /\nDisallow: /api/\n";
+        $response->getBody()->write($txt);
+        return $response
+            ->withHeader('Content-Type', 'text/plain; charset=utf-8')
+            ->withHeader('Cache-Control', 'public, max-age=300')
+            ->withHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    /** GET /api/apps/{id}/native/seo — owner SEO & discoverable pages overview. */
+    public function ownerGetSeo(Request $request, Response $response, array $args): Response
+    {
+        if ($this->seo === null) {
+            return $this->notFound($response);
+        }
+        $app = $this->requireOwnedApp($request, (string) ($args['id'] ?? ''));
+        if ($app === null) {
+            return $this->notFound($response);
+        }
+        return $this->seoOverviewResponse($request, $response, $app);
+    }
+
+    /** PUT /api/apps/{id}/native/seo — owner updates indexing toggle, description, and extra SPA routes. */
+    public function ownerPutSeo(Request $request, Response $response, array $args): Response
+    {
+        if ($this->seo === null) {
+            return $this->notFound($response);
+        }
+        $app = $this->requireOwnedApp($request, (string) ($args['id'] ?? ''));
+        if ($app === null) {
+            return $this->notFound($response);
+        }
+        $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            $body = json_decode((string) $request->getBody(), true) ?: [];
+        }
+        try {
+            $next = $this->seo->normalizeSettingsPatch($app, $body);
+            $settings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $settings['softnSeo'] = $next;
+            $this->apps->updateApp((string) $app['id'], ['settings' => $settings]);
+            $app['settings'] = $settings;
+            return $this->seoOverviewResponse($request, $response, $app);
+        } catch (InvalidArgumentException $e) {
+            $response->getBody()->write((string) json_encode(['error' => $e->getMessage()]));
+            return $response->withStatus(422)->withHeader('Content-Type', 'application/json');
+        }
     }
 
     public static function isPreviewBot(string $userAgent): bool
@@ -149,26 +291,209 @@ final class AppLookController
     /**
      * The site's own page, as the web server serves it, with the headers it gives it there (the API's
      * policy would let it run nothing). With $head, the app's name and description in it (withAppHead).
+     * When $seoPage is also provided (via SoftnSeoService), enriches canonical URL, robots directive,
+     * JSON-LD structured data, and crawlable semantic HTML snapshot inside `<div id="root">`.
      *
      * @param array{name: string, description: string, themeColor: ?string}|null $head
+     * @param array{indexable: bool, robots: string, title: string, description: string, canonicalUrl: string, ogImage: ?string, themeColor: ?string, jsonLd: ?string, snapshotHtml: string, pagePath: string}|null $seoPage
      */
-    private function sitePage(Response $response, ?array $head = null): Response
+    private function sitePage(Response $response, ?array $head = null, ?array $seoPage = null): Response
     {
         $html = false;
         // The web root, or in the package (api/src/Controllers) the folder above the API, where the UI is.
-        foreach ([(string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), dirname(__DIR__, 3)] as $root) {
+        foreach ([(string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), dirname(__DIR__, 3), dirname(__DIR__, 3) . '/ui/dist'] as $root) {
             $file = $root !== '' ? rtrim($root, '/\\') . '/index.html' : '';
             $html = $file !== '' && is_file($file) ? @file_get_contents($file) : false;
             if (is_string($html)) break;
         }
         if (!is_string($html)) return $this->notFound($response);
-        $response->getBody()->write($head !== null ? self::withAppHead($html, $head) : $html);
-        return $response
+        if ($head !== null) {
+            $html = self::withAppHead($html, $head);
+        }
+        if ($seoPage !== null) {
+            $html = self::withSeoEnvelope($html, $seoPage);
+        }
+        $response->getBody()->write($html);
+        $out = $response
             ->withHeader('Content-Type', 'text/html; charset=utf-8')
             ->withHeader('Cache-Control', 'no-cache')
             ->withHeader('Vary', 'User-Agent')
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SITE_PAGE);
+        if ($seoPage !== null && !$seoPage['indexable']) {
+            $out = $out->withHeader('X-Robots-Tag', 'noindex, nofollow');
+        }
+        return $out;
+    }
+
+    /**
+     * Injects canonical URL, robots meta, JSON-LD, og:image, and crawlable `<div id="root">` HTML
+     * snapshot for search engines while preserving React hydration cleanly.
+     *
+     * @param array{indexable: bool, robots: string, title: string, description: string, canonicalUrl: string, ogImage: ?string, themeColor: ?string, jsonLd: ?string, snapshotHtml: string, pagePath: string} $seo
+     */
+    public static function withSeoEnvelope(string $html, array $seo): string
+    {
+        $e = static fn(string $text): string => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
+        $end = stripos($html, '</head>');
+        if ($end !== false) {
+            $extra = [];
+            if ($seo['indexable']) {
+                $extra[] = '<link rel="canonical" href="' . $e($seo['canonicalUrl']) . '">';
+                $extra[] = '<meta name="robots" content="index, follow">';
+                if (!empty($seo['ogImage'])) {
+                    $extra[] = '<meta property="og:image" content="' . $e((string) $seo['ogImage']) . '">';
+                    $extra[] = '<meta name="twitter:image" content="' . $e((string) $seo['ogImage']) . '">';
+                }
+                if (!empty($seo['jsonLd'])) {
+                    $extra[] = '<script type="application/ld+json">' . $seo['jsonLd'] . '</script>';
+                }
+            } else {
+                $extra[] = '<meta name="robots" content="noindex, nofollow">';
+            }
+            $html = substr($html, 0, $end) . "\n" . implode("\n", $extra) . "\n" . substr($html, $end);
+        }
+        if ($seo['indexable'] && $seo['snapshotHtml'] !== '') {
+            $replaced = preg_replace(
+                '~<div\s+id=["\']root["\']\s*>\s*</div>~i',
+                '<div id="root">' . $seo['snapshotHtml'] . '</div>',
+                $html,
+                1
+            );
+            if (is_string($replaced)) {
+                $html = $replaced;
+            }
+        }
+        return $html;
+    }
+
+    /**
+     * Resolves browser/crawler SEO head + snapshot for a SoftN app on its custom domain or `/app/{slug}/*`.
+     *
+     * @return array{head: array{name: string, description: string, themeColor: ?string}, seo: array<string, mixed>}|null
+     */
+    private function resolvePageSeoForBrowser(Request $request, string $host, ?string $slug, string $subpath): ?array
+    {
+        if ($this->seo === null) return null;
+        $app = null;
+        $onDomain = false;
+        try {
+            if ($slug === null) {
+                if ($host === '' || $this->domains->isThisSiteHost($host)) return null;
+                $resolved = $this->domains->resolveAppSlugByHost($host);
+                if ($resolved === null || ($resolved['mode'] ?? '') !== 'runtime_direct') return null;
+                $app = $this->apps->getAppBySlug($resolved['slug']);
+                $onDomain = true;
+            } else {
+                $app = $this->apps->getAppBySlug($slug);
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+        if (!$app || empty($app['settings']['softnApp'])) return null;
+        $published = ($app['status'] ?? '') === 'published';
+        if (!$published && $onDomain) return null;
+        try {
+            $look = $this->look->resolve($app);
+        } catch (\Throwable) {
+            $look = null;
+        }
+        try {
+            $base = $onDomain ? $this->domainBase($request, $host) : rtrim(AppUrl::frontendBase($request), '/');
+        } catch (\Throwable) {
+            $base = $this->domainBase($request, $host ?: 'localhost');
+        }
+        $seoPage = $this->seo->resolvePage($app, $subpath, $base, $onDomain, $look);
+        $name = $seoPage['indexable'] && $seoPage['title'] !== ''
+            ? $seoPage['title']
+            : trim((string) ($app['name'] ?? ''));
+        if ($name === '') return null;
+        return [
+            'head' => [
+                'name' => $name,
+                'description' => $seoPage['indexable'] ? $seoPage['description'] : '',
+                'themeColor' => $seoPage['themeColor'],
+            ],
+            'seo' => $seoPage,
+        ];
+    }
+
+    /** @param array<string, string> $args */
+    private static function extractSubpath(array $args): string
+    {
+        $raw = (string) ($args['page'] ?? $args['rest'] ?? '');
+        $raw = trim($raw, '/');
+        if ($raw === '' || strtolower($raw) === 'native') {
+            return '/';
+        }
+        if (str_starts_with(strtolower($raw), 'native/')) {
+            $raw = substr($raw, 7);
+        }
+        return $raw === '' ? '/' : '/' . $raw;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function requireOwnedApp(Request $request, string $appId): ?array
+    {
+        $userId = $request->getAttribute('userId');
+        if (!is_string($userId) || $userId === '' || $appId === '') {
+            $user = $request->getAttribute('user');
+            $userId = is_array($user) && !empty($user['id']) ? (string) $user['id'] : '';
+        }
+        if ($userId === '' || $appId === '') return null;
+        $app = $this->apps->getApp($appId);
+        if (!$app || (string) ($app['ownerId'] ?? '') !== $userId) return null;
+        return $app;
+    }
+
+    /** @param array<string, mixed> $app */
+    private function seoOverviewResponse(Request $request, Response $response, array $app): Response
+    {
+        assert($this->seo !== null);
+        $assessment = $this->seo->assessIndexability($app);
+        $settings = $this->seo->getSettings($app);
+        $slug = (string) ($app['slug'] ?? '');
+        $customDomain = null;
+        try {
+            $domains = $this->domains->getDomainsForApp((string) $app['id'], (string) ($app['ownerId'] ?? ''));
+            foreach ($domains as $d) {
+                if (in_array((string) ($d['status'] ?? ''), ['active', 'verified'], true) && !empty($d['domain'])) {
+                    $customDomain = (string) $d['domain'];
+                    break;
+                }
+            }
+        } catch (\Throwable) {
+            $customDomain = null;
+        }
+        $onDomain = $customDomain !== null;
+        try {
+            $platformBase = rtrim(AppUrl::frontendBase($request), '/');
+        } catch (\Throwable) {
+            $platformBase = $this->domainBase($request, strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? 'localhost')));
+        }
+        $base = $onDomain ? 'https://' . $customDomain : $platformBase;
+        $discovered = $this->seo->discoverPages($app, $base, $onDomain);
+        $pages = array_map(static fn(array $p): array => [
+            'path' => $p['path'],
+            'title' => $p['title'],
+            'description' => $p['description'],
+            'canonicalUrl' => $p['canonicalUrl'],
+            'source' => $p['source'],
+        ], $discovered);
+
+        $payload = [
+            'indexable' => $assessment['indexable'],
+            'indexabilityReason' => $assessment['reason'],
+            'published' => $assessment['published'],
+            'access' => $assessment['access'],
+            'settings' => $settings,
+            'pages' => $pages,
+            'sitemapUrl' => $onDomain ? $base . '/sitemap.xml' : $platformBase . '/app/' . rawurlencode($slug) . '/sitemap.xml',
+            'robotsUrl' => $base . '/robots.txt',
+            'customDomain' => $customDomain,
+        ];
+        $response->getBody()->write((string) json_encode($payload, JSON_UNESCAPED_SLASHES));
+        return $response->withHeader('Content-Type', 'application/json');
     }
 
     /**

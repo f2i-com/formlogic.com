@@ -97,3 +97,48 @@ it('tells the page where the app goes, and nothing that has not the shape of a p
   const quiet = await open({});
   await say(quiet.channel, { type: 'place', place: '/about.html' });
 });
+
+it('forwards host navigateTo into the frame and reports structured error line numbers and console debug lines', async () => {
+  const onProblem = vi.fn();
+  const onConsole = vi.fn();
+  const client = { 'manifest.json': '{}' };
+  const { channel } = await open({ client, onProblem, onConsole });
+  await act(async () => {
+    root!.render(
+      <HostedAppFrame
+        slug="notes"
+        client={client}
+        version={1}
+        native={notes}
+        onProblem={onProblem}
+        onConsole={onConsole}
+        navigateTo={{ place: '/about.html', seq: 1 }}
+      />,
+    );
+  });
+  expect(channel.port1.postMessage).toHaveBeenCalledWith({ type: 'formlogic:navigate', to: '/about.html' });
+
+  await say(channel, {
+    type: 'error',
+    phase: 'runtime',
+    reason: 'ReferenceError: boom is not defined',
+    file: 'about.html',
+    line: 42,
+    column: 7,
+    snippet: '  41 | const x = 1;\n> 42 | boom();\n     | ^',
+    stack: 'ReferenceError: boom is not defined\n    at about.html:42:7',
+  });
+  expect(onProblem).toHaveBeenCalledWith({
+    kind: 'error',
+    phase: 'runtime',
+    text: 'ReferenceError: boom is not defined',
+    file: 'about.html',
+    line: 42,
+    column: 7,
+    snippet: '  41 | const x = 1;\n> 42 | boom();\n     | ^',
+    stack: 'ReferenceError: boom is not defined\n    at about.html:42:7',
+  });
+
+  await say(channel, { type: 'console', level: 'warn', text: '[SoftN] Debug checkpoint' });
+  expect(onConsole).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', text: '[SoftN] Debug checkpoint' }));
+});

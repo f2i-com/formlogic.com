@@ -1,0 +1,5 @@
+Require all denied
+Deny from all
+<IfModule mod_php.c>
+php_flag engine off
+</IfModule>

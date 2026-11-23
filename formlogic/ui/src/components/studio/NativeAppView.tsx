@@ -12,7 +12,8 @@ import type { NativeRuntimeProject } from '../../lib/nativeHosting';
 import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
-import { SiteAppFrame, type SiteProblem } from './SiteAppFrame';
+import { SiteAppFrame, type SiteProblem, type SoftnConsoleEntry } from './SiteAppFrame';
+import { buildAppAddress, readAppPlace } from '../../lib/nativeRouteAddress';
 import { AppSplash } from './AppSplash';
 import { WalletSheet } from '../apps/WalletSheet';
 import { AddAppSheet } from '../apps/AddAppSheet';
@@ -51,7 +52,7 @@ function rememberFilesAnswer(appId: string, answer: 'allow' | 'deny'): void {
  * (HostedAppFrame). `onSiteProblem`: told what the browser refused a JavaScript app, and errors in
  * it, for its owner to be shown (SiteAppFrame).
  */
-export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLook, signInTo, plugin, onSiteProblem }: { slug: string; fullScreen?: boolean; onDomain?: boolean; onLook?: (look: NativeLook | null) => void; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void }; onSiteProblem?: (problem: SiteProblem) => void }) {
+export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLook, signInTo, plugin, onSiteProblem, onConsole }: { slug: string; fullScreen?: boolean; onDomain?: boolean; onLook?: (look: NativeLook | null) => void; signInTo?: string; plugin?: { context: Record<string, unknown>; onDone: () => void; onCamera?: () => void }; onSiteProblem?: (problem: SiteProblem) => void; onConsole?: (entry: SoftnConsoleEntry) => void }) {
   const userId = useAuthStore(state => state.user?.id);
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);
   // `engine`: the server's engine decision for this mount (absent from a server before E0).
@@ -254,22 +255,54 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // A JavaScript app's frame lost the app and its address did not bring it back (SiteAppFrame):
   // the address is asked for again, once. Asked again and again it would open and lose the app in
   // a loop, so a second loss soon after is left as the frame shows it.
-  // Where the visitor is in a JavaScript app goes in this page's address, after the #, when the
-  // app has the page to itself (`fullScreen`: its own address, not a preview inside another
-  // page): /app/shop#/orders/12. Opened again, or sent to someone, that address starts the app
-  // there. Written in place of the address shown, never as a new step back: the app's own steps
-  // are already the browser's. Only a # that is a path is read or replaced, so one this page
-  // uses for something else is left alone.
-  const placeInAddress = (): string | null => {
-    const hash = window.location.hash;
-    return /^#\/(?!\/)/.test(hash) && hash.length <= 2000 ? hash.slice(1) : null;
-  };
-  const [startAt] = useState(() => fullScreen ? placeInAddress() : null);
+  // Expose SoftN and JS site pages cleanly in the browser address bar (`/about.html` on a custom
+  // domain, `/app/<slug>/about.html` or `/app/<slug>/native/about.html` on the platform host) while
+  // still reading legacy `#/about.html` bookmarks. For SoftN container apps, navigating to a new
+  // page pushes a browser history entry so Back/Forward works seamlessly via `popstate`. For built
+  // JavaScript sites (iframe navigation already pushes browser history), the address bar is updated
+  // in place via `replaceState` so Back/Forward takes one click.
+  const readCurrentPlace = useCallback((): string | null => readAppPlace({
+    pathname: window.location.pathname,
+    search: window.location.search,
+    hash: window.location.hash,
+    slug,
+    onDomain,
+  }), [slug, onDomain]);
+  const [startAt] = useState(() => fullScreen ? readCurrentPlace() : null);
+  const lastPlaceRef = useRef<string>(startAt ?? '/');
+  const fromPopstateRef = useRef<string | null>(null);
+  const initialPlaceSyncedRef = useRef<boolean>(false);
+  const navSeqRef = useRef<number>(0);
+  const [navigateTo, setNavigateTo] = useState<{ place: string; seq: number } | null>(null);
   // An app that changes its place many times a second (a slider that writes it) is followed a few
   // times a second, to the last place it said: browsers refuse an address rewritten without end.
   const routing = useRef<{ timer: number; path: string | null }>({ timer: 0, path: null });
   useEffect(() => () => window.clearTimeout(routing.current.timer), []);
-  const followRoute = (path: string) => {
+  const writeRoute = useCallback((path: string) => {
+    const nextUrl = buildAppAddress(path, {
+      pathname: window.location.pathname,
+      search: window.location.search,
+      slug,
+      onDomain,
+    });
+    if (!nextUrl) return;
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const wasPopstate = fromPopstateRef.current === path;
+    if (wasPopstate) fromPopstateRef.current = null;
+    const isInitialSync = !initialPlaceSyncedRef.current;
+    initialPlaceSyncedRef.current = true;
+    lastPlaceRef.current = path;
+    if (nextUrl === currentUrl) return;
+    const shouldPush = !project?.site && !wasPopstate && !isInitialSync;
+    try {
+      if (shouldPush) window.history.pushState(window.history.state, '', nextUrl);
+      else window.history.replaceState(window.history.state, '', nextUrl);
+      // Keep canonical link aligned with the currently displayed clean page URL.
+      const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+      if (canonical) canonical.href = `${window.location.origin}${nextUrl.split('#', 1)[0]}`;
+    } catch { /* The address stays as it was. */ }
+  }, [slug, onDomain, project?.site]);
+  const followRoute = useCallback((path: string) => {
     routing.current.path = path;
     if (routing.current.timer) return;
     writeRoute(path);
@@ -277,14 +310,19 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       routing.current.timer = 0;
       if (routing.current.path !== null && routing.current.path !== path) writeRoute(routing.current.path);
     }, 200);
-  };
-  const writeRoute = (path: string) => {
-    const shown = window.location.hash;
-    if (shown !== '' && shown !== '#' && placeInAddress() === null) return;
-    const next = path === '/' ? '' : `#${path}`;
-    if (next === (shown === '#' ? '' : shown)) return;
-    try { window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}${next}`); } catch { /* The address stays as it was. */ }
-  };
+  }, [writeRoute]);
+  useEffect(() => {
+    if (!fullScreen || plugin) return;
+    const onPopState = () => {
+      const target = readCurrentPlace() ?? '/';
+      if (target === lastPlaceRef.current) return;
+      fromPopstateRef.current = target;
+      lastPlaceRef.current = target;
+      setNavigateTo({ place: target, seq: ++navSeqRef.current });
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [fullScreen, plugin, readCurrentPlace]);
   const lostAt = useRef(0);
   const siteLost = () => {
     const now = Date.now();
@@ -356,8 +394,8 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     // A JavaScript app: the server's own pages in a frame, admitted by everything above as any app
     // is. Who is using it is said only to an app its members open; anyone's app is told nobody, and
     // what it keeps in the browser is kept for the app alone, as `storageScope` has it.
-    ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} look={look} onProblem={onSiteProblem} onLost={siteLost} initialRoute={startAt} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
-    : <HostedAppFrame initialPlace={startAt} onPlace={fullScreen && !plugin ? followRoute : undefined} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} host={plugin ? undefined : host} update={update} onUpdate={live ? onUpdate : undefined} />}
+    ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} look={look} onProblem={onSiteProblem} onConsole={onConsole} onLost={siteLost} initialRoute={startAt} navigateTo={fullScreen ? navigateTo : undefined} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
+    : <HostedAppFrame initialPlace={startAt} navigateTo={fullScreen && !plugin ? navigateTo : undefined} onPlace={fullScreen && !plugin ? followRoute : undefined} onProblem={onSiteProblem} onConsole={onConsole} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} host={plugin ? undefined : host} update={update} onUpdate={live ? onUpdate : undefined} />}
     {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}
     {/* Listening: FormLogic's own question the first time, then its own sign for as long as the microphone is asked for or open. */}
     {dictation.view === 'question' && <ListenQuestion appName={name || 'this app'} onAnswer={dictation.answer} />}

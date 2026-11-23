@@ -1,4 +1,4 @@
-import { Braces, ClipboardList, Database, Globe, History, LayoutDashboard, PanelsTopLeft, PencilRuler, Rocket, Settings, ShieldCheck, Table2, Users, Workflow } from 'lucide-react';
+import { Braces, ClipboardList, Database, FolderOpen, Globe, History, LayoutDashboard, PanelsTopLeft, PencilRuler, Rocket, Settings, ShieldCheck, Table2, Users, Workflow } from 'lucide-react';
 import { softnWorkspacePath, type SoftnSection } from '../../lib/hostedAppPaths';
 import type { AppSectionItem } from './appSectionNavigation';
 
@@ -11,6 +11,7 @@ const sections: readonly (Omit<AppSectionItem, 'value' | 'to'> & { value: SoftnS
   { value: 'api', label: 'API', icon: Braces, group: 'Build' },
   { value: 'automations', label: 'Automations', icon: Workflow, group: 'Build' },
   { value: 'members', label: 'Members', icon: Users, group: 'Manage' },
+  { value: 'files', label: 'Files', icon: FolderOpen, group: 'Manage' },
   { value: 'domains', label: 'Domains', icon: Globe, group: 'Manage' },
   { value: 'history', label: 'History', icon: History, group: 'Manage' },
   { value: 'settings', label: 'Settings', icon: Settings, group: 'Manage' },
@@ -29,6 +30,7 @@ export function softnNavigationItems(appId: string, access: WorkspaceAccess): Ap
   const items = sections.filter(({ value }) => {
     switch (value) {
       case 'members': return managesMembers;
+      case 'files': return isOwner;
       case 'automations': return managesMembers && liveBackend;
       case 'history': return isOwner;
       case 'api': return isOwner && (backend || liveBackend);

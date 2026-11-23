@@ -49,6 +49,25 @@
         const answer = message.data || {};
         // The framing page asks whether this page is still the one in the frame (it cannot look).
         if (answer.ping) { port.postMessage({ id: 0, kind: 'pong', payload: { ping: answer.ping } }); return; }
+        // The framing page follows browser Back/Forward or an address change into this app.
+        if (typeof answer.navigate === 'string' && /^\/(?!\/)/.test(answer.navigate)) {
+          const target = answer.navigate;
+          let targetUrl = null;
+          try { targetUrl = new URL(target, origin); } catch { /* ignore */ }
+          if (targetUrl) {
+            const targetPath = targetUrl.pathname;
+            const currentFile = '/' + page.replace(/^\/+/, '');
+            const desiredFile = targetPath === '/' ? '/index.html' : targetPath;
+            const wantsHtml = /\.html?$/i.test(targetPath) || (currentFile.toLowerCase() !== '/index.html' && targetPath === '/');
+            if (wantsHtml && desiredFile.toLowerCase() !== currentFile.toLowerCase()) {
+              location.assign(own(desiredFile + targetUrl.search + targetUrl.hash));
+              return;
+            }
+          }
+          try { replaceReal(null, '', target); } catch { /* ignore */ }
+          window.dispatchEvent(new PopStateEvent('popstate'));
+          return;
+        }
         const asked = waiting.get(answer.id);
         if (!asked) return;
         waiting.delete(answer.id);
@@ -139,6 +158,69 @@
     return new Response(bare ? null : (answer.body ?? ''), { status, headers: answer.headers || {} });
   };
 
+  // ── Sandboxed App File Uploads ───────────────────────────────────────────────────────────────
+  const MAX_CLIENT_UPLOAD_BYTES = 26 * 1024 * 1024;
+  const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+    if (blob.size > MAX_CLIENT_UPLOAD_BYTES) {
+      reject(new Error('File exceeds the maximum upload size (25 MB).'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error('Could not read file for upload.'));
+    reader.readAsDataURL(blob);
+  });
+
+  const handleUploadRoute = async (method, path, body) => {
+    const url = new URL(path, 'https://app.invalid');
+    const cleanPath = url.pathname.replace(/\/+$/, '');
+    const upper = String(method || 'GET').toUpperCase();
+    if (cleanPath === '/api/_uploads' && upper === 'GET') {
+      const folder = url.searchParams.get('folder') || '';
+      const data = await ask('uploads:list', { folder });
+      return answered({ status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    }
+    if (cleanPath === '/api/_uploads' && upper === 'POST') {
+      let filename = 'upload.bin';
+      let mimeType = 'application/octet-stream';
+      let contentBase64 = '';
+      let folder = url.searchParams.get('folder') || '';
+      if (typeof FormData !== 'undefined' && body instanceof FormData) {
+        let picked = null;
+        for (const [k, v] of body.entries()) {
+          if (k === 'folder' && typeof v === 'string') folder = v;
+          else if (typeof v !== 'string' && !picked) picked = v;
+        }
+        if (!picked) {
+          return answered({ status: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'No file included in upload FormData.' }) });
+        }
+        filename = (picked && picked.name) || filename;
+        mimeType = (picked && picked.type) || mimeType;
+        contentBase64 = await blobToBase64(picked);
+      } else if (typeof body === 'string') {
+        const parsed = JSON.parse(body || '{}');
+        filename = String(parsed.filename || filename);
+        mimeType = String(parsed.mimeType || mimeType);
+        contentBase64 = String(parsed.contentBase64 || '');
+        if (typeof parsed.folder === 'string') folder = parsed.folder;
+      } else {
+        return answered({ status: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Upload requires FormData with a file or JSON { filename, contentBase64 }.' }) });
+      }
+      const data = await ask('upload', { filename, mimeType, contentBase64, folder });
+      return answered({ status: data && data.status ? data.status : 201, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    }
+    const delMatch = cleanPath.match(/^\/api\/_uploads\/([a-zA-Z0-9_-]{4,64})$/);
+    if (delMatch && upper === 'DELETE') {
+      const data = await ask('uploads:delete', { id: delMatch[1] });
+      return answered({ status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    }
+    return null;
+  };
+
   // ── fetch ────────────────────────────────────────────────────────────────────────────────────
   const browserFetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
@@ -151,6 +233,15 @@
       return browserFetch(to === request.url ? request : new Request(to, request), init);
     }
     const method = (init && init.method) || (request && request.method) || 'GET';
+    if (path === '/api/_uploads' || path.startsWith('/api/_uploads?') || path.startsWith('/api/_uploads/')) {
+      const uploadBody = init && 'body' in init ? init.body : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : null;
+      try {
+        const uploadResp = await handleUploadRoute(method, path, uploadBody);
+        if (uploadResp) return uploadResp;
+      } catch (error) {
+        return answered({ status: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: error instanceof Error ? error.message : 'Upload failed.' }) });
+      }
+    }
     const headers = Object.assign(request ? headersOf(request.headers) : {}, headersOf(init && init.headers));
     const body = init && 'body' in init ? init.body : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : null;
     let answer;
@@ -391,6 +482,23 @@
       const url = new URL(path, 'https://app.invalid');
       return answered(await backend(init.method || 'GET', url.pathname + url.search, headersOf(init.headers), init.body));
     },
+    /** Upload a File or Blob safely into this app's FormLogic-sandboxed upload store. */
+    upload: async (file, options = {}) => {
+      if (!(file instanceof Blob)) throw new Error('formlogic.upload expects a File or Blob.');
+      const filename = (options && typeof options.filename === 'string' && options.filename.trim())
+        || (typeof file.name === 'string' && file.name.trim())
+        || 'upload.bin';
+      const mimeType = (options && typeof options.mimeType === 'string' && options.mimeType.trim())
+        || file.type
+        || 'application/octet-stream';
+      const folder = options && typeof options.folder === 'string' ? options.folder : '';
+      const contentBase64 = await blobToBase64(file);
+      return ask('upload', { filename, mimeType, contentBase64, folder });
+    },
+    /** List approved sandboxed uploads for this app (optionally scoped to a folder). */
+    uploads: async (folder = '') => ask('uploads:list', { folder: typeof folder === 'string' ? folder : '' }),
+    /** Delete a sandboxed upload by id (allowed for the owner or original uploader). */
+    deleteUpload: async (id) => ask('uploads:delete', { id: String(id || '') }),
     /** Who is using the app, when it is one only its members open: { id }, else null. */
     get user() { return context.user || null; },
     /** The app as it is installed: { name, slug, version }. */
@@ -399,6 +507,40 @@
     asset: (path) => origin + site + String(path).replace(/^\/+/, ''),
   };
   define(window, 'formlogic', Object.freeze(formlogic));
+
+  // ── Error & Console Diagnostics ──────────────────────────────────────────────────────────────
+  const cleanSourceFile = (raw) => {
+    const text = String(raw || '').trim();
+    if (!text) return '';
+    if (text.startsWith(origin + site)) return text.slice((origin + site).length).split(/[?#]/, 1)[0] || page;
+    if (text.startsWith(origin + '/')) return text.slice(origin.length + 1).split(/[?#]/, 1)[0];
+    return text.split(/[?#]/, 1)[0].slice(0, 200);
+  };
+  const cleanStack = (raw) => String(raw || '').split(origin + site).join('').slice(0, 2000);
+  const stringifyArg = (arg) => {
+    if (typeof arg === 'string') return arg;
+    if (arg instanceof Error) return arg.stack || arg.message || String(arg);
+    try { return JSON.stringify(arg); } catch { return String(arg); }
+  };
+  let consoleHooked = false;
+  let consoleCount = 0;
+  const hookConsole = () => {
+    if (consoleHooked || typeof console === 'undefined') return;
+    consoleHooked = true;
+    for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+      const orig = typeof console[level] === 'function' ? console[level].bind(console) : null;
+      if (!orig) continue;
+      console[level] = (...args) => {
+        orig(...args);
+        if (++consoleCount > 250) return;
+        try {
+          const text = args.map(stringifyArg).join(' ').slice(0, 1200);
+          tell('console', { level, text });
+        } catch { /* ignore */ }
+      };
+    }
+  };
+  hookConsole();
 
   // What this script listens for on the window. Opening the document to write the app's page
   // into it (below) clears every listener on the document and on the window, so these are put on
@@ -412,8 +554,41 @@
       const what = event.effectiveDirective || event.violatedDirective || '';
       setTimeout(() => { if (!repaired.has(where)) tell('blocked', { what, where: where.slice(0, 300) }); }, 0);
     });
-    window.addEventListener('error', (event) => { tell('error', { message: String(event.message || '').slice(0, 500) }); });
-    window.addEventListener('unhandledrejection', (event) => { tell('error', { message: String((event.reason && event.reason.message) || event.reason || '').slice(0, 500) }); });
+    window.addEventListener('error', (event) => {
+      const file = cleanSourceFile(event.filename || '');
+      const line = typeof event.lineno === 'number' && event.lineno > 0 ? event.lineno : undefined;
+      const column = typeof event.colno === 'number' && event.colno > 0 ? event.colno : undefined;
+      const stack = event.error && typeof event.error.stack === 'string' ? cleanStack(event.error.stack) : undefined;
+      const message = String(event.message || (event.error && event.error.message) || '').slice(0, 500);
+      tell('error', {
+        message,
+        ...(file ? { file } : {}),
+        ...(line ? { line } : {}),
+        ...(column ? { column } : {}),
+        ...(stack ? { stack } : {}),
+      });
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event.reason;
+      const message = String((reason && reason.message) || reason || '').slice(0, 500);
+      const stack = reason && typeof reason.stack === 'string' ? cleanStack(reason.stack) : undefined;
+      let file; let line; let column;
+      if (stack) {
+        const m = stack.match(/([^\s()@]+):(\d+):(\d+)/);
+        if (m) {
+          file = cleanSourceFile(m[1]);
+          line = Number(m[2]) || undefined;
+          column = Number(m[3]) || undefined;
+        }
+      }
+      tell('error', {
+        message,
+        ...(file ? { file } : {}),
+        ...(line ? { line } : {}),
+        ...(column ? { column } : {}),
+        ...(stack ? { stack } : {}),
+      });
+    });
     window.addEventListener('popstate', route);
     window.addEventListener('hashchange', route);
 

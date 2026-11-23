@@ -51,7 +51,10 @@ import { AppTorchSwitch } from '../../components/studio/AppTorchSwitch';
 import { NativeEditorView } from '../../components/studio/NativeAppPanel';
 import { NativeAppView } from '../../components/studio/NativeAppView';
 import { MarketplaceDemoFrame } from '../../components/marketplace/MarketplaceDemoFrame';
-import type { SiteProblem } from '../../components/studio/SiteAppFrame';
+import type { SiteProblem, SoftnConsoleEntry } from '../../components/studio/SiteAppFrame';
+import { SoftnUploadsPanel } from '../../components/apps/SoftnUploadsPanel';
+import { SoftnDebugConsole } from '../../components/apps/SoftnDebugConsole';
+import { SoftnSeoPanel } from '../../components/apps/SoftnSeoPanel';
 import { importSiteBuild, siteBuildWarnings, siteOf, siteOutsideOf, withNewBuild, withOutsideSites } from '../../lib/siteApps';
 import { SiteOutsidePanel } from '../../components/apps/SiteOutsidePanel';
 import { DataManager, type DataView } from '../../components/data';
@@ -120,13 +123,17 @@ function Workspace({ app }: { app: App }) {
   const setSoftnOpen = useUIStore(s => s.setSoftnOpen);
   const [reloadKey, setReloadKey] = useState(0);
   const [previewKey, setPreviewKey] = useState(0);
-  // A JavaScript app's owner is shown what the browser stopped the app from doing while it ran
-  // here, and errors in it (SiteAppFrame): the few first, each once, until the app is loaded again.
+  // Runtime & script errors (with source file, line number, code frame & stack) plus console logs
+  // captured from both SoftN container apps and built JavaScript sites for the Debug Console.
   const [siteProblems, setSiteProblems] = useState<SiteProblem[]>([]);
+  const [consoleLogs, setConsoleLogs] = useState<SoftnConsoleEntry[]>([]);
   const onSiteProblem = useCallback((problem: SiteProblem) => {
-    setSiteProblems(list => list.length >= 8 || list.some(seen => seen.kind === problem.kind && seen.text === problem.text) ? list : [...list, problem]);
+    setSiteProblems(list => list.length >= 25 || list.some(seen => seen.kind === problem.kind && seen.text === problem.text && seen.file === problem.file && seen.line === problem.line) ? list : [...list, problem]);
   }, []);
-  const reloadPreview = () => { setSiteProblems([]); setPreviewKey(key => key + 1); };
+  const onConsole = useCallback((entry: SoftnConsoleEntry) => {
+    setConsoleLogs(list => list.length >= 120 ? [...list.slice(-119), entry] : [...list, entry]);
+  }, []);
+  const reloadPreview = () => { setSiteProblems([]); setConsoleLogs([]); setPreviewKey(key => key + 1); };
   const draft = useNativeProjectDraft(app, { reloadKey, onInstalled: reloadPreview });
   const { project, version, ready, readOnly, busy, dirty } = draft;
   const ai = useAiReady({ withRecheck: true });
@@ -606,25 +613,28 @@ function Workspace({ app }: { app: App }) {
                     compact
                   />
                 ) : (
-                  <NativeAppView slug={app.slug} onSiteProblem={isSite ? onSiteProblem : undefined} />
+                  <NativeAppView slug={app.slug} onSiteProblem={onSiteProblem} onConsole={onConsole} />
                 )}
               </div>
             </div>
-            {/* For a JavaScript app's owner: what was left out of the build, what in it will not
-                work everywhere, and what the browser stopped it from doing while it ran above. */}
-            {isSite && !readOnly && (buildNotes.length > 0 || siteProblems.length > 0) && <div role="status" className="space-y-2 border-t border-slate-200 p-3 dark:border-slate-700">
-              {buildNotes.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+            {/* Build import warnings for uploaded JS site bundles */}
+            {isSite && !readOnly && buildNotes.length > 0 && <div role="status" className="border-t border-slate-200 p-3 dark:border-slate-700">
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
                 <div className="flex items-start justify-between gap-3">
                   <p className="font-semibold">About the build you uploaded</p>
                   <button type="button" onClick={() => setBuildNotes([])} className="-my-1 inline-flex min-h-8 shrink-0 items-center rounded-md px-2 font-medium underline-offset-2 hover:underline max-sm:min-h-11">Dismiss</button>
                 </div>
                 <ul className="mt-1 list-disc space-y-1 pl-4">{buildNotes.map(note => <li key={note}>{note}</li>)}</ul>
-              </div>}
-              {siteProblems.length > 0 && <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200">
-                <p className="font-semibold text-slate-900 dark:text-white">While the app ran here</p>
-                <ul className="mt-1 list-disc space-y-1 pl-4">{siteProblems.map(problem => <li key={`${problem.kind}:${problem.text}`} className="break-words">{problem.text}</li>)}</ul>
-              </div>}
+              </div>
             </div>}
+            {/* Live Debug Console showing source-mapped file:line:col errors, code frames & console output */}
+            {!readOnly && (
+              <SoftnDebugConsole
+                problems={siteProblems}
+                logs={consoleLogs}
+                onClear={() => { setSiteProblems([]); setConsoleLogs([]); }}
+              />
+            )}
           </section>
 
           {!readOnly && sourceProtected && <aside className="space-y-4">
@@ -773,17 +783,24 @@ function Workspace({ app }: { app: App }) {
           waiting={dirty ? 'Publish or discard your unpublished changes first: making the backend makes a new version.' : null}
           onCreate={createDesigned} />}
 
-        {/* Wide: the address beside the domains. Narrow: one under the other. */}
-        {section === 'domains' && <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
-          <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
-            <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}
-              checked={!!project.home} disabled={busy || readOnly} onChange={checked => void changeSetting({ ...project, home: checked }, 'Address updated.')} />
-            {published ? <Button className="mt-4" variant="secondary" size="sm" disabled={readOnly} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>
-              : <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not published yet: only you can open it. Publish from the top of the page when it is ready.</p>}
-          </Panel>
-          {!readOnly && app.ownerId === userId
-            ? <div className="min-w-0"><CustomDomainsPanel appId={app.id} published={published} softn /></div>
-            : <p className="text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner connects a domain of its own.</p>}
+        {section === 'files' && (isOwner
+          ? <SoftnUploadsPanel appId={app.id} appSlug={app.slug} readOnly={readOnly} />
+          : <p className="mt-6 text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner manages sandboxed uploaded files.</p>)}
+
+        {/* Wide: the address beside the domains, with Search Engine & SEO controls right below. */}
+        {section === 'domains' && <div className="mt-4 space-y-4">
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)]">
+            <Panel title="Address" icon={<Globe className="h-4 w-4" />}>
+              <Switch label="Open this app at its address" description={`Visitors to /app/${app.slug} get this app. Off: it opens at /app/${app.slug}/native.`}
+                checked={!!project.home} disabled={busy || readOnly} onChange={checked => void changeSetting({ ...project, home: checked }, 'Address updated.')} />
+              {published ? <Button className="mt-4" variant="secondary" size="sm" disabled={readOnly} onClick={() => setConfirmUnpublish(true)}>Unpublish</Button>
+                : <p className="mt-4 text-xs leading-5 text-slate-500 dark:text-slate-400">Not published yet: only you can open it. Publish from the top of the page when it is ready.</p>}
+            </Panel>
+            {!readOnly && app.ownerId === userId
+              ? <div className="min-w-0"><CustomDomainsPanel appId={app.id} published={published} softn /></div>
+              : <p className="text-sm text-slate-600 dark:text-slate-400">Only the app&rsquo;s owner connects a domain of its own.</p>}
+          </div>
+          {isOwner && <SoftnSeoPanel appId={app.id} readOnly={readOnly} />}
         </div>}
 
         {section === 'settings' && <div className="mt-4">
