@@ -110,7 +110,7 @@ class ReportService
             $native = $this->nativeApps ?? new NativeAppService();
             $binding = (new NativeTableFormBridge($pdo, $native))->resolveBinding($formId);
             if ($binding !== null) {
-                return $this->runNativeTableReport($native, $binding, $spec, $fields, $timezone);
+                return $this->runNativeTableReport($native, $binding, $spec, $fields, $timezone, $scope, $userId);
             }
         }
 
@@ -563,12 +563,12 @@ class ReportService
      * @param list<array<string, mixed>> $fields
      * @return array<string, mixed>
      */
-    private function runNativeTableReport(NativeAppService $native, array $binding, array $spec, array $fields, string $timezone = 'UTC'): array
+    private function runNativeTableReport(NativeAppService $native, array $binding, array $spec, array $fields, string $timezone = 'UTC', string $scope = 'all', ?string $userId = null): array
     {
         $viz = in_array($spec['viz'] ?? null, self::VIZ, true) ? (string) $spec['viz'] : 'table';
         try {
-            return $native->withDatabase((string) $binding['appId'], function (PDO $db) use ($binding, $spec, $fields, $timezone, $viz): array {
-                $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=1500;');
+            return $native->withDatabase((string) $binding['appId'], function (PDO $db) use ($binding, $spec, $fields, $timezone, $viz, $scope, $userId): array {
+                $db->exec('PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA cell_size_check=ON; PRAGMA busy_timeout=1500;');
                 $table = (string) $binding['table'];
                 $quotedTable = '"' . str_replace('"', '""', $table) . '"';
                 $exists = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? AND name NOT LIKE 'sqlite_%' AND substr(name,1,1) != '_'");
@@ -577,11 +577,20 @@ class ReportService
                     return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];
                 }
                 $actualCols = [];
+                $submitterCol = null;
                 foreach ($db->query("PRAGMA table_info({$quotedTable})")->fetchAll(PDO::FETCH_ASSOC) as $c) {
                     $name = (string) ($c['name'] ?? '');
+                    if ($name === '_submitted_by_user_id' || $name === 'submitted_by_user_id') {
+                        $submitterCol ??= $name;
+                    }
                     if ($name !== '' && !NativeRecordStore::hidden($name) && !str_contains(strtoupper((string) ($c['type'] ?? '')), 'BLOB')) {
                         $actualCols[$name] = true;
                     }
+                }
+                // Enforce view_own_responses strictly on native-table reports: fail closed if the
+                // table lacks an authoritative submitter column or caller has no userId.
+                if ($scope === 'own' && ($submitterCol === null || $userId === null || $userId === '')) {
+                    return ['viz' => $viz, 'columns' => [], 'rows' => [], 'series' => [], 'value' => 0];
                 }
                 $baseFieldById = [];
                 foreach ($fields as $f) {
@@ -614,6 +623,10 @@ class ReportService
 
                 $params = [];
                 $where = ['1=1'];
+                if ($scope === 'own' && $submitterCol !== null && $userId !== null && $userId !== '') {
+                    $where[] = $quote($submitterCol) . ' = :own_uid';
+                    $params[':own_uid'] = $userId;
+                }
                 $pi = 0;
                 $filterConds = [];
                 foreach (array_slice((array) ($spec['filters'] ?? []), 0, self::MAX_FILTERS) as $flt) {

@@ -302,6 +302,28 @@ class ChatToolsService
                 'archive_refused'
             );
         }
+        // Prompt-injection defense for site chat: chat may create helpful automations, but must
+        // not arm connector/hardware commands or destructive native record deletes in flow graphs.
+        if ($name === 'create_flow' || $name === 'update_flow') {
+            if (self::flowSendsConnectorCommands($args)) {
+                throw new ChatToolDeniedException(
+                    'Automations that send connector commands are not created from chat — add connector nodes in the app\'s flow editor.',
+                    'connector_permission_refused'
+                );
+            }
+            $flowGraph = is_array($args['flowJson'] ?? null) ? $args['flowJson'] : [];
+            foreach ((is_array($flowGraph['nodes'] ?? null) ? $flowGraph['nodes'] : []) as $node) {
+                if (!is_array($node)) continue;
+                $nodeType = (string) ($node['type'] ?? '');
+                $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
+                if ($nodeType === 'native_record_action' && strtolower(trim((string) ($nodeData['operation'] ?? ''))) === 'delete') {
+                    throw new ChatToolDeniedException(
+                        'Automations that delete app records are not created from chat — configure delete nodes in the app\'s flow editor.',
+                        'delete_refused'
+                    );
+                }
+            }
+        }
         return $this->call($name, $args, $ctx);
     }
 
@@ -1060,6 +1082,7 @@ class ChatToolsService
                     }
                 }
                 $this->requireConnectorScopeIf($ctx, self::flowSendsConnectorCommands($input));
+                $this->assertFlowGraphPermitted($input, $appId, $ctx);
                 $data = $this->flows()->createFlow($appId, $userId, $input);
                 $ctx->audit('create_flow', ['appId' => $appId, 'flowId' => $data['id'] ?? null]);
                 break;
@@ -1079,6 +1102,7 @@ class ChatToolsService
                     $ctx,
                     self::flowSendsConnectorCommands($input) || ($stored !== null && self::flowSendsConnectorCommands($stored))
                 );
+                $this->assertFlowGraphPermitted($input, $appId, $ctx);
                 $data = $this->flows()->updateFlow($appId, (string) ($args['flowId'] ?? ''), $input);
                 if (!$data) {
                     throw new \Exception('Flow not found in this app');
@@ -1470,6 +1494,77 @@ class ChatToolsService
     {
         if ($sendsConnectorCommands) {
             $ctx->requireScope('connector:command');
+        }
+    }
+
+    /**
+     * Enforce MCP data scopes and app/creator confinement on every data-touching node in a flow
+     * graph so an app-scoped or write-only token cannot smuggle cross-app or out-of-scope access
+     * inside an automation definition.
+     */
+    private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx): void
+    {
+        $graph = is_array($flowInput['flowJson'] ?? null) ? $flowInput['flowJson'] : [];
+        $nodes = is_array($graph['nodes'] ?? null) ? $graph['nodes'] : [];
+        $confined = $ctx->scopedAppId !== null || $ctx->creatorMode;
+        $ownApp = null;
+        foreach ($nodes as $node) {
+            if (!is_array($node)) continue;
+            $type = (string) ($node['type'] ?? '');
+            $data = is_array($node['data'] ?? null) ? $node['data'] : [];
+            if (in_array($type, ['list_responses', 'get_response'], true)) {
+                $ctx->requireScope('responses:read');
+            } elseif (in_array($type, ['create_response', 'update_response', 'delete_response'], true)) {
+                $ctx->requireScope('responses:write');
+            } elseif ($type === 'native_record_action') {
+                $op = strtolower(trim((string) ($data['operation'] ?? 'list')));
+                if ($op === 'list' || $op === 'read') {
+                    $ctx->requireScope('responses:read');
+                } else {
+                    $ctx->requireScope('responses:write');
+                }
+            } elseif ($type === 'native_app_request') {
+                $method = strtoupper(trim((string) ($data['method'] ?? 'GET')));
+                if ($method === 'GET' || $method === 'HEAD') {
+                    $ctx->requireScope('responses:read');
+                } else {
+                    $ctx->requireScope('responses:write');
+                }
+            }
+
+            if (in_array($type, ['list_responses', 'get_response', 'create_response', 'update_response', 'delete_response'], true)) {
+                $targetFormId = is_string($data['formId'] ?? null) ? trim($data['formId']) : '';
+                if ($confined) {
+                    if ($targetFormId !== '' && str_contains($targetFormId, '{{')) {
+                        throw new ChatToolDeniedException('Scoped tokens cannot use dynamic template formId expressions inside flows.', 'form_scope');
+                    }
+                    if ($targetFormId !== '') {
+                        $this->assertFormInScope($ctx, $targetFormId);
+                    }
+                }
+            }
+
+            if (in_array($type, ['native_app_request', 'native_record_action'], true)) {
+                $rawTargetApp = is_string($data['appId'] ?? null) ? trim($data['appId']) : '';
+                if ($rawTargetApp !== '') {
+                    if (str_contains($rawTargetApp, '{{')) {
+                        throw new ChatToolDeniedException('Dynamic template appId expressions are not permitted inside app-level flows.', 'app_scope');
+                    }
+                    $ownApp ??= $this->appService->getApp($appId);
+                    $ownSlug = is_array($ownApp) ? (string) ($ownApp['slug'] ?? '') : '';
+                    $sameApp = $rawTargetApp === $appId || ($ownSlug !== '' && $rawTargetApp === $ownSlug);
+                    if (!$sameApp) {
+                        $targetApp = $this->appService->getApp($rawTargetApp) ?? $this->appService->getAppBySlug($rawTargetApp);
+                        $targetId = is_array($targetApp) ? (string) ($targetApp['id'] ?? '') : '';
+                        if ($confined || $targetId !== $appId) {
+                            $this->assertAppScope($ctx, $targetId !== '' ? $targetId : $rawTargetApp);
+                            if ($type === 'native_app_request' || ($type === 'native_record_action' && !in_array($targetId, $this->appService->sharedDatabaseGroupAppIds($appId), true))) {
+                                throw new ChatToolDeniedException('App-level flows may not target a different application.', 'app_scope');
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -31,7 +31,9 @@ Options -Indexes
   # goes through /api/ (the rewrites below end in api/public/index.php), so the path says it.
   # `setifempty` would say it too, but needs Apache 2.4.7, and is a 500 on every request before it.
   SetEnvIf Request_URI "^/api/" IS_API
+  SetEnvIfNoCase Request_URI "^/api/" IS_API
   SetEnvIf Request_URI "^/\.well-known/" IS_API
+  SetEnvIfNoCase Request_URI "^/(manifest\.json|robots\.txt|sitemap\.xml)$" IS_API
   Header always set X-Content-Type-Options "nosniff" env=!IS_API
   Header always set Referrer-Policy "strict-origin-when-cross-origin" env=!IS_API
   # geolocation/camera stay SELF-only: the form runtime has a Location (GPS)

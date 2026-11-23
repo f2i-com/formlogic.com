@@ -897,8 +897,11 @@ class McpOAuthService
      */
     public static function isCimdClientId(string $clientId): bool
     {
+        if (str_contains($clientId, '\\') || preg_match('/[\x00-\x1f\x7f]/', $clientId) === 1) {
+            return false;
+        }
         $p = parse_url($clientId);
-        if (!is_array($p) || empty($p['host']) || (($p['path'] ?? '') === '' || ($p['path'] ?? '') === '/')) {
+        if (!is_array($p) || empty($p['host']) || isset($p['user']) || isset($p['pass']) || (($p['path'] ?? '') === '' || ($p['path'] ?? '') === '/')) {
             return false;
         }
         $scheme = strtolower((string) ($p['scheme'] ?? ''));

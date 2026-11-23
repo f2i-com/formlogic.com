@@ -1226,6 +1226,66 @@ describe('postInput', () => {
     const chatRes = await chatPromise;
     expect(chatRes.ok).toBe(true);
   });
+
+  it('forwards maxTokens in the sealed request and surfaces in-stream delta errors instead of empty success', async () => {
+    const mock = mockTunnelBackend(DESKTOP, (ephPub) => [
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { error: { message: 'prompt exceeds context window', code: 'context_length_exceeded' } } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'done' })}\n\n`,
+    ]);
+
+    const res = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'oaiy-engine',
+      messages: [{ role: 'user', content: 'Edit the app' }],
+      maxTokens: 16384,
+    });
+
+    const captured = mock.capturedEnqueue();
+    const opened = openTunnelFrame(DESKTOP.sharedKeyFor(String(captured.ephPub)), decodeTunnelEnvelope(String(captured.envelope))!);
+    expect(JSON.parse(decoder.decode(opened!.plaintext)).maxTokens).toBe(16384);
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error.message).toContain('prompt exceeds context window');
+      expect(res.error.code).toBe('context_length_exceeded');
+    }
+  });
+
+  it('fails cleanly when finish_reason is length with empty content, and reconstructs tool_calls into text markup', async () => {
+    mockTunnelBackend(DESKTOP, (ephPub) => [
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { choices: [{ index: 0, delta: { content: '' }, finish_reason: 'length' }] } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'done' })}\n\n`,
+    ]);
+
+    const truncated = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'oaiy-engine',
+      messages: [{ role: 'user', content: 'Edit the app' }],
+    });
+    expect(truncated.ok).toBe(false);
+    if (!truncated.ok) {
+      expect(truncated.error.message).toMatch(/output limit/i);
+    }
+
+    DESKTOP.reset();
+    mockTunnelBackend(DESKTOP, (ephPub) => [
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { name: 'edit_file', arguments: '{"path":"ui/main.ui"' } }] } }] } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: ',"old_string":"a","new_string":"b"}' } }] }, finish_reason: 'tool_calls' }] } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'done' })}\n\n`,
+    ]);
+
+    const recovered = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'oaiy-engine',
+      messages: [{ role: 'user', content: 'Edit the app' }],
+    });
+    expect(recovered.ok).toBe(true);
+    if (recovered.ok) {
+      expect(recovered.data.finalText).toContain('<tool_call name="edit_file">');
+      expect(recovered.data.finalText).toContain('"path":"ui/main.ui"');
+      expect(recovered.data.finalText).toContain('</tool_call>');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

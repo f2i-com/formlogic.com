@@ -20,6 +20,7 @@
 // simulator injects envelopes locally through the SAME validate+dedupe pipeline
 // (emitLocalDesktopEvent), so demos/tests work with no Desktop at all.
 import { logger } from '../../lib/logger';
+import { api } from '../../lib/api';
 import { getDesktopBaseUrl, type DesktopEventEnvelope } from './desktopTypes';
 import { getDesktopToken, isDesktopPaired, subscribeDesktopPaired } from './desktopPairing';
 import { getDesktopInfo, subscribeDesktopStatus } from './desktopDetection';
@@ -171,7 +172,10 @@ function disconnect(): void {
 function connectIfReady(): void {
   if (listeners.size === 0) return;
   const token = getDesktopToken();
-  if (!getDesktopInfo().available || !token) return; // detection subscription retries us on change
+  if (!getDesktopInfo().available || !token || api.isDemoMode()) {
+    disconnect();
+    return; // detection subscription retries us on change
+  }
   if (abortController && connectedToken === token) return; // already connected with this token
 
   disconnect();

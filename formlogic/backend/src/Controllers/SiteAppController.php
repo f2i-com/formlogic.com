@@ -106,7 +106,7 @@ final class SiteAppController
     {
         $app = $this->apps->getAppBySlug((string) ($args['slug'] ?? ''));
         $key = $app ? $this->native->siteKey((string) $app['id']) : null;
-        if (!$app || $key === null) return $this->refuse($response, 404, 'This app has no site to show.');
+        if (!$app || $key === null || ($app['status'] ?? '') === 'archived') return $this->refuse($response, 404, 'This app has no site to show.');
         $ticket = (string) ($args['ticket'] ?? '');
         // The ticket first, and by its signature alone: anyone can ask this address anything, and
         // what follows reads the app's files. One answer for every ticket that does not admit

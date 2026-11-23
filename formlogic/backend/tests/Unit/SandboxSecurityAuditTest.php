@@ -5,11 +5,18 @@ declare(strict_types=1);
 namespace FormLogic\Tests\Unit;
 
 use FormLogic\Controllers\ExternalAppApiController;
+use FormLogic\Middleware\ApiKeyMiddleware;
 use FormLogic\Middleware\SecurityHeadersMiddleware;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AppService;
+use FormLogic\Services\FlowService;
+use FormLogic\Services\McpOAuthService;
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\NativeAppUploadsService;
+use FormLogic\Services\NativeRecordEventRouter;
+use FormLogic\Services\NativeRecordStore;
 use FormLogic\Services\SoftnSeoService;
+use FormLogic\Services\WebhookService;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -161,5 +168,125 @@ class SandboxSecurityAuditTest extends TestCase
             'settings' => ['softnApp' => true, 'softnSeo' => ['allowIndexing' => true]],
         ]);
         $this->assertTrue($publicOk['indexable']);
+    }
+
+    public function testWebhookAndCimdRejectUserinfoBackslashAndControlChars(): void
+    {
+        foreach ([
+            'https://user:pass@example.com/hook',
+            'https://example.com\\@127.0.0.1/hook',
+            "https://example.com/hook\r\nX-Inject: 1",
+        ] as $badUrl) {
+            $threw = false;
+            try {
+                WebhookService::validateWebhookUrl($badUrl);
+            } catch (\InvalidArgumentException) {
+                $threw = true;
+            }
+            $this->assertTrue($threw, "WebhookService must reject {$badUrl}");
+            $this->assertFalse(McpOAuthService::isCimdClientId($badUrl), "CIMD must reject {$badUrl}");
+        }
+    }
+
+    public function testNativeRecordStoreDisablesTrustedSchemaOnOpen(): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'fl_sec_sqlite_');
+        $this->assertIsString($tmp);
+        try {
+            $store = NativeRecordStore::open($tmp, null, true);
+            $ref = new \ReflectionProperty(NativeRecordStore::class, 'db');
+            $ref->setAccessible(true);
+            /** @var \PDO $pdo */
+            $pdo = $ref->getValue($store);
+            $this->assertSame(0, (int) $pdo->query('PRAGMA trusted_schema')->fetchColumn());
+            $store->close();
+        } finally {
+            @unlink($tmp);
+        }
+    }
+
+    public function testNativeRecordEventRouterRefusesCrossAppBackendTriggers(): void
+    {
+        $flows = $this->createMock(FlowService::class);
+        // Even if the owner owns flow 'other-flow' in app-B, app-A must NEVER trigger it.
+        $flows->method('getOwnedFlow')->willReturn([
+            'id' => 'flow-b-1',
+            'appId' => 'app-b',
+            'ownerUserId' => 'user-1',
+            'enabled' => true,
+            'executionLocation' => 'cloud',
+        ]);
+        $flows->method('findEnabledFlowBySlug')->willReturn(null);
+        $flows->expects($this->never())->method('enqueueRun');
+
+        $router = new NativeRecordEventRouter($flows);
+        $count = $router->triggerBackendFlows(
+            ['id' => 'app-a', 'ownerId' => 'user-1'],
+            [
+                ['flow' => 'flow-b-1', 'inputs' => []],
+                ['flow' => 'secret-slug', 'appId' => 'app-b', 'inputs' => []],
+            ]
+        );
+        $this->assertSame(0, $count);
+    }
+
+    public function testApiKeyMiddlewareAnchorsFormScopeAndBlocksDemoWrites(): void
+    {
+        $keySvc = $this->createMock(ApiKeyService::class);
+        $keySvc->method('validateKey')->willReturnCallback(static function (string $key): ?array {
+            if ($key === 'flk_' . str_repeat('a', 40)) {
+                return [
+                    'id' => 'k1',
+                    'userId' => 'u1',
+                    'name' => 'Scoped',
+                    'keyPrefix' => 'flk_aaaaaaaa',
+                    'scopes' => ['forms:read'],
+                    'formIds' => ['00000000-0000-0000-0000-000000000001'],
+                    'aiOnly' => false,
+                    'isDemo' => false,
+                ];
+            }
+            return [
+                'id' => 'k2',
+                'userId' => 'demo-user',
+                'name' => 'DemoKey',
+                'keyPrefix' => 'flk_bbbbbbbb',
+                'scopes' => ['forms:write'],
+                'formIds' => null,
+                'aiOnly' => false,
+                'isDemo' => true,
+            ];
+        });
+
+        $mw = new ApiKeyMiddleware($keySvc);
+        $pass = new class implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return (new ResponseFactory())->createResponse(200);
+            }
+        };
+
+        // Unanchored substring `/api/v1/forms` inside another path must be rejected (403).
+        $badPathReq = (new ServerRequestFactory())
+            ->createServerRequest('GET', 'https://app.example/api/v1/apps/x/routes/api/v1/forms/1')
+            ->withHeader('Authorization', 'Bearer flk_' . str_repeat('a', 40));
+        $this->assertSame(403, $mw->process($badPathReq, $pass)->getStatusCode());
+
+        // Anchored `/api/v1/forms/...` is allowed for the form-scoped key.
+        $goodPathReq = (new ServerRequestFactory())
+            ->createServerRequest('GET', 'https://app.example/api/v1/forms/00000000-0000-0000-0000-000000000001')
+            ->withHeader('Authorization', 'Bearer flk_' . str_repeat('a', 40));
+        $this->assertSame(200, $mw->process($goodPathReq, $pass)->getStatusCode());
+
+        // Demo account API key must be blocked on POST/PUT/DELETE (403), allowed on GET (200).
+        $demoPost = (new ServerRequestFactory())
+            ->createServerRequest('POST', 'https://app.example/api/v1/forms')
+            ->withHeader('Authorization', 'Bearer flk_' . str_repeat('b', 40));
+        $this->assertSame(403, $mw->process($demoPost, $pass)->getStatusCode());
+
+        $demoGet = (new ServerRequestFactory())
+            ->createServerRequest('GET', 'https://app.example/api/v1/forms')
+            ->withHeader('Authorization', 'Bearer flk_' . str_repeat('b', 40));
+        $this->assertSame(200, $mw->process($demoGet, $pass)->getStatusCode());
     }
 }

@@ -28,11 +28,17 @@ describe('isPublicFormNavigation', () => {
 describe('the service worker configuration', () => {
   const config = readFileSync(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
 
-  it('keeps /form/* out of the navigation fallback', () => {
-    const allowlist = /navigateFallbackAllowlist: \[\/(.+)\/\]/.exec(config)?.[1] ?? '';
-    const matches = new RegExp(allowlist);
+  it('keeps /form/* and non-SPA static/API routes out of the navigation fallback', () => {
+    const match = /navigateFallbackAllowlist: \[\/(.+)\/([a-z]*)\]/.exec(config);
+    expect(match).not.toBeNull();
+    const matches = new RegExp(match![1], match![2]);
     expect(matches.test('/forms')).toBe(true);
     expect(matches.test('/form/f1')).toBe(false);
+    expect(matches.test('/API/v1/forms')).toBe(false);
+    expect(matches.test('/.well-known/oauth-authorization-server')).toBe(false);
+    expect(matches.test('/manifest.json')).toBe(false);
+    expect(matches.test('/robots.txt')).toBe(false);
+    expect(matches.test('/sitemap.xml')).toBe(false);
   });
 
   it('answers /form/* from the network, and from the precached shell offline', () => {

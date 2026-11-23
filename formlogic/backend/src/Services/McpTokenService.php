@@ -211,11 +211,25 @@ class McpTokenService
                 'blueprints' => array_values((array) ($decoded['blueprints'] ?? [])),
             ];
         }
+        $isDemo = false;
+        try {
+            $uStmt = $this->db()->prepare('SELECT email FROM users WHERE id = :id LIMIT 1');
+            $uStmt->execute(['id' => $row['user_id']]);
+            $email = $uStmt->fetchColumn();
+            $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+            if (is_string($email) && strtolower($email) === $demoEmail) {
+                $isDemo = true;
+                $scopes = array_values(array_intersect($scopes, ['apps:read', 'forms:read', 'responses:read']));
+            }
+        } catch (\Throwable) {
+            // Non-fatal in unit tests with partial SQLite/MySQL stubs.
+        }
         return [
             'id' => $row['id'],
             'userId' => $row['user_id'],
             'appId' => $row['app_id'],
             'scopes' => $scopes,
+            'isDemo' => $isDemo,
             'created' => $created,
             // OAuth-minted tokens carry the resource they were issued for (audience binding);
             // NULL for manual flm_ tokens.

@@ -527,26 +527,31 @@ class FormLogicRuntime
                 $method = 'GET';
             }
 
-            // A cross-host hop carries no author-supplied header. Authorization
-            // was already stripped; an `X-Api-Key`, a `Cookie`, or a bespoke
-            // tenant header is just as much a credential, and the redirect target
-            // is chosen by the first server, not by the author.
-            if (strtolower($redirectHost) !== strtolower($host)) {
+            // A cross-origin hop (different host, scheme, or effective port) carries no
+            // author-supplied credentials or bespoke headers.
+            $origScheme = strtolower((string) ($parsedUrl['scheme'] ?? 'https'));
+            $redirectScheme = strtolower((string) ($redirectParsed['scheme'] ?? ''));
+            $origPort = isset($parsedUrl['port']) ? (int) $parsedUrl['port'] : ($origScheme === 'http' ? 80 : 443);
+            $redirectPort = isset($redirectParsed['port']) ? (int) $redirectParsed['port'] : ($redirectScheme === 'http' ? 80 : 443);
+            if (strtolower($redirectHost) !== strtolower($host) || $redirectScheme !== $origScheme || $redirectPort !== $origPort) {
                 $redirectOptions[CURLOPT_HTTPHEADER] = array_values(array_filter(
                     $redirectOptions[CURLOPT_HTTPHEADER],
                     static fn (string $h): bool => (bool) preg_match('/^(accept|content-type|user-agent):/i', $h)
                 ));
             }
 
-            // Follow the redirect with DNS pinning
+            // Follow the redirect with strict DNS pinning (fail closed if pinning fails).
+            if ($redirectCheck['resolvedIp'] !== null) {
+                $redirectPin = IpSafety::curlResolveEntry($redirectUrl, $redirectCheck['resolvedIp']);
+                if ($redirectPin === null) {
+                    return $this->httpErrorResponse('Redirect target could not be pinned to a public IP');
+                }
+                $redirectOptions[CURLOPT_RESOLVE] = [$redirectPin];
+            } else {
+                unset($redirectOptions[CURLOPT_RESOLVE]);
+            }
             $ch = curl_init();
             $redirectOptions[CURLOPT_URL] = $redirectUrl;
-            $redirectPin = $redirectCheck['resolvedIp'] !== null
-                ? IpSafety::curlResolveEntry($redirectUrl, $redirectCheck['resolvedIp'])
-                : null;
-            if ($redirectPin !== null) {
-                $redirectOptions[CURLOPT_RESOLVE] = [$redirectPin];
-            }
             // Enforce the remaining shared HTTP budget on each redirect hop too,
             // so a redirect chain can't extend total blocking time past the deadline.
             $remainingMs = (int) (($this->httpDeadline - microtime(true)) * 1000);
@@ -702,6 +707,10 @@ class FormLogicRuntime
                     }
                 }
             }
+        }
+
+        if ($resolvedIp === null) {
+            return ['isPrivate' => true, 'resolvedIp' => null];
         }
 
         return ['isPrivate' => false, 'resolvedIp' => $resolvedIp];

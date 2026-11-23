@@ -3686,7 +3686,7 @@ JS;
             if (!is_file($path)) throw new RuntimeException('This demo sandbox has no database yet', 409);
             self::assertOwnDatabase($path);
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-            $db->exec('PRAGMA busy_timeout=5000');
+            $db->exec('PRAGMA trusted_schema=OFF; PRAGMA cell_size_check=ON; PRAGMA busy_timeout=5000');
             try { return $use($db); } finally { $db = null; }
         }
         [$root, $lock] = $this->openShared($dbAppId, null, false);
@@ -3696,7 +3696,7 @@ JS;
             if (!is_file($path)) throw new RuntimeException('This app has no database yet', 409);
             self::assertOwnDatabase($path);
             $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-            $db->exec('PRAGMA busy_timeout=5000');
+            $db->exec('PRAGMA trusted_schema=OFF; PRAGMA cell_size_check=ON; PRAGMA busy_timeout=5000');
             try { return $use($db); } finally { $db = null; }
         } finally { flock($lock, LOCK_UN); fclose($lock); }
     }

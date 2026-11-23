@@ -102,4 +102,13 @@ describe('buildDefaultExecutorDeps — same node evaluator wiring as the workspa
     await deps.evaluateExpression('result = 2', {}, 2000, 'python');
     expect(calculateValueForFlow).toHaveBeenLastCalledWith('result = 2', {}, 2000, 'python');
   });
+
+  it('does NOT expose owner cross-app internal flow bridges in app-runtime browser deps', () => {
+    const appDeps = buildDefaultExecutorDeps();
+    expect(appDeps.nativeAppRequest).toBeUndefined();
+    expect(appDeps.nativeRecordAction).toBeUndefined();
+    const wsDeps = buildWorkspaceExecutorDeps();
+    expect(typeof wsDeps.nativeAppRequest).toBe('function');
+    expect(typeof wsDeps.nativeRecordAction).toBe('function');
+  });
 });

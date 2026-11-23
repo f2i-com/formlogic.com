@@ -519,24 +519,41 @@ class ExternalAppApiController
             }
         }
 
-        if ($path === '' || !str_starts_with($path, '/') || strlen($path) > 2048 || str_contains($path, '..') || preg_match('/[\x00-\x1f\x7f]/', $path) === 1) {
+        // Strict path canonicalization & traversal rejection BEFORE blocked/allowed prefix matching
+        // (closes double-slash, dot-segment, percent-encoded dot/slash, backslash, and case bypasses).
+        $decodedPath = rawurldecode($path);
+        if (
+            $path === ''
+            || !str_starts_with($path, '/')
+            || strlen($path) > 2048
+            || str_contains($path, '\\')
+            || str_contains($decodedPath, '\\')
+            || str_contains($path, '//')
+            || str_contains($decodedPath, '//')
+            || preg_match('/%(?:2e|2f|5c|00|25)/i', $path) === 1
+            || preg_match('#(?:^|/)\.\.?(?:/|$)#', $path) === 1
+            || preg_match('#(?:^|/)\.\.?(?:/|$)#', $decodedPath) === 1
+            || preg_match('/[\x00-\x1f\x7f]/', $path) === 1
+            || preg_match('/[\x00-\x1f\x7f]/', $decodedPath) === 1
+        ) {
             return $decorate($this->jsonError($response, 'Provide a valid backend path starting with "/".', 400));
         }
-        if (str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) {
+        $lowerPath = strtolower($path);
+        if (str_starts_with($lowerPath, PluginService::SITE_ROUTE_PREFIX)) {
             return $decorate($this->jsonError($response, 'Not found', 404));
         }
 
-        // 3. Enforce per-app blocked & allowed path prefixes.
+        // 3. Enforce per-app blocked & allowed path prefixes (case-insensitive on canonical path).
         if ($isExternal) {
             foreach ($policy['blockedPaths'] as $blockedPrefix) {
-                if (self::pathMatchesPrefix($path, $blockedPrefix)) {
+                if (self::pathMatchesPrefix($lowerPath, strtolower($blockedPrefix))) {
                     return $decorate($this->jsonError($response, 'This route is blocked by the app’s external API rules.', 403, 'route_blocked'));
                 }
             }
             if ($policy['allowedPaths'] !== []) {
                 $matched = false;
                 foreach ($policy['allowedPaths'] as $allowedPrefix) {
-                    if (self::pathMatchesPrefix($path, $allowedPrefix)) {
+                    if (self::pathMatchesPrefix($lowerPath, strtolower($allowedPrefix))) {
                         $matched = true;
                         break;
                     }
@@ -572,12 +589,29 @@ class ExternalAppApiController
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($userId)) {
             return $decorate($this->jsonError($response, 'Cloud access has expired. Read requests remain available.', 402), $rateRemaining);
         }
+        $blockedForwardHeaders = [
+            'host' => true, 'origin' => true, 'referer' => true, 'forwarded' => true,
+            'x-real-ip' => true, 'x-original-url' => true, 'x-rewrite-url' => true,
+            'x-http-method-override' => true, 'x-method-override' => true,
+            'x-formlogic' => true,
+        ];
         $headers = [];
         foreach ($headersIn as $k => $v) {
             if (!is_string($k) || !is_scalar($v)) continue;
             $lk = strtolower(trim($k));
-            if ($lk === '' || strlen($lk) > 128 || str_starts_with($lk, 'x-formlogic-')) continue;
-            $headers[$lk] = substr((string) $v, 0, 8192);
+            if (
+                $lk === ''
+                || strlen($lk) > 128
+                || !preg_match('/^[a-z0-9-]+$/', $lk)
+                || isset($blockedForwardHeaders[$lk])
+                || str_starts_with($lk, 'x-formlogic-')
+                || str_starts_with($lk, 'x-forwarded-')
+                || str_starts_with($lk, 'proxy-')
+            ) {
+                continue;
+            }
+            $val = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
+            $headers[$lk] = substr($val, 0, 8192);
             if (count($headers) >= 64) break;
         }
         $identity = $via === 'public_api'
@@ -643,12 +677,6 @@ class ExternalAppApiController
                 $rawText = is_string($rawText) ? $rawText : '';
                 $decoded = json_decode($rawText, true);
                 $isJson = json_last_error() === JSON_ERROR_NONE && is_array($decoded);
-                if ($isJson) {
-                    $extractedBody = NativeRecordEventRouter::extractBodyTriggers($decoded);
-                    $decoded = $extractedBody['body'];
-                    $triggers = array_merge($triggers, $extractedBody['triggers']);
-                    $rawText = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-                }
                 try { $this->native->dispatchRecordEvents($appId, $this->records->for($appId)); } catch (\Throwable) {}
                 if ($triggers !== []) {
                     try { $this->records->triggerBackendFlows($app, $triggers); } catch (\Throwable) {}

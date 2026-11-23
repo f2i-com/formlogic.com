@@ -66,10 +66,15 @@ class ApiKeyMiddleware implements MiddlewareInterface
             }
         }
 
+        // Shared demo account stays strictly read-only even via previously-issued API keys.
+        if (!empty($keyData['isDemo']) && !in_array(strtoupper($request->getMethod()), ['GET', 'HEAD', 'OPTIONS'], true)) {
+            return $this->errorResponse(403, 'This is a shared live demo — write operations are disabled.');
+        }
+
         // A key confined to some forms reaches those forms. Only the form routes can hold it
         // to that (ExternalApiController); every other route under a key acts on the whole
         // account, whose flow runs, for one, hold other forms' answers.
-        if ($keyData['formIds'] !== null && !preg_match('#/api/v1/forms(/|$)#', $request->getUri()->getPath())) {
+        if ($keyData['formIds'] !== null && !preg_match('#^/api/v1/forms(/|$)#', $request->getUri()->getPath())) {
             return $this->errorResponse(403, 'This API key is limited to specific forms.');
         }
 

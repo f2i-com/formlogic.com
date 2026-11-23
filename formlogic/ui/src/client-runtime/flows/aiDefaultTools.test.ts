@@ -169,13 +169,67 @@ describe('resolveDefaultLlmTools — Site AI', () => {
 });
 
 describe('resolveDefaultLlmTools — Desktop', () => {
-  it('answers tools-unsupported: the tunnel carries messages, not a caller\'s tools', async () => {
+  it('answers tools-unsupported for anthropic or when local OAIY is unavailable', async () => {
     const siteChatTools = vi.fn();
-    const result = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
+    const oaiyChat = vi.fn();
+    const anthropicRes = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
       fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'anthropic' }) }),
       siteChatTools,
+      oaiyAvailable: () => true,
+      oaiyChat,
     });
     expect(siteChatTools).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+    expect(oaiyChat).not.toHaveBeenCalled();
+    expect(anthropicRes).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+
+    const offlineRes = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
+      fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' }) }),
+      siteChatTools,
+      oaiyAvailable: () => false,
+      oaiyChat,
+    });
+    expect(oaiyChat).not.toHaveBeenCalled();
+    expect(offlineRes).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+  });
+
+  it('uses local paired OAIY gateway natively for OpenAI-dialect providers and oaiy-engine', async () => {
+    const oaiyChat = vi.fn(async () => ({ ok: true as const, data: COMPLETION as Record<string, unknown> }));
+    const res = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS, maxOutputTokens: 16384 }, {
+      fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'provider:oaiy-engine', desktopModel: 'ignored-for-engine' }) }),
+      oaiyAvailable: () => true,
+      oaiyChat,
+    });
+    expect(oaiyChat).toHaveBeenCalledTimes(1);
+    const [pid, body] = oaiyChat.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(pid).toBe('oaiy-engine');
+    expect(body).not.toHaveProperty('model');
+    expect(body.max_tokens).toBe(16384);
+    expect(body.stream).toBe(false);
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        source: 'desktop',
+        text: '',
+        toolCalls: [{ id: 'call_2', name: 'read_file', arguments: { path: 'ui/app.ui' } }],
+        stopReason: 'tool_calls',
+        usage: { inputTokens: 310, outputTokens: 22 },
+      },
+    });
+  });
+
+  it('falls back cleanly to tools-unsupported when local OAIY transport or auth fails', async () => {
+    const oaiyChat = vi.fn(async () => ({
+      ok: false as const,
+      transportFailure: true,
+      error: { code: 'connector_unavailable' as const, message: 'OAIY Desktop did not respond.' },
+    }));
+    const res = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
+      fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'openai-codex-agent' }) }),
+      oaiyAvailable: () => true,
+      oaiyChat,
+    });
+    expect(oaiyChat).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
   });
 });

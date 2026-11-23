@@ -110,7 +110,7 @@ class NativeRecordEventRouter
     {
         $ownerId = (string) ($sourceApp['ownerId'] ?? '');
         $sourceAppId = (string) ($sourceApp['id'] ?? '');
-        if ($ownerId === '' || $triggers === [] || self::$cascadeDepth >= self::MAX_EVENT_FLOW_DEPTH) {
+        if ($ownerId === '' || $sourceAppId === '' || $triggers === [] || self::$cascadeDepth >= self::MAX_EVENT_FLOW_DEPTH) {
             return 0;
         }
         $triggered = 0;
@@ -119,12 +119,19 @@ class NativeRecordEventRouter
             foreach (array_slice($triggers, 0, self::MAX_BACKEND_FLOW_TRIGGERS) as $item) {
                 $ref = trim((string) ($item['flow'] ?? ''));
                 if ($ref === '') continue;
-                $targetAppId = is_string($item['appId'] ?? null) && $item['appId'] !== '' ? $item['appId'] : $sourceAppId;
-                // Resolve by ID first (owned by same user), then by (targetAppId, slug).
+                // Strictly confine backend-triggered flows to the originating app ($sourceAppId) so
+                // a compromised app or forged response header cannot trigger flows in another app.
+                $requestedAppId = is_string($item['appId'] ?? null) ? trim($item['appId']) : '';
+                if ($requestedAppId !== '' && $requestedAppId !== $sourceAppId) {
+                    continue;
+                }
                 $flow = $this->flows->getOwnedFlow($ownerId, $ref);
-                if ($flow === null && $targetAppId !== '') {
-                    $candidate = $this->flows->findEnabledFlowBySlug($targetAppId, $ref);
-                    if ($candidate !== null && ($candidate['ownerUserId'] ?? null) === $ownerId) {
+                if ($flow !== null && (string) ($flow['appId'] ?? '') !== $sourceAppId) {
+                    $flow = null;
+                }
+                if ($flow === null) {
+                    $candidate = $this->flows->findEnabledFlowBySlug($sourceAppId, $ref);
+                    if ($candidate !== null && ($candidate['ownerUserId'] ?? null) === $ownerId && (string) ($candidate['appId'] ?? '') === $sourceAppId) {
                         $flow = $candidate;
                     }
                 }

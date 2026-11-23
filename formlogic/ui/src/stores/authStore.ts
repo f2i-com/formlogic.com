@@ -466,9 +466,10 @@ async function clearUserSessionData(generation: number, memoryOnly: boolean, kee
   // switch is recorded with the account signed in at that moment.
   try {
     // Retain the existing conservative purge: these legacy Workbox entries have
-    // no owner stamp. Skipping it on a generation change would retain private bytes.
-    // Owner-scoping this separate queue is outside native snapshot isolation.
+    // no owner stamp. Purge both queues on session teardown so a queued submission
+    // cannot replay under a different account's cookies on a shared device.
     await purgeBackgroundSyncQueue('formSubmissionQueue');
+    await purgeBackgroundSyncQueue('publicFormSubmissionQueue');
   } catch {
     // IndexedDB unavailable, or no queue yet — nothing to purge
   }
@@ -476,7 +477,7 @@ async function clearUserSessionData(generation: number, memoryOnly: boolean, kee
   try {
     if (!memoryOnly && typeof caches !== 'undefined') {
       const keys = await caches.keys();
-      if (isSessionGenerationCurrent(generation)) await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
+      await Promise.all(keys.filter((k) => k.startsWith('app-')).map((k) => caches.delete(k)));
     }
   } catch {
     // Cache API may be unavailable; non-fatal.

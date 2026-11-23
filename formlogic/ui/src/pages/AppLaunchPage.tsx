@@ -200,7 +200,7 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
           {requireNative && (
             <p className="text-xs leading-relaxed text-gray-500 dark:text-slate-400">
               This app opens in the FormLogic app.{' '}
-              <a href={nativeInstallUrl} target="_blank" rel="noreferrer" className="font-medium underline hover:no-underline">
+              <a href={nativeInstallUrl} target="_blank" rel="noopener noreferrer" className="font-medium underline hover:no-underline">
                 Get the app
               </a>
             </p>
@@ -220,7 +220,7 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
                 <a
                   href={nativeInstallUrl}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   className="inline-flex h-10 flex-1 items-center justify-center rounded-lg px-4 text-sm font-semibold shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
                   style={{ background: accent, color: onAccent, ['--tw-ring-color' as string]: accent }}
                 >

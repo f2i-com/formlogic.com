@@ -40,8 +40,11 @@ class WebhookService
      */
     public static function validateWebhookUrl(string $url): string
     {
+        if (str_contains($url, '\\') || preg_match('/[\x00-\x1f\x7f]/', $url) === 1) {
+            throw new \InvalidArgumentException('Invalid webhook URL');
+        }
         $parsed = parse_url($url);
-        if (!$parsed || empty($parsed['scheme']) || empty($parsed['host'])) {
+        if (!$parsed || empty($parsed['scheme']) || empty($parsed['host']) || isset($parsed['user']) || isset($parsed['pass'])) {
             throw new \InvalidArgumentException('Invalid webhook URL');
         }
         if (!in_array(strtolower($parsed['scheme']), ['http', 'https'], true)) {

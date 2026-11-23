@@ -423,7 +423,7 @@ export function clearNativeMemberStorage(userId: string): Promise<boolean> {
         const routeKeysToRemove: string[] = [];
         for (let i = 0; i < window.sessionStorage.length; i++) {
           const k = window.sessionStorage.key(i);
-          if (k && k.startsWith('formlogic-site-route:')) {
+          if (k && (k.startsWith('formlogic-site-route:') || k.startsWith('formlogic-site-route-owner:'))) {
             routeKeysToRemove.push(k);
           }
         }

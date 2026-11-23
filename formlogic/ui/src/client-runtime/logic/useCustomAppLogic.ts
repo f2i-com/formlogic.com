@@ -54,12 +54,19 @@ function mergeBundles(
 ): CustomAppLogicBundle | null {
   const scripts = [...(app?.scripts ?? []), ...(form?.scripts ?? [])];
   if (scripts.length === 0) return null;
+  // Preserve strict-by-default unless BOTH bundles explicitly opt out (`strictPermissions === false`).
+  const strictPermissions =
+    app?.strictPermissions === true || form?.strictPermissions === true
+      ? true
+      : app?.strictPermissions === false && form?.strictPermissions === false
+        ? false
+        : app?.strictPermissions ?? form?.strictPermissions;
   return {
     version: 1,
     runtime: 'quickjs',
     scripts,
     permissions: [...(app?.permissions ?? []), ...(form?.permissions ?? [])],
-    strictPermissions: app?.strictPermissions || form?.strictPermissions,
+    strictPermissions,
   };
 }
 
@@ -157,13 +164,39 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
         return state.updateResponse(formId, responseId, { answers });
       },
       storageGet: (key) => {
-        try { const v = localStorage.getItem(logicStorageKey(key)); return v == null ? null : JSON.parse(v); } catch { return null; }
+        const fullKey = logicStorageKey(key);
+        if (!fullKey) return null;
+        try { const v = localStorage.getItem(fullKey); return v == null ? null : JSON.parse(v); } catch { return null; }
       },
       storageSet: (key, value) => {
-        try { localStorage.setItem(logicStorageKey(key), JSON.stringify(value)); } catch { /* ignore */ }
+        const fullKey = logicStorageKey(key);
+        if (!fullKey) return;
+        try {
+          const serialized = JSON.stringify(value);
+          if (typeof serialized !== 'string' || serialized.length > LOGIC_STORAGE_MAX_VALUE_BYTES) return;
+          const prefix = logicStoragePrefix();
+          if (!prefix) return;
+          let count = 0;
+          let totalBytes = serialized.length;
+          let exists = false;
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || !k.startsWith(prefix)) continue;
+            if (k === fullKey) {
+              exists = true;
+              continue;
+            }
+            count += 1;
+            totalBytes += (localStorage.getItem(k) ?? '').length;
+          }
+          if ((!exists && count >= LOGIC_STORAGE_MAX_KEYS) || totalBytes > LOGIC_STORAGE_MAX_TOTAL_BYTES) return;
+          localStorage.setItem(fullKey, serialized);
+        } catch { /* ignore */ }
       },
       storageRemove: (key) => {
-        try { localStorage.removeItem(logicStorageKey(key)); } catch { /* ignore */ }
+        const fullKey = logicStorageKey(key);
+        if (!fullKey) return;
+        try { localStorage.removeItem(fullKey); } catch { /* ignore */ }
       },
     };
   }, [applyValues]);
@@ -212,9 +245,20 @@ export function useCustomAppLogic({ formId, applyValues, formCustomLogic }: UseC
   };
 }
 
-function logicStorageKey(key: string): string {
-  const appId = useAppRuntimeStore.getState().config?.app.id ?? 'app';
-  return `formlogic-applogic-${appId}-${key}`;
+const LOGIC_STORAGE_MAX_KEYS = 64;
+const LOGIC_STORAGE_MAX_VALUE_BYTES = 8 * 1024;
+const LOGIC_STORAGE_MAX_TOTAL_BYTES = 64 * 1024;
+
+function logicStoragePrefix(): string | null {
+  const appId = useAppRuntimeStore.getState().config?.app.id;
+  if (typeof appId !== 'string' || appId.trim() === '') return null;
+  return `formlogic-applogic-${appId}-`;
+}
+
+function logicStorageKey(key: string): string | null {
+  const prefix = logicStoragePrefix();
+  if (!prefix || typeof key !== 'string' || key.length === 0 || key.length > 128) return null;
+  return `${prefix}${key}`;
 }
 
 /**
@@ -244,8 +288,8 @@ const LOGIC_STORAGE_SNAPSHOT_CAP = 200;
 function readLogicStorageSnapshot(): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   try {
-    const appId = useAppRuntimeStore.getState().config?.app.id ?? 'app';
-    const prefix = `formlogic-applogic-${appId}-`;
+    const prefix = logicStoragePrefix();
+    if (!prefix) return out;
     let taken = 0;
     for (let i = 0; i < localStorage.length && taken < LOGIC_STORAGE_SNAPSHOT_CAP; i++) {
       const full = localStorage.key(i);

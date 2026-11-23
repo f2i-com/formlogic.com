@@ -53,10 +53,11 @@ export async function listOaiySources(): Promise<DesktopAiSource[] | null> {
 export async function oaiyAiChat(
   providerId: string,
   body: Record<string, unknown>,
-  opts?: { signal?: AbortSignal },
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<DesktopClientResult<Record<string, unknown>>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : FETCH_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const onAbort = () => controller.abort();
   if (opts?.signal) {
     if (opts.signal.aborted) controller.abort();

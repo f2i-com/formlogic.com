@@ -1458,10 +1458,12 @@ class AppPublicController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Not found'], 404);
         }
 
-        // Same-origin base from the request scheme + the (verified) Host. Prefer the actual Host
-        // header for the authority so the origin matches the installing document exactly.
-        $authorityHost = $hostHeader !== '' ? $hostHeader : $resolveHost;
-        $base = $this->sameOriginBase($request, $authorityHost);
+        // Same-origin base from the request scheme + canonical verified custom domain (never an
+        // attacker-controlled Host header paired with `?host=`).
+        $canonicalDomain = is_string($resolved['domain'] ?? null) && $resolved['domain'] !== ''
+            ? $resolved['domain']
+            : ($hostHeader !== '' ? $hostHeader : $resolveHost);
+        $base = $this->sameOriginBase($request, $canonicalDomain);
         // The custom-domain PWA installs at the branded root ("/").
         $manifest = $this->buildPwaManifest($app, $base, '/', '/');
 

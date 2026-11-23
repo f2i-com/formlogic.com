@@ -46,18 +46,24 @@ declare global {
 
 const loadedScripts = new Map<string, Promise<BotComputerSdk>>();
 
-/** Only allow https:// or same-origin root-relative paths for custom script/WASM URLs. */
+/**
+ * Pin custom bot.computer script/WASM URLs to same-origin root-relative paths, the official
+ * `bot.computer` origin, or loopback during local development so a poisoned `localStorage` entry
+ * can never inject an arbitrary third-party script into the FormLogic origin.
+ */
 function resolveSafeAssetUrl(customUrl: string, fallbackUrl: string): string {
   const trimmed = customUrl.trim();
   if (!trimmed) return fallbackUrl;
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return trimmed;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.includes('\\')) return trimmed;
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol === 'https:') return parsed.href;
-    if (
-      parsed.protocol === 'http:' &&
-      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
-    ) {
+    const host = parsed.hostname.toLowerCase();
+    const isSameOrigin = typeof window !== 'undefined' && parsed.origin === window.location.origin;
+    const isOfficialBotHost = parsed.protocol === 'https:' && (host === 'bot.computer' || host.endsWith('.bot.computer'));
+    const isLoopback =
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      (host === 'localhost' || host === '127.0.0.1');
+    if (isSameOrigin || isOfficialBotHost || isLoopback) {
       return parsed.href;
     }
   } catch {

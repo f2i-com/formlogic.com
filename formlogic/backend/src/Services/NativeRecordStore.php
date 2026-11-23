@@ -25,6 +25,7 @@ final class NativeRecordStore
     public static function open(string $path, ?string $revisionKey = null, bool $readSnapshot = false, int $busyTimeout = 1500): self
     {
         $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+        $db->exec('PRAGMA trusted_schema=OFF; PRAGMA cell_size_check=ON;');
         if ($readSnapshot) {
             $db->exec('PRAGMA query_only=ON; PRAGMA busy_timeout=' . $busyTimeout);
             $db->beginTransaction();

@@ -875,15 +875,6 @@ class NativeAppController
                 $extractedHeaders = NativeRecordEventRouter::extractContainerTriggers($result['headers']);
                 $result['headers'] = $extractedHeaders['headers'];
                 $triggers = $extractedHeaders['triggers'];
-                $rawContainerText = base64_decode($result['bodyBase64'], true);
-                if (is_string($rawContainerText) && str_contains($rawContainerText, '__formlogicTriggerFlows')) {
-                    $decodedContainer = json_decode($rawContainerText, true);
-                    if (is_array($decodedContainer)) {
-                        $extractedBody = NativeRecordEventRouter::extractBodyTriggers($decodedContainer);
-                        $triggers = array_merge($triggers, $extractedBody['triggers']);
-                        $result['bodyBase64'] = base64_encode(json_encode($extractedBody['body'], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
-                    }
-                }
                 try {
                     $this->native->dispatchRecordEvents($app['id'], $this->records->for($app['id']));
                 } catch (\Throwable $error) {

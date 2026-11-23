@@ -42,6 +42,7 @@ async function render(html: string) {
 
 async function ask(frame: HTMLIFrameElement, action: string) {
   await act(async () => window.dispatchEvent(new MessageEvent('message', {
+    origin: 'null',
     source: frame.contentWindow,
     data: { __fl: true, action, id: 'subscribe', gen: 0, payload: { filter: { connectorId: 'aokie' } } },
   })));

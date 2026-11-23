@@ -308,12 +308,13 @@ class McpController
         }
 
         $protocolHeader = $this->negotiateProtocolVersion($request->getHeaderLine('MCP-Protocol-Version') ?: null);
+        $publicWriteCount = 0;
         if (array_is_list($body)) {
             if ($body === []) {
                 return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request: empty batch']], 400);
             }
-            if (count($body) > 20) {
-                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Batch too large (max 20 messages)']], 400);
+            if (count($body) > 5) {
+                return $this->rpc($response, ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Batch too large (max 5 messages on public endpoint)']], 400);
             }
             $out = [];
             foreach ($body as $msg) {
@@ -321,7 +322,7 @@ class McpController
                     $out[] = ['jsonrpc' => '2.0', 'id' => null, 'error' => ['code' => -32600, 'message' => 'Invalid Request']];
                     continue;
                 }
-                $r = $this->dispatchPublic($msg, $request, $boundFormId);
+                $r = $this->dispatchPublic($msg, $request, $boundFormId, $publicWriteCount);
                 if ($r !== null) {
                     $out[] = $r;
                 }
@@ -331,7 +332,7 @@ class McpController
                 : $this->rpc($response, $out)->withHeader('MCP-Protocol-Version', $protocolHeader);
         }
 
-        $result = $this->dispatchPublic($body, $request, $boundFormId);
+        $result = $this->dispatchPublic($body, $request, $boundFormId, $publicWriteCount);
         if ($result === null) {
             return $response->withStatus(202)->withHeader('MCP-Protocol-Version', $protocolHeader);
         }
@@ -365,7 +366,7 @@ class McpController
     }
 
     /** Handle one JSON-RPC message on the zero-account public MCP surface. */
-    private function dispatchPublic(array $message, Request $request, ?string $boundFormId): ?array
+    private function dispatchPublic(array $message, Request $request, ?string $boundFormId, int &$writeCount = 0): ?array
     {
         $hasId = array_key_exists('id', $message);
         $id = $hasId ? $message['id'] : null;
@@ -407,6 +408,29 @@ class McpController
             case 'tools/call':
                 $toolName = is_string($params['name'] ?? null) ? $params['name'] : '';
                 $toolArgs = is_array($params['arguments'] ?? null) ? $params['arguments'] : [];
+                if (in_array($toolName, ['submit_public_form', 'save_form_draft', 'start_mcp_login'], true)) {
+                    if ($writeCount >= 1) {
+                        return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32029, 'message' => 'At most one mutating tool call is allowed per public MCP request.']];
+                    }
+                    $writeCount++;
+                    if ($this->rateLimiter !== null) {
+                        $ipHash = hash('sha256', $this->ip($request));
+                        $limit = $toolName === 'save_form_draft' ? 20 : 10;
+                        if ($this->rateLimiter->hit("mcp_pub:{$toolName}:{$ipHash}", 60) > $limit) {
+                            return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32029, 'message' => 'Too many requests — please wait a minute before trying again.']];
+                        }
+                    }
+                    if ($toolName === 'submit_public_form' && $this->planService !== null && $this->planService->isEnforced()) {
+                        $targetFormId = $boundFormId ?? (is_string($toolArgs['formId'] ?? null) ? trim($toolArgs['formId']) : '');
+                        if ($targetFormId !== '') {
+                            $f = $this->formService->getForm($targetFormId);
+                            $ownerId = is_array($f) && is_string($f['userId'] ?? null) ? $f['userId'] : '';
+                            if ($ownerId !== '' && !$this->planService->isCloudActive($ownerId)) {
+                                return ['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => -32003, 'message' => 'This form is temporarily not accepting submissions.']];
+                            }
+                        }
+                    }
+                }
                 return $this->ok($id, $svc->callTool($toolName, $toolArgs, $request, $boundFormId, true));
             case 'resources/list':
                 return $this->ok($id, ['resources' => $svc->listResources($boundFormId)]);

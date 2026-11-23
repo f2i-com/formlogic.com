@@ -226,6 +226,9 @@ final class SoftnDirectoryService
         if (empty($app['settings']['softnApp'])) {
             throw new \InvalidArgumentException('Only a hosted web app can be published to an app directory.');
         }
+        if (!empty($app['settings']['sourceProtected'])) {
+            throw new \DomainException('This app\'s source is protected and cannot be packed or published to an app directory.');
+        }
         if ($targetSlug !== null) {
             $this->ownPublication($ownerId, $directory, $targetSlug);
         }

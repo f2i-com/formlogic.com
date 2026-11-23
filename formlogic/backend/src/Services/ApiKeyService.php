@@ -202,9 +202,10 @@ class ApiKeyService
         $pdo = $this->db->getConnection();
 
         $stmt = $pdo->prepare('
-            SELECT id, user_id, name, key_prefix, scopes, form_ids, expires_at, is_active, ai_only
-            FROM api_keys
-            WHERE key_hash = ?
+            SELECT k.id, k.user_id, k.name, k.key_prefix, k.scopes, k.form_ids, k.expires_at, k.is_active, k.ai_only, u.email AS user_email
+            FROM api_keys k
+            LEFT JOIN users u ON u.id = k.user_id
+            WHERE k.key_hash = ?
         ');
         $stmt->execute([$keyHash]);
         $row = $stmt->fetch(\PDO::FETCH_ASSOC);
@@ -222,6 +223,9 @@ class ApiKeyService
             return null;
         }
 
+        $demoEmail = strtolower((string) ($_ENV['DEMO_EMAIL'] ?? 'demo@formlogic.local'));
+        $isDemo = is_string($row['user_email'] ?? null) && strtolower($row['user_email']) === $demoEmail;
+
         return [
             'id' => $row['id'],
             'userId' => $row['user_id'],
@@ -231,6 +235,7 @@ class ApiKeyService
             'formIds' => $row['form_ids'] !== null ? (json_decode($row['form_ids'], true) ?: []) : null,
             // A key an "AI only" link was given (DesktopLinkCodeService): the AI lane and check-ins, nothing else.
             'aiOnly' => (bool) ($row['ai_only'] ?? false),
+            'isDemo' => $isDemo,
         ];
     }
 

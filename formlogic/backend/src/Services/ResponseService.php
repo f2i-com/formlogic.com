@@ -2028,7 +2028,10 @@ class ResponseService
                 $opts['search'] = $searchQuery;
             }
             $rows = $this->nativeTableBridge->listResponses($binding, $opts);
-            $total = $searchQuery !== '' ? count($rows) : $this->nativeTableBridge->countResponses($binding);
+            $submittedBy = is_string($opts['submittedByUserId'] ?? null) && $opts['submittedByUserId'] !== ''
+                ? $opts['submittedByUserId']
+                : null;
+            $total = $searchQuery !== '' ? count($rows) : $this->nativeTableBridge->countResponses($binding, $submittedBy);
             return ['responses' => $rows, 'total' => $total];
         }
 

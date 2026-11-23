@@ -158,6 +158,28 @@ class NativeTableFormBridge
     }
 
     /**
+     * Resolve an authoritative submitter user-ID column (`_submitted_by_user_id` or `submitted_by_user_id`)
+     * on the bound SQLite table, or null if the table has none.
+     */
+    private function resolveSubmitterColumn(array $binding): ?string
+    {
+        try {
+            $schemas = $this->native->tableSchemas($binding['appId']);
+            $tableSchema = $schemas[$binding['table']] ?? null;
+            if (!is_array($tableSchema)) return null;
+            foreach ((array) ($tableSchema['fields'] ?? []) as $f) {
+                $name = (string) ($f['name'] ?? '');
+                if ($name === '_submitted_by_user_id' || $name === 'submitted_by_user_id') {
+                    return $name;
+                }
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
      * List rows from the bound SQLite table in canonical FormLogic Response format.
      *
      * @param array<string, mixed> $binding
@@ -172,18 +194,31 @@ class NativeTableFormBridge
         if (isset($options['search']) && is_string($options['search']) && trim($options['search']) !== '') {
             $nativeOpts['q'] = trim($options['search']);
         }
+        $filters = [];
+        // Enforce view_own_responses scope strictly: fail closed if the bound SQLite table lacks
+        // an authoritative submitter column so other members' rows are never exposed.
+        $requiredSubmitter = is_string($options['submittedByUserId'] ?? null) && $options['submittedByUserId'] !== ''
+            ? $options['submittedByUserId']
+            : null;
+        $submitterCol = null;
+        if ($requiredSubmitter !== null) {
+            $submitterCol = $this->resolveSubmitterColumn($binding);
+            if ($submitterCol === null) {
+                return [];
+            }
+            $filters[] = ['column' => $submitterCol, 'op' => 'eq', 'value' => $requiredSubmitter];
+        }
         // Push down simple answersEq filters to NativeRecordStore filters.
         if (is_array($options['answersEq'] ?? null) && $options['answersEq'] !== []) {
-            $filters = [];
             foreach ($options['answersEq'] as $fieldId => $val) {
                 $col = $binding['columns'][$fieldId] ?? null;
                 if ($col !== null && is_scalar($val)) {
                     $filters[] = ['column' => $col, 'op' => 'eq', 'value' => (string) $val];
                 }
             }
-            if ($filters !== []) {
-                $nativeOpts['filter'] = $filters;
-            }
+        }
+        if ($filters !== []) {
+            $nativeOpts['filter'] = $filters;
         }
         try {
             $res = $this->native->records($binding['appId'], $binding['table'], $offset, null, $nativeOpts);
@@ -198,6 +233,9 @@ class NativeTableFormBridge
         $out = [];
         foreach ($rows as $idx => $row) {
             if (!is_array($row)) continue;
+            if ($requiredSubmitter !== null && $submitterCol !== null && (string) ($row[$submitterCol] ?? '') !== $requiredSubmitter) {
+                continue;
+            }
             $keyMap = is_array($keys[$idx] ?? null) ? $keys[$idx] : $this->extractKeyFromRow($row, $pkNames);
             $out[] = $this->formatRow($binding, $row, $keyMap, $pkNames, (string) ($idx + $offset + 1));
         }
@@ -236,6 +274,17 @@ class NativeTableFormBridge
             $fieldsByName[(string) $f['name']] = $f;
         }
         $values = $this->mapAnswersToColumns($binding, $answers, $fieldsByName, false);
+        // Record server-derived submitter identity when the table carries an authoritative owner column.
+        $submitterId = is_string($data['submittedByUserId'] ?? null) && $data['submittedByUserId'] !== ''
+            ? $data['submittedByUserId']
+            : null;
+        if ($submitterId !== null) {
+            foreach (['_submitted_by_user_id', 'submitted_by_user_id'] as $subCol) {
+                if (isset($fieldsByName[$subCol]) && empty($fieldsByName[$subCol]['readOnly'])) {
+                    $values[$subCol] = $submitterId;
+                }
+            }
+        }
         // If the table has a non-auto text primary key that wasn't provided, supply a UUID.
         $pkNames = $tableSchema['primaryKey'] !== [] ? $tableSchema['primaryKey'] : $binding['primaryKey'];
         if (count($pkNames) === 1) {
@@ -382,9 +431,26 @@ class NativeTableFormBridge
         return true;
     }
 
-    /** Count all rows in the bound SQLite table. */
-    public function countResponses(array $binding): int
+    /** Count all rows (or rows owned by $submittedByUserId) in the bound SQLite table. */
+    public function countResponses(array $binding, ?string $submittedByUserId = null): int
     {
+        if ($submittedByUserId !== null && $submittedByUserId !== '') {
+            $submitterCol = $this->resolveSubmitterColumn($binding);
+            if ($submitterCol === null) {
+                return 0;
+            }
+            try {
+                return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding, $submitterCol, $submittedByUserId): int {
+                    $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
+                    $qCol = '"' . str_replace('"', '""', $submitterCol) . '"';
+                    $stmt = $db->prepare("SELECT COUNT(*) FROM {$quoted} WHERE {$qCol} = ?");
+                    $stmt->execute([$submittedByUserId]);
+                    return (int) $stmt->fetchColumn();
+                });
+            } catch (\Throwable) {
+                return 0;
+            }
+        }
         try {
             return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
                 $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
@@ -536,6 +602,16 @@ class NativeTableFormBridge
             ? $row[$binding['statusColumn']]
             : 'submitted';
 
+        $metadata = [
+            'nativeTable' => $binding['table'],
+            'nativeAppId' => $binding['databaseAppId'],
+            'nativeKey' => $keyMap,
+        ];
+        $rowSubmitter = $row['_submitted_by_user_id'] ?? $row['submitted_by_user_id'] ?? null;
+        if (is_string($rowSubmitter) && $rowSubmitter !== '') {
+            $metadata['submittedByUserId'] = $rowSubmitter;
+        }
+
         return [
             'id' => $id,
             'formId' => $binding['formId'],
@@ -543,11 +619,7 @@ class NativeTableFormBridge
             'status' => $status,
             'submittedAt' => $createdAt,
             'updatedAt' => $updatedAt,
-            'metadata' => [
-                'nativeTable' => $binding['table'],
-                'nativeAppId' => $binding['databaseAppId'],
-                'nativeKey' => $keyMap,
-            ],
+            'metadata' => $metadata,
         ];
     }
 

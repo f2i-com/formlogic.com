@@ -441,16 +441,10 @@ export function buildDefaultExecutorDeps(): FlowExecutorDeps {
     invokeChildFlow: (req) => invokeChildFlowWith(appChildFlowBackend(), req),
     // service_action's §7.6 Desktop leg (machine-scoped — identical in both builders).
     invokeServiceAction: askingFirst((req: import('./nodes').ServiceActionInvokeRequest) => invokeDesktopServiceAction(req)),
-    nativeAppRequest: async (req) => {
-      const res = await api.runFlowNativeAppRequest(req);
-      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App request failed');
-      return { status: res.data.status, ok: res.data.ok, body: res.data.body };
-    },
-    nativeRecordAction: async (req) => {
-      const res = await api.runFlowNativeRecordAction(req);
-      if (res.error || !res.data) throw new Error(typeof res.error === 'string' ? res.error : 'App database action failed');
-      return res.data;
-    },
+    // NOTE: nativeAppRequest and nativeRecordAction (/api/flows/internal/*) are intentionally
+    // omitted from app-runtime browser deps so an app-level flow running in an owner's browser
+    // can never pivot into another application owned by the same account. Those cross-app
+    // owner operations run only in workspace-scoped flows (buildWorkspaceExecutorDeps).
     confirmLocalAccess: askingFirst(async () => undefined),
   };
 }

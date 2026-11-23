@@ -1153,6 +1153,7 @@ async function runHttpRequest(ctx: FlowNodeContext): Promise<unknown> {
       headers,
       body: resolvedBody !== undefined && method !== 'GET' && method !== 'HEAD' ? JSON.stringify(resolvedBody) : undefined,
       credentials: ownRuntime ? 'include' : 'omit',
+      redirect: ownRuntime ? 'error' : 'follow',
       signal: ctx.signal,
     });
   } catch (err) {
@@ -1264,7 +1265,7 @@ async function providerFetchJson(
   const doFetch = ctx.deps.fetchFn ?? fetch;
   let res: Response;
   try {
-    res = await doFetch(provider.url, { ...init, signal: ctx.signal });
+    res = await doFetch(provider.url, { ...init, credentials: 'omit', signal: ctx.signal });
   } catch (err) {
     throw new FlowExecError(
       'node_failed',
@@ -1929,6 +1930,9 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
       if (!rawAppId) {
         throw new FlowExecError('node_failed', `Node '${node.id}' requires an app to call`, node.id);
       }
+      if (scopeAppId && rawAppId !== scopeAppId) {
+        throw new FlowExecError('capability_denied', `Node '${node.id}' cannot call a different app from an app-scoped flow`, node.id);
+      }
       const rawPath = requireString(node, data, ['path']);
       const path = interpolateTemplate(rawPath, scopeToContext(ctx.scope)).trim();
       const method = typeof data.method === 'string' && data.method.trim() !== '' ? data.method.trim().toUpperCase() : 'GET';
@@ -1965,6 +1969,9 @@ export async function executeNode(ctx: FlowNodeContext): Promise<unknown> {
           : scopeAppId;
       if (!rawAppId) {
         throw new FlowExecError('node_failed', `Node '${node.id}' requires a target app`, node.id);
+      }
+      if (scopeAppId && rawAppId !== scopeAppId) {
+        throw new FlowExecError('capability_denied', `Node '${node.id}' cannot access a different app database from an app-scoped flow`, node.id);
       }
       const table = interpolateTemplate(requireString(node, data, ['table']), scopeToContext(ctx.scope)).trim();
       const opRaw = typeof data.operation === 'string' ? data.operation.trim().toLowerCase() : 'list';

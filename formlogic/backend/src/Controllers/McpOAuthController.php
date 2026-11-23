@@ -213,9 +213,7 @@ class McpOAuthController
         }
         $grantedScopes = $v['scopes'];
         // Demo account stays strictly read-only on OAuth approvals too (mirrors createToken()).
-        $authUser = $request->getAttribute('user');
-        $demoEmail = getenv('DEMO_USER_EMAIL') ?: 'demo@formlogic.app';
-        $isDemo = is_array($authUser) && strcasecmp((string) ($authUser['email'] ?? ''), $demoEmail) === 0;
+        $isDemo = $this->isDemoRequest($request);
         if ($isDemo) {
             if (
                 McpOAuthService::isDesktopClient($v['client']['clientId'])
@@ -517,9 +515,7 @@ class McpOAuthController
         $approvedScopes = is_array($p['scopes'] ?? null)
             ? array_values(array_filter($p['scopes'], 'is_string'))
             : null;
-        $user = $request->getAttribute('user');
-        $demoEmail = getenv('DEMO_USER_EMAIL') ?: 'demo@formlogic.app';
-        $isDemo = is_array($user) && strcasecmp((string) ($user['email'] ?? ''), $demoEmail) === 0;
+        $isDemo = $this->isDemoRequest($request);
 
         $res = $this->deviceAuth->decide($code, $userId, $approvedScopes, $isDemo ? null : $appId, $deny, $isDemo);
         if (!$res['ok']) {

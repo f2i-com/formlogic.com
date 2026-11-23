@@ -440,4 +440,64 @@ final class SiteDesktopAiLaneTest extends TestCase
         $this->expectExceptionMessage('Listings need the server\'s secret');
         (new SiteDesktopAi($this->relay, $this->settings))->listing($target, ['kind' => 'providers']);
     }
+
+    public function testChatForwardsMaxTokensAndSurfacesInStreamChunkErrors(): void
+    {
+        $seenTurn = null;
+        try {
+            $this->site(function (string $id, array $turn, string $pair) use (&$seenTurn): void {
+                $seenTurn = $turn;
+                $this->relay->answer($id, [
+                    'v' => 1,
+                    'kind' => 'delta',
+                    'delta' => ['error' => ['message' => 'context length exceeded', 'code' => 'context_length_exceeded']],
+                ], 0, $pair);
+                $this->relay->answer($id, ['v' => 1, 'kind' => 'final'], 1, $pair);
+                $this->relay->finish($id);
+            })->chat(self::SAY_HELLO, $this->member, null, null, 30, 16384);
+            $this->fail('in-stream error chunk must throw instead of returning empty content');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('context length exceeded', $e->getMessage());
+            $this->assertStringContainsString('context_length_exceeded', $e->getMessage());
+        }
+        $this->assertSame(16384, $seenTurn['maxTokens'] ?? null);
+    }
+
+    public function testChatFailsOnLengthCutoffWithEmptyContentAndReconstructsStreamedToolCalls(): void
+    {
+        try {
+            $this->site(function (string $id, array $turn, string $pair): void {
+                $this->relay->answer($id, [
+                    'v' => 1,
+                    'kind' => 'delta',
+                    'delta' => ['choices' => [['index' => 0, 'delta' => ['content' => ''], 'finish_reason' => 'length']]],
+                ], 0, $pair);
+                $this->relay->answer($id, ['v' => 1, 'kind' => 'final'], 1, $pair);
+                $this->relay->finish($id);
+            })->chat(self::SAY_HELLO, $this->member, null, null, 30);
+            $this->fail('length cutoff with empty content must fail');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('output token limit', $e->getMessage());
+        }
+
+        $this->relay = new InMemoryAiRelay();
+        $answer = $this->site(function (string $id, array $turn, string $pair): void {
+            $this->relay->answer($id, [
+                'v' => 1,
+                'kind' => 'delta',
+                'delta' => ['choices' => [['index' => 0, 'delta' => ['tool_calls' => [['index' => 0, 'function' => ['name' => 'edit_file', 'arguments' => '{"path":"ui/main.ui"']]]]]]],
+            ], 0, $pair);
+            $this->relay->answer($id, [
+                'v' => 1,
+                'kind' => 'delta',
+                'delta' => ['choices' => [['index' => 0, 'delta' => ['tool_calls' => [['index' => 0, 'function' => ['arguments' => ',"old_string":"a","new_string":"b"}']]]], 'finish_reason' => 'tool_calls']]],
+            ], 1, $pair);
+            $this->relay->answer($id, ['v' => 1, 'kind' => 'final'], 2, $pair);
+            $this->relay->finish($id);
+        })->chat(self::SAY_HELLO, $this->member, null, null, 30);
+
+        $this->assertStringContainsString('<tool_call name="edit_file">', $answer['content']);
+        $this->assertStringContainsString('"path":"ui/main.ui"', $answer['content']);
+        $this->assertStringContainsString('</tool_call>', $answer['content']);
+    }
 }

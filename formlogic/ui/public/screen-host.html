@@ -28,6 +28,9 @@
     <script>
       (function () {
         'use strict';
+        // Refuse to boot outside an opaque sandboxed origin: prevents same-origin execution
+        // if this document is ever opened directly or framed without `sandbox="allow-scripts"`.
+        if (window.origin !== 'null') return;
         var initialized = false;
         window.addEventListener('message', function (e) {
           var m = e.data;

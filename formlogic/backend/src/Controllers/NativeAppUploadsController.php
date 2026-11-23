@@ -357,6 +357,13 @@ final class NativeAppUploadsController
         if ($nativeAccess === 'members' && !$isMember) {
             return [null, $userId, false, false, $userLabel, 'Sign in with an active app membership to access this app\'s files.', 'members'];
         }
+        // Public ('application') apps do not deanonymize ambient signed-in FormLogic accounts
+        // (other than the app owner) when accessed by visitors.
+        if ($nativeAccess === 'application' && !$isOwner) {
+            $userId = null;
+            $isMember = false;
+            $userLabel = 'Visitor';
+        }
         return [$app, $userId, $isOwner, $isMember, $userLabel, null, $nativeAccess];
     }
 

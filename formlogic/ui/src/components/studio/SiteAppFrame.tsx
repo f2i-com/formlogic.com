@@ -455,7 +455,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
           const mimeType = typeof payload.mimeType === 'string' ? payload.mimeType.slice(0, 128) : undefined;
           const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
           uploadsInFlight++;
-          void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal).then((res) => {
+          void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, false, userId === null).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
@@ -474,7 +474,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
           }
           const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
           uploadOpsInFlight++;
-          void api.listAppRuntimeUploads(slug, folder, controller.signal).then((res) => {
+          void api.listAppRuntimeUploads(slug, folder, controller.signal, false, userId === null).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
@@ -494,7 +494,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
             return;
           }
           uploadOpsInFlight++;
-          void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal).then((res) => {
+          void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, false, userId === null).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {

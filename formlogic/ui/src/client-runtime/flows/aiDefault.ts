@@ -27,6 +27,8 @@ import {
   chatViaTunnel,
   type DesktopTunnelState,
 } from '../desktop/desktopTunnel';
+import { oaiyAiChat } from '../oaiy/oaiyAi';
+import { oaiyRouteAvailable } from '../oaiy/oaiyRuntime';
 import {
   extractByPath,
   renderRequestTemplate,
@@ -556,6 +558,7 @@ async function runCustomSource(
       method: 'POST',
       headers: provider.headers,
       body: JSON.stringify(requestBody),
+      credentials: 'omit',
       signal: opts.signal,
     });
   } catch (err) {
@@ -639,6 +642,7 @@ export async function resolveDefaultLlm(
         providerId,
         model,
         messages: opts.messages,
+        ...(opts.editor ? { maxTokens: 16_384 } : {}),
         signal: opts.signal,
         onDelta: opts.onDelta,
         onState: opts.onState,
@@ -682,6 +686,8 @@ export interface ResolveDefaultLlmToolsDeps {
   fetchPreferences?: PrefsFetcher;
   siteChatTools?: (request: EditorAiToolRequest, signal?: AbortSignal) => Promise<AiDefaultResult<EditorAiReply>>;
   resolveCustomProvider?: (providerId: string) => Promise<ResolvedAiProvider | null>;
+  oaiyAvailable?: () => boolean;
+  oaiyChat?: typeof oaiyAiChat;
   fetchFn?: typeof fetch;
 }
 
@@ -786,7 +792,7 @@ async function runCustomSourceTools(
   const doFetch = deps.fetchFn ?? fetch;
   let res: Response;
   try {
-    res = await doFetch(provider.url, { method: 'POST', headers: provider.headers, body: JSON.stringify(body), signal: opts.signal });
+    res = await doFetch(provider.url, { method: 'POST', headers: provider.headers, body: JSON.stringify(body), credentials: 'omit', signal: opts.signal });
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return failure({
@@ -860,8 +866,54 @@ export async function resolveDefaultLlmTools(
       if (!res.ok) return failure(res.error);
       return { ok: true, data: { source: 'site', ...res.data } };
     }
-    case 'desktop':
+    case 'desktop': {
+      // When OAIY Desktop is paired locally on this computer, its OpenAI-compatible
+      // provider gateway (/api/ai/providers/{id}/v1/chat/completions) carries caller tools
+      // natively for oaiy-engine, openai-codex-agent, and OpenAI-dialect providers — no
+      // text-protocol fallback or 256 KiB relay envelope ceiling. (OAIY's Anthropic gateway
+      // adapter drops `tools`, so keep Anthropic on the text protocol.)
+      const oaiyAvailable = deps.oaiyAvailable ?? oaiyRouteAvailable;
+      const providerId = prefs.desktopProviderId?.replace(/^provider:/, '').trim() ?? '';
+      if (oaiyAvailable() && providerId !== '' && providerId !== 'anthropic') {
+        const model = prefs.desktopModel?.trim() || undefined;
+        const doOaiyChat = deps.oaiyChat ?? oaiyAiChat;
+        const body: Record<string, unknown> = {
+          ...(model && providerId !== 'oaiy-engine' ? { model } : {}),
+          messages: toOpenAiChatMessages(opts.messages),
+          ...(opts.tools.length ? { tools: toOpenAiTools(opts.tools) } : {}),
+          ...(opts.maxOutputTokens !== undefined ? { max_tokens: opts.maxOutputTokens } : {}),
+          stream: false,
+        };
+        const res = await doOaiyChat(providerId, body, { signal: opts.signal, timeoutMs: 10 * 60_000 });
+        if (opts.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (res.ok) {
+          const rawErr = (res.data as { error?: unknown })?.error;
+          if (typeof rawErr === 'string' && rawErr.trim()) {
+            return failure({ code: 'request_failed', message: rawErr.trim() });
+          }
+          if (rawErr && typeof rawErr === 'object') {
+            const msg = typeof (rawErr as { message?: unknown }).message === 'string' ? (rawErr as { message: string }).message.trim() : '';
+            if (msg) return failure({ code: 'request_failed', message: msg });
+          }
+          const reply = fromOpenAiChatCompletion(res.data);
+          if (reply) {
+            return { ok: true, data: { source: 'desktop', ...reply } };
+          }
+          return failure({ code: 'request_failed', message: `OAIY provider '${providerId}' returned no message.` });
+        }
+        // Local OAIY unreachable, unauthenticated, or provider lives on a different linked desktop → fall back to tunnel text protocol.
+        if (
+          res.transportFailure ||
+          res.error.code === 'connector_unavailable' ||
+          res.error.code === 'auth_required' ||
+          /no provider|unknown provider/i.test(res.error.message)
+        ) {
+          return failure({ code: TOOLS_UNSUPPORTED, message: 'FormLogic Desktop answers in text; it does not take tools from the editor.' });
+        }
+        return failure({ code: res.error.code, message: explainDesktopAiError(res.error.message) });
+      }
       return failure({ code: TOOLS_UNSUPPORTED, message: 'FormLogic Desktop answers in text; it does not take tools from the editor.' });
+    }
     case 'custom':
       return runCustomSourceTools(prefs, opts, deps);
   }

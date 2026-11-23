@@ -66,12 +66,22 @@ describe.each(['app', 'form'] as const)('%s custom-screen document lifecycle', (
     expect(secondDocument).toContain(`var __flGen=${firstGeneration + 1};`);
 
     await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      origin: 'null',
       source: replacement.contentWindow,
       data: { __fl: true, action: 'context', id: 'previous-document', gen: firstGeneration },
     })));
     expect(replacementSent).toHaveBeenCalledWith({
       __flReply: true, id: 'previous-document', error: 'This screen was reloaded — request ignored.',
     }, '*');
+
+    // A non-opaque origin (e.g. if the frame escaped sandbox or navigated to a host origin) is ignored.
+    const callsBeforeForged = replacementSent.mock.calls.length;
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      origin: 'https://evil.example',
+      source: replacement.contentWindow,
+      data: { __fl: true, action: 'context', id: 'forged-origin', gen: firstGeneration + 1 },
+    })));
+    expect(replacementSent.mock.calls.length).toBe(callsBeforeForged);
   });
 
   it('keeps a pending API reply from reaching a replacement document', async () => {
@@ -79,6 +89,7 @@ describe.each(['app', 'form'] as const)('%s custom-screen document lifecycle', (
     h.getAppResponses.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const original = await render('<main>First document</main>');
     await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      origin: 'null',
       source: original.contentWindow,
       data: { __fl: true, action: 'records', id: 'pending', gen: 0, payload: { formId: 'notes' } },
     })));

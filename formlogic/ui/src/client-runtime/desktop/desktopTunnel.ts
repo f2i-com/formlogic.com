@@ -578,6 +578,8 @@ interface TunnelRunParams {
   model?: string;
   threadId: string;
   messages?: DesktopTunnelChatMessage[];
+  /** Output token cap for this turn (honoured by OAIY `answer_limit`). */
+  maxTokens?: number;
   /** Codex/ChatGPT reasoning effort for this request (sealed; codex lane only). */
   reasoning?: string;
   /** Chat tool use (§5.1 sealed-body fields, Phase 6): per-user Auto/Confirm mode. */
@@ -601,6 +603,8 @@ interface TunnelRunParams {
 interface TunnelRunAccum {
   text: string;
   finalText?: string;
+  finishReason?: string | null;
+  toolCalls: Map<number, { name: string; args: string }>;
   threadId?: string;
   models: unknown[] | null;
   providers: unknown[] | null;
@@ -714,7 +718,7 @@ async function settleFromStatus(
 
 async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTunnelResult<TunnelRunOutcome>> {
   const { onState } = params;
-  const accum: TunnelRunAccum = { text: '', models: null, providers: null };
+  const accum: TunnelRunAccum = { text: '', toolCalls: new Map(), models: null, providers: null };
 
   const fail = (error: DesktopTunnelError, terminalState?: DesktopTunnelState): DesktopTunnelResult<TunnelRunOutcome> => {
     safeCall(() =>
@@ -745,6 +749,7 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
   };
   if (params.model) sealedBody.model = params.model;
   if (params.messages) sealedBody.messages = params.messages;
+  if (params.maxTokens) sealedBody.maxTokens = params.maxTokens;
   if (params.reasoning) sealedBody.reasoning = params.reasoning;
   // Chat tool use (§5.1/§5.4): the tool mode + per-turn grant ride INSIDE the sealed
   // body — the backend must never see the grant token in plaintext.
@@ -795,8 +800,24 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
     const terminal = await streamTunnelResponses(session, requestId, params, accum);
     switch (terminal.kind) {
       case 'done': {
+        let finalText = accum.finalText ?? accum.text;
+        // If a model behind OAIY emitted native tool_calls on a text-protocol tunnel (for
+        // example oaiy-engine's DSML parser or an OpenAI-compatible server parsing <tool_call>),
+        // reconstruct them as <tool_call> blocks instead of returning an empty reply.
+        if (finalText.trim() === '' && accum.toolCalls.size > 0) {
+          const calls = [...accum.toolCalls.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .filter(([, c]) => c.name.trim() !== '')
+            .map(([, c]) => `<tool_call name="${c.name.trim()}">\n${c.args.trim() || '{}'}\n</tool_call>`);
+          if (calls.length > 0) finalText = calls.join('\n\n');
+        }
+        if (finalText.trim() === '' && accum.finishReason === 'length') {
+          return fail({
+            code: 'upstream_error',
+            message: 'The AI reached its output limit before writing a reply. Try a smaller change or raise the model output limit in OAIY.',
+          });
+        }
         safeCall(() => onState({ state: 'done' }));
-        const finalText = accum.finalText ?? accum.text;
         return {
           ok: true,
           data: {
@@ -815,6 +836,53 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
     }
   } finally {
     activeSessions.delete(requestId);
+  }
+}
+
+/** Extract an in-stream upstream error from an OpenAI/OAIY chunk ({error:{code?,message}}). */
+function extractChunkError(value: unknown): { code: string; message: string } | null {
+  const rec = asRecord(value);
+  if (!rec || rec.error === undefined || rec.error === null) return null;
+  if (typeof rec.error === 'string' && rec.error.trim() !== '') {
+    return { code: 'upstream_error', message: rec.error.trim() };
+  }
+  const err = asRecord(rec.error);
+  if (!err) return null;
+  const message = firstString(err.message);
+  if (!message) return null;
+  const code = firstString(err.code, err.type) ?? 'upstream_error';
+  return { code, message };
+}
+
+/** Capture finish_reason and any tool_calls from an OpenAI-shaped chunk or completion. */
+function collectChunkMetadata(value: unknown, accum: TunnelRunAccum): void {
+  const completion = asRecord(value);
+  const choices = completion?.choices;
+  if (!Array.isArray(choices)) return;
+  for (const choice of choices) {
+    const c = asRecord(choice);
+    if (!c) continue;
+    if (typeof c.finish_reason === 'string' && c.finish_reason !== '') {
+      accum.finishReason = c.finish_reason;
+    }
+    const delta = asRecord(c.delta);
+    const message = asRecord(c.message);
+    const rawCalls = Array.isArray(delta?.tool_calls)
+      ? delta!.tool_calls
+      : Array.isArray(message?.tool_calls)
+        ? message!.tool_calls
+        : null;
+    if (!rawCalls) continue;
+    rawCalls.forEach((raw, pos) => {
+      const tc = asRecord(raw);
+      if (!tc) return;
+      const fn = asRecord(tc.function);
+      const idx = typeof tc.index === 'number' && Number.isInteger(tc.index) && tc.index >= 0 ? tc.index : pos;
+      const entry = accum.toolCalls.get(idx) ?? { name: '', args: '' };
+      if (typeof fn?.name === 'string' && fn.name !== '') entry.name += fn.name;
+      if (typeof fn?.arguments === 'string') entry.args += fn.arguments;
+      accum.toolCalls.set(idx, entry);
+    });
   }
 }
 
@@ -985,6 +1053,11 @@ async function streamTunnelResponses(
           const type = firstString(frame.type, frame.kind);
           switch (type) {
             case 'delta': {
+              const chunkErr = extractChunkError(frame.delta);
+              if (chunkErr) {
+                return { kind: 'failed', code: chunkErr.code, message: chunkErr.message };
+              }
+              collectChunkMetadata(frame.delta, accum);
               const delta = extractDeltaText(frame);
               if (delta) {
                 accum.text += delta;
@@ -1009,6 +1082,11 @@ async function streamTunnelResponses(
               );
             case 'done':
             case 'final': {
+              const completionErr = extractChunkError(frame.completion);
+              if (completionErr) {
+                return { kind: 'failed', code: completionErr.code, message: completionErr.message };
+              }
+              collectChunkMetadata(frame.completion, accum);
               const finalText = firstString(frame.text) ?? extractCompletionText(frame.completion);
               if (finalText !== undefined) accum.finalText = finalText;
               const threadId = firstString(frame.threadId);
@@ -1138,6 +1216,8 @@ export interface ChatViaTunnelOptions {
   /** Caller-chosen thread id (a new one is minted when omitted). */
   threadId?: string;
   messages: DesktopTunnelChatMessage[];
+  /** Output token cap for this turn (honoured by OAIY `answer_limit`). */
+  maxTokens?: number;
   /** Codex/ChatGPT reasoning effort for this turn (codex lane only; sealed). */
   reasoning?: string;
   /**
@@ -1182,6 +1262,7 @@ export async function chatViaTunnel(opts: ChatViaTunnelOptions): Promise<Desktop
     model: opts.model,
     threadId,
     messages: opts.messages,
+    maxTokens: opts.maxTokens,
     reasoning: opts.reasoning,
     toolMode: opts.toolMode,
     toolGrant: opts.toolGrant,

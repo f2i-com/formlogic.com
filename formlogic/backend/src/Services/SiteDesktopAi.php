@@ -104,11 +104,13 @@ final class SiteDesktopAi
      * @param array<int, array<string, mixed>> $messages
      * @return array{content: string, usage: array{promptTokens: int, completionTokens: int, totalTokens: int}}
      */
-    public function chat(array $messages, ?string $requester, ?callable $onDelta, ?callable $onHeartbeat, int $timeoutSeconds): array
+    public function chat(array $messages, ?string $requester, ?callable $onDelta, ?callable $onHeartbeat, int $timeoutSeconds, ?int $maxTokens = null): array
     {
         $site = $this->active() ?? throw new \RuntimeException('This site\'s AI is not served from OAIY.');
         // A provider stored in OAIY is asked for the model chosen for it; OAIY's own engine uses its own.
-        $body = ['kind' => 'chat', 'messages' => array_values($messages)] + (($site['model'] ?? null) !== null ? ['model' => $site['model']] : []);
+        $body = ['kind' => 'chat', 'messages' => array_values($messages)]
+            + (($site['model'] ?? null) !== null ? ['model' => $site['model']] : [])
+            + ($maxTokens !== null && $maxTokens > 0 ? ['maxTokens' => $maxTokens] : []);
         [$id, $pair] = $this->send($site, $body, $requester);
         $this->guard($id, $site['ownerUserId']);
         try {
@@ -388,15 +390,29 @@ final class SiteDesktopAi
         $final = null;
         $error = null;
         $listed = [];
-        $this->readFrames($id, $owner, $pair, 0, -1, static function (array $frame) use (&$content, &$final, &$error, &$listed, $enough): bool {
+        $finishReason = null;
+        $toolCalls = [];
+        $this->readFrames($id, $owner, $pair, 0, -1, static function (array $frame) use (&$content, &$final, &$error, &$listed, &$finishReason, &$toolCalls, $enough): bool {
             $kind = $frame['kind'] ?? $frame['type'] ?? null;
             if ($kind === 'delta') {
+                $chunkErr = self::chunkError($frame['delta'] ?? null);
+                if ($chunkErr !== null) {
+                    $error = $chunkErr;
+                    return false;
+                }
+                self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls);
                 $content .= self::text($frame['delta'] ?? $frame['text'] ?? null);
             } elseif ($kind === 'models' || $kind === 'providers') {
                 if (is_array($frame[$kind] ?? null)) {
                     $listed[$kind] = $frame[$kind];
                 }
             } elseif ($kind === 'final' || $kind === 'done') {
+                $chunkErr = self::chunkError($frame['completion'] ?? null);
+                if ($chunkErr !== null) {
+                    $error = $chunkErr;
+                    return false;
+                }
+                self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls);
                 $final = $frame;
                 if ($content === '') {
                     $content = self::text($frame['completion'] ?? $frame['text'] ?? null);
@@ -406,6 +422,13 @@ final class SiteDesktopAi
             }
             return strlen($content) < $enough;
         }, $gapless);
+        if ($error === null && $content === '') {
+            if ($toolCalls !== []) {
+                $content = self::formatToolCallsAsMarkup($toolCalls);
+            } elseif ($finishReason === 'length') {
+                $error = 'The model reached its output token limit before producing a reply.';
+            }
+        }
         return [
             'status' => $progress['status'] ?? null, 'content' => $content, 'final' => $final, 'error' => $error,
             'listed' => $listed, 'taken' => $progress['taken'] ?? false, 'age' => $progress['age'] ?? 0,
@@ -505,6 +528,8 @@ final class SiteDesktopAi
         $listed = [];
         $final = null;
         $failure = null;
+        $finishReason = null;
+        $toolCalls = [];
         $since = 0;
         $last = -1;
         $deadline = microtime(true) + max(5, $timeoutSeconds);
@@ -513,9 +538,18 @@ final class SiteDesktopAi
         while (true) {
             // The status before the frames: a computer sends its frames before it completes a turn.
             $status = $this->relay->getStatus($id, $owner);
-            [$since, $last] = $this->readFrames($id, $owner, $pair, $since, $last, static function (array $frame) use (&$content, &$listed, &$final, &$failure, $onDelta): bool {
+            [$since, $last] = $this->readFrames($id, $owner, $pair, $since, $last, static function (array $frame) use (&$content, &$listed, &$final, &$failure, &$finishReason, &$toolCalls, $onDelta): bool {
                 $kind = $frame['kind'] ?? $frame['type'] ?? null;
                 if ($kind === 'delta') {
+                    // Upstream OpenAI-compatible streams (including OAIY's local engine) can report
+                    // mid-stream failures (e.g. context_length_exceeded) as `{"error":{...}}` inside
+                    // a 200 OK SSE chunk, which arrives here as a delta frame followed by done.
+                    $chunkErr = self::chunkError($frame['delta'] ?? null);
+                    if ($chunkErr !== null) {
+                        $failure = $chunkErr;
+                        return false;
+                    }
+                    self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls);
                     $text = self::text($frame['delta'] ?? $frame['text'] ?? null);
                     if ($text !== '') {
                         $content .= $text;
@@ -529,6 +563,12 @@ final class SiteDesktopAi
                         $listed[$kind] = $frame[$kind];
                     }
                 } elseif ($kind === 'final' || $kind === 'done') {
+                    $chunkErr = self::chunkError($frame['completion'] ?? null);
+                    if ($chunkErr !== null) {
+                        $failure = $chunkErr;
+                        return false;
+                    }
+                    self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls);
                     $final = $frame;
                     return false;
                 } elseif ($kind === 'error' || $kind === 'failed') {
@@ -544,9 +584,15 @@ final class SiteDesktopAi
                 // A final frame after a stream is empty; one without a stream holds the answer.
                 if ($content === '') {
                     $content = self::text($final['completion'] ?? $final['text'] ?? null);
+                    if ($content === '' && $toolCalls !== []) {
+                        $content = self::formatToolCallsAsMarkup($toolCalls);
+                    }
                     if ($content !== '' && $onDelta !== null) {
                         $onDelta($content);
                     }
+                }
+                if ($content === '' && $finishReason === 'length') {
+                    throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
                 }
                 return ['content' => $content, 'usage' => $usage, 'final' => $final + $listed];
             }
@@ -560,6 +606,15 @@ final class SiteDesktopAi
             }
             if ($status === 'done') {
                 // Done before every frame above was read: the answer is what came.
+                if ($content === '' && $toolCalls !== []) {
+                    $content = self::formatToolCallsAsMarkup($toolCalls);
+                    if ($content !== '' && $onDelta !== null) {
+                        $onDelta($content);
+                    }
+                }
+                if ($content === '' && $finishReason === 'length') {
+                    throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
+                }
                 return ['content' => $content, 'usage' => $usage, 'final' => $listed];
             }
             if (microtime(true) > $deadline) {
@@ -719,5 +774,109 @@ final class SiteDesktopAi
             $text .= is_string($piece) ? $piece : '';
         }
         return $text;
+    }
+
+    /** Error message inside an OpenAI chunk or completion (e.g. mid-stream SSE error), or null. */
+    private static function chunkError(mixed $value): ?string
+    {
+        if (!is_array($value) || !array_key_exists('error', $value)) {
+            return null;
+        }
+        $err = $value['error'];
+        if (is_string($err)) {
+            $msg = trim($err);
+            return $msg !== '' ? $msg : null;
+        }
+        if (is_array($err)) {
+            $msg = is_string($err['message'] ?? null) ? trim($err['message']) : '';
+            $code = is_string($err['code'] ?? null) ? trim($err['code']) : '';
+            if ($msg !== '' && $code !== '' && stripos($msg, $code) === false) {
+                return "{$msg} ({$code})";
+            }
+            if ($msg !== '') {
+                return $msg;
+            }
+            if ($code !== '') {
+                return $code;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Collect finish_reason and any OpenAI tool_calls from a chunk or completion so an empty
+     * `content` can either reconstruct text-protocol `<tool_call>` blocks or report a token-limit stop.
+     *
+     * @param array<int, array{name: string, args: string}> $toolCalls
+     */
+    private static function collectChunkMeta(mixed $value, ?string &$finishReason, array &$toolCalls): void
+    {
+        if (!is_array($value) || !is_array($value['choices'] ?? null)) {
+            return;
+        }
+        foreach ($value['choices'] as $choice) {
+            if (!is_array($choice)) {
+                continue;
+            }
+            if (is_string($choice['finish_reason'] ?? null) && $choice['finish_reason'] !== '') {
+                $finishReason = $choice['finish_reason'];
+            }
+            $deltaCalls = is_array($choice['delta']['tool_calls'] ?? null) ? $choice['delta']['tool_calls'] : null;
+            if ($deltaCalls !== null) {
+                foreach ($deltaCalls as $tc) {
+                    if (!is_array($tc)) {
+                        continue;
+                    }
+                    $idx = is_int($tc['index'] ?? null) ? $tc['index'] : count($toolCalls);
+                    $cur = $toolCalls[$idx] ?? ['name' => '', 'args' => ''];
+                    $fn = is_array($tc['function'] ?? null) ? $tc['function'] : [];
+                    if (is_string($fn['name'] ?? null) && $fn['name'] !== '') {
+                        $cur['name'] = $fn['name'];
+                    }
+                    if (is_string($fn['arguments'] ?? null)) {
+                        $cur['args'] .= $fn['arguments'];
+                    }
+                    $toolCalls[$idx] = $cur;
+                }
+            }
+            $msgCalls = is_array($choice['message']['tool_calls'] ?? null) ? $choice['message']['tool_calls'] : null;
+            if ($msgCalls !== null) {
+                foreach (array_values($msgCalls) as $idx => $tc) {
+                    if (!is_array($tc)) {
+                        continue;
+                    }
+                    $fn = is_array($tc['function'] ?? null) ? $tc['function'] : [];
+                    $name = is_string($fn['name'] ?? null) ? $fn['name'] : '';
+                    $args = is_string($fn['arguments'] ?? null) ? $fn['arguments'] : '{}';
+                    if ($name !== '') {
+                        $toolCalls[$idx] = ['name' => $name, 'args' => $args];
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Format OpenAI tool_calls as Studio text-protocol `<tool_call>` blocks when a model emits
+     * native tool_calls with empty text content over a text-only lane.
+     *
+     * @param array<int, array{name: string, args: string}> $toolCalls
+     */
+    private static function formatToolCallsAsMarkup(array $toolCalls): string
+    {
+        ksort($toolCalls);
+        $blocks = [];
+        foreach ($toolCalls as $tc) {
+            $name = trim($tc['name'] ?? '');
+            if ($name === '' || preg_match('/^[A-Za-z0-9_.-]+$/', $name) !== 1) {
+                continue;
+            }
+            $args = trim($tc['args'] ?? '');
+            if ($args === '') {
+                $args = '{}';
+            }
+            $blocks[] = "<tool_call name=\"{$name}\">\n{$args}\n</tool_call>";
+        }
+        return implode("\n\n", $blocks);
     }
 }

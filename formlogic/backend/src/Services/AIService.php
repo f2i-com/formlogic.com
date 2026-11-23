@@ -1084,12 +1084,15 @@ PROMPT;
     protected function chatCompletionsRequest(array $payload, bool $stream, ?callable $onDelta, ?callable $onHeartbeat): array
     {
         if (($desktop = $this->siteDesktop) !== null && $desktop->active() !== null) {
+            $rawMaxTokens = $payload['max_completion_tokens'] ?? $payload['max_tokens'] ?? null;
+            $maxTokens = is_int($rawMaxTokens) && $rawMaxTokens > 0 ? $rawMaxTokens : null;
             return $desktop->chat(
                 $payload['messages'],
                 $this->requester,
                 $stream ? $onDelta : null,
                 $onHeartbeat,
-                $this->requestTimeout ?? ($stream ? self::CHAT_STREAM_TIMEOUT : 120)
+                $this->requestTimeout ?? ($stream ? self::CHAT_STREAM_TIMEOUT : 120),
+                $maxTokens
             );
         }
         // Only send Authorization when a key is set — keyless local servers (LM Studio / Ollama)

@@ -80,8 +80,11 @@ function isLaunchConfig(data: unknown): data is LaunchConfig {
 
 const isWebAddress = (value: unknown): boolean => {
   if (value === null || value === undefined) return true;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.startsWith('//') || trimmed.includes('\\')) return false;
   try {
-    return typeof value === 'string' && /^https?:$/.test(new URL(value, 'https://formlogic.invalid').protocol);
+    return /^https?:$/.test(new URL(trimmed, 'https://formlogic.invalid').protocol);
   } catch {
     return false;
   }
@@ -114,7 +117,7 @@ async function request(host: string, signal?: AbortSignal): Promise<HostLookup> 
       if (!data || typeof data !== 'object') return NO_ANSWER;
       return { config: null, answered: true, ...('platform' in data && data.platform === true ? { platform: true } : {}) };
     }
-    return isLaunchConfig(data) ? { config: data, answered: true } : NO_ANSWER;
+    return isStoredConfig(data) ? { config: data, answered: true } : NO_ANSWER;
   } catch (e) {
     if (!signal?.aborted) logger.error('launch config fetch failed', e);
     return NO_ANSWER;

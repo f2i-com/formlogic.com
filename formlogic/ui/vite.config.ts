@@ -207,7 +207,7 @@ export default defineConfig(({ mode }) => {
         // shell now that scope is '/'.
         // Public forms have a route of their own below: this fallback would answer
         // them from the precache even online, and an embed needs the network's headers.
-        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|form\/|hosted-runtime\/|zipp\/|screen-host\.html)/],
+        navigateFallbackAllowlist: [/^\/(?!api\/|app-editors\/|form\/|hosted-runtime\/|zipp\/|screen-host\.html|\.well-known\/|manifest\.json$|robots\.txt$|sitemap\.xml$)/i],
 
         runtimeCaching: [
           // SECURITY: authenticated, tenant-scoped GET responses (/api/app/{slug},
@@ -263,10 +263,20 @@ export default defineConfig(({ mode }) => {
           },
           // App PWA manifest (branding only — name/icons/theme; needed for install)
           {
-            urlPattern: /^https?:\/\/.*\/api\/app\/[^/]+\/manifest\.json$/,
+            urlPattern: ({ url }) => url.origin === self.location.origin && /^\/api\/app\/[^/]+\/manifest\.json$/i.test(url.pathname),
             handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'app-manifest-cache',
+              plugins: [
+                {
+                  cacheWillUpdate: async ({ response }) => {
+                    if (!response || !response.ok) return null;
+                    const cc = (response.headers.get('cache-control') || '').toLowerCase();
+                    if (cc.includes('no-store') || cc.includes('private')) return null;
+                    return response;
+                  },
+                },
+              ],
               expiration: {
                 maxEntries: 20,
                 maxAgeSeconds: 60 * 60 * 24, // 24 hours
@@ -277,7 +287,7 @@ export default defineConfig(({ mode }) => {
           // build is a new URL and CacheFirst can never serve a stale engine; the
           // small maxEntries lets the previous one age out after a deploy.
           {
-            urlPattern: /zipp_wasm_bg-[^/]*\.wasm$/,
+            urlPattern: ({ url }) => url.origin === self.location.origin && /zipp_wasm_bg-[^/]*\.wasm$/.test(url.pathname),
             handler: 'CacheFirst',
             options: {
               cacheName: 'formlogic-engine-cache',
@@ -287,13 +297,26 @@ export default defineConfig(({ mode }) => {
               },
             },
           },
-          // Static image assets ONLY. The negative lookahead excludes anything under
-          // /api/ so private uploads (/api/files/...) are never cached.
+          // Static image assets ONLY on this origin. Excludes /api/ (case-insensitive) and skips
+          // any response marked private or no-store so private uploads are never cached.
           {
-            urlPattern: /^(?!.*\/api\/).*\.(?:png|jpg|jpeg|svg|gif|webp)$/,
+            urlPattern: ({ url }) =>
+              url.origin === self.location.origin &&
+              !/^\/api(?:\/|$)/i.test(url.pathname) &&
+              /\.(?:png|jpg|jpeg|svg|gif|webp)$/i.test(url.pathname),
             handler: 'CacheFirst',
             options: {
               cacheName: 'app-images-cache',
+              plugins: [
+                {
+                  cacheWillUpdate: async ({ response }) => {
+                    if (!response || !response.ok) return null;
+                    const cc = (response.headers.get('cache-control') || '').toLowerCase();
+                    if (cc.includes('no-store') || cc.includes('private')) return null;
+                    return response;
+                  },
+                },
+              ],
               expiration: {
                 maxEntries: 50,
                 maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days

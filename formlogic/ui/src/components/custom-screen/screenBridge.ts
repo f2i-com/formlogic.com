@@ -34,6 +34,7 @@ import { isDesktopPaired } from '../../client-runtime/desktop/desktopPairing';
 import { runRelayCommand, type RelayApi, type RunRelayOptions } from './connector/commandRelay';
 import { resolveRemoteRuntime, type ConnectorPresence, type RemoteRuntimeInfo } from './connector/runtimePresence';
 import { isOaiyPaired, oaiyRouteAvailable, probeOaiy } from '../../client-runtime/oaiy/oaiyRuntime';
+import { appMayUseThisComputer } from '../../client-runtime/appLocalAccess';
 import { listAiSources, listDesktopServices, type AiSourceListing } from '../../client-runtime/flows/desktopService';
 
 /** What FormLogic.connector() resolves inside the sandbox. Mirrors the relay's
@@ -406,8 +407,8 @@ async function oaiyDirectAddress(): Promise<string | null> {
 const defaultScreenPresenceProbes: ScreenPresenceProbes = {
   demo: () => api.isDemoMode(),
   legacyLocal: () => getDesktopInfo().available && isDesktopPaired(),
-  oaiyDirect: oaiyDirectAddress,
-  remote: (appId) => resolveRemoteRuntime(appId),
+  oaiyDirect: async () => ((await appMayUseThisComputer()) ? oaiyDirectAddress() : null),
+  remote: async (appId) => ((await appMayUseThisComputer()) ? resolveRemoteRuntime(appId) : null),
 };
 
 /**

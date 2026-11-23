@@ -1194,9 +1194,10 @@ class ApiClient {
       ...(options.headers as Record<string, string>),
     };
 
-    // Include CSRF token on state-changing requests
+    // Include CSRF token on state-changing credentialed requests
     const method = (options.method || 'GET').toUpperCase();
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const requestCredentials = options.credentials ?? 'include';
+    if (requestCredentials !== 'omit' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       const csrfToken = this.getCsrfToken();
       if (csrfToken) {
         headers['X-CSRF-Token'] = csrfToken;
@@ -1207,8 +1208,8 @@ class ApiClient {
       const response = await fetch(url, {
         ...options,
         headers,
-        // Include cookies in requests for HttpOnly cookie authentication
-        credentials: 'include',
+        // Include cookies by default for HttpOnly cookie authentication; honor explicit 'omit'.
+        credentials: requestCredentials,
       });
       noteServerRelease(response.headers?.get?.(RELEASE_HEADER));
 
@@ -2833,11 +2834,13 @@ class ApiClient {
     payload: { filename: string; contentBase64: string; mimeType?: string; folder?: string },
     signal?: AbortSignal,
     visitor = false,
+    anonymous = false,
   ): Promise<ApiResponse<{ upload: NativeAppUploadRecord; url: string; quarantined?: boolean }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native/uploads`, {
       method: 'POST',
       body: JSON.stringify(payload),
       signal,
+      ...(anonymous ? { credentials: 'omit' as RequestCredentials } : {}),
       ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
     });
   }
@@ -2848,10 +2851,12 @@ class ApiClient {
     folder?: string,
     signal?: AbortSignal,
     visitor = false,
+    anonymous = false,
   ): Promise<ApiResponse<{ uploads: NativeAppUploadRecord[]; policy: Pick<NativeAppUploadPolicy, 'access' | 'maxFileSizeMb' | 'allowedCategories' | 'requireQuarantineReview'> }>> {
     const query = folder ? `?folder=${encodeURIComponent(folder)}` : '';
     return this.request(`/app/${encodeURIComponent(slug)}/native/uploads${query}`, {
       signal,
+      ...(anonymous ? { credentials: 'omit' as RequestCredentials } : {}),
       ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
     });
   }
@@ -2862,10 +2867,12 @@ class ApiClient {
     uploadId: string,
     signal?: AbortSignal,
     visitor = false,
+    anonymous = false,
   ): Promise<ApiResponse<{ deleted: boolean }>> {
     return this.request(`/app/${encodeURIComponent(slug)}/native/uploads/${encodeURIComponent(uploadId)}`, {
       method: 'DELETE',
       signal,
+      ...(anonymous ? { credentials: 'omit' as RequestCredentials } : {}),
       ...(visitor ? { headers: { 'X-FormLogic-Visitor': '1' } } : {}),
     });
   }

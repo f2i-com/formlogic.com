@@ -645,16 +645,18 @@ class CloudFlowRunner
         if ($formOwner === false) {
             $refuse();
         }
-        if ((string) $formOwner === $owner) {
-            return;
-        }
         $appId = $flow['appId'] ?? null;
         if (is_string($appId) && $appId !== '') {
+            // App-scoped flows are strictly confined to forms attached to their own app.
             $stmt = $this->mysql->prepare('SELECT 1 FROM app_forms WHERE app_id = :app AND form_id = :form LIMIT 1');
             $stmt->execute(['app' => $appId, 'form' => $formId]);
             if ($stmt->fetchColumn() !== false) {
                 return;
             }
+            $refuse();
+        }
+        if ((string) $formOwner === $owner) {
+            return;
         }
         $refuse();
     }
@@ -1544,6 +1546,10 @@ class CloudFlowRunner
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app not found or owned by another account", $node['id']);
         }
         $targetAppId = (string) $targetApp['id'];
+        $flowAppId = is_string($flow['appId'] ?? null) ? trim($flow['appId']) : '';
+        if ($flowAppId !== '' && $targetAppId !== $flowAppId) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': app-scoped flow cannot invoke another application's backend (cross_app_denied)", $node['id']);
+        }
         $project = $this->nativeApps->project($targetAppId);
         if (!$project || !NativeAppService::hasBackend($project)) {
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app has no hosted backend", $node['id']);
@@ -1677,6 +1683,10 @@ class CloudFlowRunner
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': target app not found or owned by another account", $node['id']);
         }
         $targetAppId = (string) $targetApp['id'];
+        $flowAppId = is_string($flow['appId'] ?? null) ? trim($flow['appId']) : '';
+        if ($flowAppId !== '' && $targetAppId !== $flowAppId && !in_array($targetAppId, $this->apps->sharedDatabaseGroupAppIds($flowAppId), true)) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': app-scoped flow cannot access another application's database (cross_app_denied)", $node['id']);
+        }
         $table = is_string($data['table'] ?? null) ? trim($this->interpolateTemplate($data['table'], $ctx)) : '';
         $operation = strtolower(trim(is_string($data['operation'] ?? null) ? $this->interpolateTemplate($data['operation'], $ctx) : 'list'));
         if ($table === '') {

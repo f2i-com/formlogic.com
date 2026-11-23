@@ -305,22 +305,47 @@ export function CustomScreenRuntime({
     // "press Back twice" bug). Identical content ⇒ same deps ⇒ no rebuild.
   }, [assets.html, assets.css, assets.js, accentColor, generation, initialScheme]);
 
-  // Hand the composed document to the sandbox host. Both sides of the load
-  // race are covered: the host pings __flScreenHostReady once its listener is
-  // up (it may beat this effect), and the iframe's onLoad below re-sends —
-  // the host accepts exactly one init, so duplicates are inert.
-  const sendDoc = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
+  // Hand the composed document to the sandbox host exactly once per generation.
+  // A second load on the same iframe indicates an unexpected in-frame navigation escape:
+  // lock out the SDK bridge immediately and never re-send __flScreenDoc.
+  const docSentRef = useRef(false);
+  const loadCountRef = useRef(0);
+  const escapedRef = useRef(false);
+  useEffect(() => {
+    docSentRef.current = false;
+    loadCountRef.current = 0;
+    escapedRef.current = false;
+  }, [generation]);
+
+  const sendDocOnce = useCallback(() => {
+    if (docSentRef.current || escapedRef.current) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    docSentRef.current = true;
+    win.postMessage({ __flScreenDoc: srcDoc }, '*');
   }, [srcDoc]);
+
+  const handleIframeLoad = useCallback(() => {
+    loadCountRef.current += 1;
+    if (loadCountRef.current === 1) {
+      sendDocOnce();
+    } else {
+      // Unexpected navigation away from the initialized sandbox document: revoke all SDK access.
+      escapedRef.current = true;
+      subsRef.current?.clear();
+    }
+  }, [sendDocOnce]);
+
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
-      sendDoc();
+      if (e.origin !== 'null') return;
+      sendDocOnce();
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
-  }, [sendDoc]);
+  }, [sendDocOnce]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -345,8 +370,8 @@ export function CustomScreenRuntime({
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       const m = e.data;
-      // Only accept SDK messages from OUR sandboxed iframe.
-      if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      // Only accept SDK messages from OUR opaque-origin sandboxed iframe before any escape.
+      if (!m || !m.__fl || escapedRef.current || !iframeRef.current || e.source !== iframeRef.current.contentWindow || e.origin !== 'null') return;
       const requestWindow = iframeRef.current.contentWindow;
       // …and only from the CURRENT document generation: the WindowProxy
       // survives a srcdoc reload, so the dying predecessor can still post —
@@ -635,7 +660,7 @@ export function CustomScreenRuntime({
       title="Custom screen"
       sandbox="allow-scripts"
       src={SCREEN_HOST_URL}
-      onLoad={sendDoc}
+      onLoad={handleIframeLoad}
       className={className || 'w-full h-full border-0'}
     />
   );

@@ -11,14 +11,22 @@
 //   --fl-good / --fl-warn / --fl-bad   semantic status colors
 //   --fl-shadow    card shadow
 
+const SAFE_CSS_COLOR = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})|(?:rgb|hsl)a?\(\s*[0-9.%\s,/-]+\s*\))$/i;
+
+function safeCssColor(value: string, fallback: string): string {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  return SAFE_CSS_COLOR.test(trimmed) ? trimmed : fallback;
+}
+
 /** Palette CSS. `accent` is the owner's primary colour; `onAccent` is a legible on-accent text colour. */
 export function screenPaletteCss(accent: string, onAccent: string): string {
-  const a = /^#|rgb|hsl/.test(accent) ? accent : '#6366f1';
+  const a = safeCssColor(accent, '#6366f1');
+  const oa = safeCssColor(onAccent, '#ffffff');
   return (
     ':root{'
     + '--fl-bg:#f5f7fb;--fl-surface:#ffffff;--fl-surface-2:#f1f5f9;--fl-border:rgba(15,23,42,.10);'
     + '--fl-text:#0f172a;--fl-muted:#475569;--fl-faint:#8a97a8;--fl-track:rgba(15,23,42,.08);'
-    + '--fl-accent:' + a + ';--fl-accent-contrast:' + (onAccent || '#ffffff') + ';'
+    + '--fl-accent:' + a + ';--fl-accent-contrast:' + oa + ';'
     + '--fl-good:#16a34a;--fl-warn:#d97706;--fl-bad:#dc2626;--fl-shadow:0 1px 2px rgba(15,23,42,.06);'
     + '}'
     + 'html.fl-dark{'

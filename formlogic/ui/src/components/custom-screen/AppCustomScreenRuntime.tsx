@@ -136,25 +136,45 @@ export function AppCustomScreenRuntime({
     rateRef.current = createSdkRateLimiter();
   }, [srcDoc]);
 
-  // Hand the composed document to the sandbox host (parity with
-  // CustomScreenRuntime, which moved off `srcDoc` in the CSP repair). A srcdoc
-  // document INHERITS the embedding page's Content-Security-Policy, and the
-  // production shell's script-src blocks the inline SDK shim and the author's
-  // script — so every app home code screen was blank in a production build
-  // while working in dev, where no CSP is injected. /screen-host.html is a real
-  // same-origin document with its own CSP; it accepts exactly one init.
-  const sendDoc = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({ __flScreenDoc: srcDoc }, '*');
+  // Hand the composed document to the sandbox host exactly once per generation.
+  // A second load on the same iframe indicates an unexpected in-frame navigation escape:
+  // lock out the SDK bridge immediately and never re-send __flScreenDoc.
+  const docSentRef = useRef(false);
+  const loadCountRef = useRef(0);
+  const escapedRef = useRef(false);
+  useEffect(() => {
+    docSentRef.current = false;
+    loadCountRef.current = 0;
+    escapedRef.current = false;
+  }, [generation]);
+
+  const sendDocOnce = useCallback(() => {
+    if (docSentRef.current || escapedRef.current) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    docSentRef.current = true;
+    win.postMessage({ __flScreenDoc: srcDoc }, '*');
   }, [srcDoc]);
+
+  const handleIframeLoad = useCallback(() => {
+    loadCountRef.current += 1;
+    if (loadCountRef.current === 1) {
+      sendDocOnce();
+    } else {
+      escapedRef.current = true;
+    }
+  }, [sendDocOnce]);
+
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
-      sendDoc();
+      if (e.origin !== 'null') return;
+      sendDocOnce();
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
-  }, [sendDoc]);
+  }, [sendDocOnce]);
 
   // Push theme changes into the already-loaded iframe (instant, no reload).
   useEffect(() => {
@@ -167,7 +187,7 @@ export function AppCustomScreenRuntime({
 
     const handler = async (e: MessageEvent) => {
       const m = e.data;
-      if (!m || !m.__fl || !iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
+      if (!m || !m.__fl || escapedRef.current || !iframeRef.current || e.source !== iframeRef.current.contentWindow || e.origin !== 'null') return;
       const requestWindow = iframeRef.current.contentWindow;
       // Only the CURRENT document generation may act (audit FL-15): the WindowProxy
       // survives a srcdoc swap, so the dying predecessor can still post — executing
@@ -258,7 +278,7 @@ export function AppCustomScreenRuntime({
       title="App home"
       sandbox="allow-scripts"
       src={SCREEN_HOST_URL}
-      onLoad={sendDoc}
+      onLoad={handleIframeLoad}
       className={className || 'w-full h-full border-0'}
     />
   );

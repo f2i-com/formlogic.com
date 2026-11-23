@@ -6,10 +6,22 @@ import { api } from '../lib/api';
 import { fetchLaunchConfig, type LaunchConfig } from '../lib/domainLaunchApi';
 import { useAuthStore } from '../stores/authStore';
 
-function hostOf(origin: string): string {
+function canonicalOriginOf(origin: string): string {
   try {
     const url = new URL(origin);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.hostname : '';
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    if (url.username || url.password || url.hostname === '') return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
+function hostOf(origin: string): string {
+  const canonical = canonicalOriginOf(origin);
+  if (!canonical) return '';
+  try {
+    return new URL(canonical).hostname;
   } catch {
     return '';
   }
@@ -25,7 +37,8 @@ export function AppDomainSignIn() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const origin = searchParams.get('origin') ?? '';
+  const rawOrigin = searchParams.get('origin') ?? '';
+  const origin = canonicalOriginOf(rawOrigin);
   const state = searchParams.get('state') ?? '';
   const page = searchParams.get('page') === 'signup' ? '/signup' : '/login';
   const host = hostOf(origin);

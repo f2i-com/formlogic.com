@@ -4376,9 +4376,9 @@ $app->group('/api/apps', function (RouteCollectorProxy $group) use ($container, 
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
         $isOwner = ($appRow['ownerId'] ?? null) === $userId;
-        if (!$isOwner && !$appService->isAppMember($appId, $userId)) {
-            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'App not found']));
-            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        if (!$isOwner) {
+            $response->getBody()->write((string) json_encode(['error' => true, 'message' => 'Only the app owner can access Studio management data.']));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
         }
         $appPayload = $isOwner
             ? $appRow
