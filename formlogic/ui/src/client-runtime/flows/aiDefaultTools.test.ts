@@ -232,4 +232,41 @@ describe('resolveDefaultLlmTools — Desktop', () => {
     expect(oaiyChat).toHaveBeenCalledTimes(1);
     expect(res).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
   });
+
+  it('keeps custom-named Anthropic providers in OAIY on the text protocol instead of dropping tools', async () => {
+    const oaiyChat = vi.fn();
+    const res = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
+      fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'claude-work' }) }),
+      oaiyAvailable: () => true,
+      listOaiySources: async () => [{ id: 'provider:claude-work', providerId: 'claude-work', protocol: 'anthropic' } as never],
+      oaiyChat,
+    });
+    expect(oaiyChat).not.toHaveBeenCalled();
+    expect(res).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+  });
+
+  it('uses local paired OAIY directly for editor text-protocol turns to avoid the 256 KiB relay envelope limit', async () => {
+    const { resolveDefaultLlm } = await import('./aiDefault');
+    const oaiyChat = vi.fn(async () => ({
+      ok: true as const,
+      data: { choices: [{ message: { content: '<tool_call name="finish">{"summary":"ok"}</tool_call>' }, finish_reason: 'stop' }] },
+    }));
+    const tunnelChat = vi.fn();
+    const res = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], editor: true },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'provider:anthropic', desktopModel: 'claude-sonnet' }) }),
+        oaiyAvailable: () => true,
+        oaiyChat,
+        tunnelChat,
+      },
+    );
+    expect(tunnelChat).not.toHaveBeenCalled();
+    expect(oaiyChat).toHaveBeenCalledTimes(1);
+    const [pid, body] = oaiyChat.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(pid).toBe('anthropic');
+    expect(body.model).toBe('claude-sonnet');
+    expect(body.max_tokens).toBe(16384);
+    expect(res).toEqual({ ok: true, data: { source: 'desktop', content: '<tool_call name="finish">{"summary":"ok"}</tool_call>' } });
+  });
 });

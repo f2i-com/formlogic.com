@@ -94,11 +94,16 @@ export async function oaiyAiChat(
   }
   forgetRefusedOaiyToken(resp.status, json);
   const err = (json as { error?: { code?: string; message?: string } })?.error;
+  const rawCode = err?.code ?? '';
+  const friendlyMessage =
+    resp.status === 422 && rawCode === 'tool_contract_error'
+      ? 'The model returned an invalid tool call. Try asking again or choose another model in OAIY.'
+      : err?.message ?? `OAIY AI provider request failed (HTTP ${resp.status})`;
   return {
     ok: false,
     error: {
-      code: mapOaiyErrorCode(err?.code ?? '', resp.status),
-      message: err?.message ?? `OAIY AI provider request failed (HTTP ${resp.status})`,
+      code: mapOaiyErrorCode(rawCode, resp.status),
+      message: friendlyMessage,
     },
   };
 }
