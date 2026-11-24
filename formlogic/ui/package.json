@@ -35,7 +35,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/postcss": "^4.3.5",
     "@types/dagre": "^0.7.54",
-    "@xyflow/react": "^12.12.1",
+    "@xyflow/react": "^13.0.2",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
     "esbuild-wasm": "^0.28.2",
