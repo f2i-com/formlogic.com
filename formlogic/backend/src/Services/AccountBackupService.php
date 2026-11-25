@@ -2251,10 +2251,29 @@ final class AccountBackupService
             return;
         }
 
+        // If the backup carries no private forms and the target account already has a vault
+        // (e.g. a Data Node owner restoring a plain form), INSERT IGNORE would be a no-op.
+        if ($formsBlock === [] && is_array($vault)) {
+            $hasVaultStmt = $this->pdo->prepare('SELECT 1 FROM user_vaults WHERE user_id = :u');
+            $hasVaultStmt->execute(['u' => $userId]);
+            if ($hasVaultStmt->fetchColumn() !== false) {
+                return;
+            }
+        }
+
         if (!$serverHeld) {
-            $privateFormsEnabled = array_key_exists('privateForms', $this->config)
-                ? (bool) $this->config['privateForms']
-                : filter_var(\FormLogic\Support\Environment::get('PRIVATE_FORMS', 'false'), FILTER_VALIDATE_BOOLEAN);
+            if (array_key_exists('privateForms', $this->config)) {
+                $privateFormsEnabled = (bool) $this->config['privateForms'];
+            } else {
+                $envPrivate = \FormLogic\Support\Environment::get('PRIVATE_FORMS');
+                // Mirror VaultController / FormEncryptionController defaults:
+                // production wiring (public/index.php) always injects config['privateForms'],
+                // while an explicit PRIVATE_FORMS env var overrides when set; direct test
+                // instantiations with empty config default to enabled.
+                $privateFormsEnabled = $envPrivate !== null && $envPrivate !== ''
+                    ? filter_var($envPrivate, FILTER_VALIDATE_BOOLEAN)
+                    : true;
+            }
             if (!$privateFormsEnabled) {
                 throw new EncryptionRequestException(
                     'private_forms_disabled',
@@ -2480,7 +2499,7 @@ final class AccountBackupService
                 if (!$serverHeld) {
                     $pkRaw = base64_decode($pkB64, true);
                     if ($epoch < 1 || $pkRaw === false || strlen($pkRaw) !== 32 || base64_encode($pkRaw) !== $pkB64
-                        || strlen($skRaw) !== 80 || !in_array($kState, ['active', 'retiring', 'retired'], true)) {
+                        || strlen($skRaw) !== FormEncryptionService::WRAPPED_INGESTION_SECRET_BYTES || !in_array($kState, ['active', 'retiring', 'retired'], true)) {
                         throw new EncryptionRequestException('encryption_payload_invalid', 'Restored ingestion key is invalid.', 400);
                     }
                 }
@@ -2819,25 +2838,29 @@ final class AccountBackupService
         $idsByEntry = self::idsByEntry($structure['forms']);
         $uploadsCfg = is_array($this->config['uploads'] ?? null) ? $this->config['uploads'] : [];
         $maxUploadFileBytes = (int) ($uploadsCfg['maxFileSize'] ?? (10 * 1024 * 1024));
-        $allowedUploadMimes = is_array($uploadsCfg['allowedTypes'] ?? null) && $uploadsCfg['allowedTypes'] !== []
-            ? $uploadsCfg['allowedTypes']
-            : [
-                'application/pdf',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                'image/jpeg',
-                'image/png',
-                'image/gif',
-                'image/webp',
-            ];
-        $allowedExtsByMime = [
-            'application/pdf' => ['pdf'],
-            'application/msword' => ['doc'],
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => ['docx'],
-            'image/jpeg' => ['jpg', 'jpeg'],
-            'image/png' => ['png'],
-            'image/gif' => ['gif'],
-            'image/webp' => ['webp'],
+        // Refuse active web/executable payloads while preserving safe documents, images, and
+        // plain-text attachments (served by FileController with Content-Disposition: attachment + nosniff).
+        $disallowedUploadMimes = [
+            'text/html',
+            'application/xhtml+xml',
+            'image/svg+xml',
+            'text/x-php',
+            'application/x-php',
+            'application/javascript',
+            'text/javascript',
+            'application/x-javascript',
+            'application/x-sh',
+            'application/x-shellscript',
+            'application/x-executable',
+            'application/x-dosexec',
+            'application/x-msdownload',
+            'application/x-mach-binary',
+            'application/x-elf',
+        ];
+        $disallowedUploadExts = [
+            'php', 'phtml', 'phar', 'html', 'htm', 'xhtml', 'svg', 'svgz',
+            'js', 'mjs', 'cjs', 'exe', 'sh', 'bash', 'bat', 'cmd', 'ps1',
+            'dll', 'asp', 'aspx', 'jsp', 'cgi', 'htaccess',
         ];
         $maxFormUploadBytes = 2 * 1024 * 1024 * 1024;
         $bytesPerForm = [];
@@ -2868,12 +2891,10 @@ final class AccountBackupService
                     @unlink($dest);
                     throw new \RuntimeException('Restored files exceed the per-form storage limit.');
                 }
-                $mime = $finfo !== null ? (string) $finfo->file($dest) : '';
+                $mime = $finfo !== null ? strtolower((string) $finfo->file($dest)) : '';
                 $ext = strtolower(pathinfo($basename, PATHINFO_EXTENSION));
-                $allowedExts = $allowedExtsByMime[$mime] ?? null;
-                if (!in_array($mime, $allowedUploadMimes, true)
-                    || ($allowedExts !== null && $ext !== '' && !in_array($ext, $allowedExts, true))
-                    || in_array($ext, ['php', 'phtml', 'phar', 'html', 'htm', 'svg', 'js', 'mjs', 'cjs', 'exe', 'sh', 'bat', 'cmd', 'ps1', 'dll'], true)) {
+                if (in_array($mime, $disallowedUploadMimes, true)
+                    || in_array($ext, $disallowedUploadExts, true)) {
                     @unlink($dest);
                     throw new \RuntimeException("Backup file {$basename} has a disallowed type ({$mime}).");
                 }

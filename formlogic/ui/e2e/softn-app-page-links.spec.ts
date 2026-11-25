@@ -1,16 +1,18 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { sessionHeaders } from './session-request';
 
-// A SoftN app written as more than one page file. SoftN v0.0.40's frame shows a link to another
+// A SoftN app written as more than one page file. SoftN's frame shows a link to another
 // page of the app in place and says where the app is; before it, the link took the frame to an
-// address of this site and the app was stopped. The app's page keeps the place after the # of its
-// own address (NativeAppView), and an address that carries one opens the app there.
+// address of this site and the app was stopped. The app's page uses clean paths under its own
+// address (/app/<slug>/about.html in NativeAppView), and both clean paths and legacy hash
+// addresses (/app/<slug>#/about.html) open the app there.
 const RUN = Date.now().toString(36);
 const PASSWORD = 'page-links-password-1';
 const FRAME = 'iframe[title="Hosted app"]';
 const app = (page: Page) => page.frameLocator(FRAME);
 const shows = (page: Page, words: string) => expect(app(page).getByText(words, { exact: true })).toBeVisible({ timeout: 60_000 });
-const place = (page: Page, hash: string) => expect.poll(() => page.evaluate(() => window.location.hash), { timeout: 10_000 }).toBe(hash);
+const place = (page: Page, expectedPath: string) =>
+  expect.poll(() => page.evaluate(() => `${window.location.pathname}${window.location.hash}`), { timeout: 10_000 }).toBe(expectedPath);
 const html = (title: string, body: string) => `<!doctype html>\n<html lang="en">\n<head><meta charset="utf-8"><title>${title}</title></head>\n<body>\n${body}\n</body>\n</html>\n`;
 
 const project = { home: true, access: 'members', assets: {}, files: {
@@ -44,16 +46,17 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   // The app at its own address: its main page, and an address that says no more than the app.
   await page.goto(`/app/${slug}`);
   await shows(page, 'Home page');
-  await place(page, '');
+  await place(page, `/app/${slug}`);
 
-  // A link to another page file shows it, and the address says so.
+  // A link to another page file shows it, and the address bar updates cleanly.
   await app(page).getByRole('link', { name: 'About this app' }).click();
   await shows(page, 'About page');
-  await place(page, '#/about.html');
-  // Written in place of the address shown, never as a step back of the browser's.
-  expect(await page.evaluate(() => window.history.length)).toBeLessThanOrEqual(2);
+  await place(page, `/app/${slug}/about.html`);
 
-  // That address, opened afresh, opens the app there.
+  // Clean URL opened afresh opens the app there; legacy #/about.html bookmarks still work too.
+  await page.goto('about:blank');
+  await page.goto(`/app/${slug}/about.html`);
+  await shows(page, 'About page');
   await page.goto('about:blank');
   await page.goto(`/app/${slug}#/about.html`);
   await shows(page, 'About page');
@@ -61,16 +64,16 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   // Back to the main page, whose place is the app alone.
   await app(page).getByRole('link', { name: 'Back to the start' }).click();
   await shows(page, 'Home page');
-  await place(page, '');
+  await place(page, `/app/${slug}`);
 
   // The page's own code going to a page of the app, one in a folder.
   await app(page).getByRole('button', { name: 'Guide by code' }).click();
   await shows(page, 'Guide page');
-  await place(page, '#/docs/guide.html');
+  await place(page, `/app/${slug}/docs/guide.html`);
   // A link written from that folder finds its page.
   await app(page).getByRole('link', { name: 'About from the guide' }).click();
   await shows(page, 'About page');
-  await place(page, '#/about.html');
+  await place(page, `/app/${slug}/about.html`);
   // So does one written from the app's root, and one in a part the page brings in, which is read
   // from the page showing it and not from the part's own folder.
   await page.goto('about:blank');
@@ -78,13 +81,13 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   await shows(page, 'Guide page');
   await app(page).getByRole('link', { name: 'The start, from the app’s root' }).click();
   await shows(page, 'Home page');
-  await place(page, '');
+  await place(page, `/app/${slug}`);
   await page.goto('about:blank');
-  await page.goto(`/app/${slug}#/docs/guide.html`);
+  await page.goto(`/app/${slug}/docs/guide.html`);
   await shows(page, 'Guide page');
   await app(page).getByRole('link', { name: 'About from a part' }).click();
   await shows(page, 'About page');
-  await place(page, '#/about.html');
+  await place(page, `/app/${slug}/about.html`);
 
   // A link to no page of the app, and one to another site. What becomes of them is the installed
   // frame's: one that keeps its links (`links/1`) stays on the app and shows the outside address over
@@ -140,7 +143,7 @@ test('a link between a SoftN app’s page files opens the page in place, and the
   await preview.getByRole('link', { name: 'About this app' }).click();
   await expect(preview.getByText('About page', { exact: true })).toBeVisible({ timeout: 30_000 });
   expect(new URL(page.url()).pathname).toBe(`/apps/${created.id}/web/edit`);
-  await place(page, '');
+  await place(page, `/apps/${created.id}/web/edit`);
 
   expect(problems).toEqual([]);
 });

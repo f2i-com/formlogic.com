@@ -76,11 +76,9 @@ class SQLiteConnection
         // Two first requests must not both build a form's file: the second would hit the first's
         // lock, and its cleanup below would delete a database the first is writing to.
         $initLock = null;
+        $initLockPath = $dbPath . '.init';
         if ($isNew) {
-            $initLock = @fopen($dbPath . '.init', 'c');
-            if ($initLock !== false) {
-                flock($initLock, LOCK_EX);
-            }
+            $initLock = self::acquireLockFile($initLockPath);
             $isNew = !file_exists($dbPath);
         }
 
@@ -118,10 +116,7 @@ class SQLiteConnection
             }
             throw new PDOException('SQLite Connection failed', 0, $e);
         } finally {
-            if (is_resource($initLock)) {
-                flock($initLock, LOCK_UN);
-                fclose($initLock);
-            }
+            self::releaseLockFile($initLock, $initLockPath);
         }
     }
 
@@ -425,20 +420,75 @@ class SQLiteConnection
         if ($version >= self::SCHEMA_VERSION) {
             return;
         }
-        $lock = $dbPath !== null ? @fopen($dbPath . '.migrate', 'c') : false;
-        if ($lock !== false) {
-            flock($lock, LOCK_EX);
-        }
+        $migrateLockPath = $dbPath !== null ? $dbPath . '.migrate' : null;
+        $lock = $migrateLockPath !== null ? self::acquireLockFile($migrateLockPath) : null;
         try {
             $version = $this->getSchemaVersion($pdo);
             if ($version < self::SCHEMA_VERSION) {
                 $this->applyMigrations($pdo, $version);
             }
         } finally {
-            if ($lock !== false) {
-                flock($lock, LOCK_UN);
-                fclose($lock);
+            if ($migrateLockPath !== null) {
+                self::releaseLockFile($lock, $migrateLockPath);
             }
+        }
+    }
+
+    /**
+     * Acquire an exclusive lock file, verifying on POSIX that the locked descriptor still matches
+     * the directory entry (so unlinking on release cannot let two concurrent lockers proceed on
+     * different inodes).
+     *
+     * @return resource|null
+     */
+    private static function acquireLockFile(string $lockPath)
+    {
+        for ($attempt = 0; $attempt < 32; $attempt++) {
+            $fp = @fopen($lockPath, 'c');
+            if ($fp === false) {
+                return null;
+            }
+            if (!flock($fp, LOCK_EX)) {
+                fclose($fp);
+                return null;
+            }
+            if (PHP_OS_FAMILY === 'Windows') {
+                return $fp;
+            }
+            clearstatcache(true, $lockPath);
+            $fdStat = @fstat($fp);
+            $pathStat = @stat($lockPath);
+            if (is_array($fdStat) && is_array($pathStat)
+                && ($fdStat['ino'] ?? -1) === ($pathStat['ino'] ?? -2)
+                && ($fdStat['dev'] ?? -1) === ($pathStat['dev'] ?? -2)) {
+                return $fp;
+            }
+            // The previous owner unlinked the file while we waited; close and re-open the current path.
+            flock($fp, LOCK_UN);
+            fclose($fp);
+        }
+        return null;
+    }
+
+    /**
+     * Release and clean up a lock file acquired via acquireLockFile(). On POSIX, unlinking while
+     * still holding LOCK_EX pairs with the inode check above so no stale .init/.migrate file is
+     * left behind without introducing a race; on Windows, unlink after fclose().
+     *
+     * @param resource|false|null $fp
+     */
+    private static function releaseLockFile($fp, string $lockPath): void
+    {
+        if (!is_resource($fp)) {
+            return;
+        }
+        if (PHP_OS_FAMILY !== 'Windows') {
+            @unlink($lockPath);
+        }
+        flock($fp, LOCK_UN);
+        fclose($fp);
+        if (PHP_OS_FAMILY === 'Windows') {
+            @unlink($lockPath);
         }
     }
 

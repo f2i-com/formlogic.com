@@ -679,16 +679,12 @@ fn emit_done_frame(done_frame: &Arc<Mutex<Option<String>>>, mode: RunMode) {
         emit_done_error("the sandbox produced malformed output");
         return;
     }
-    let canonical = match serde_json::to_string(&parsed) {
-        Ok(s) if s.len() <= OUTPUT_LIMIT_BYTES => s,
-        _ => {
-            emit_done_error("output limit exceeded");
-            return;
-        }
-    };
+    // Emit the already-validated single-line JSON frame verbatim rather than re-serializing
+    // through serde_json::Value's BTreeMap, so JavaScript object property insertion order is
+    // preserved across the wire.
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let _ = writeln!(out, "{canonical}");
+    let _ = writeln!(out, "{frame}");
     let _ = out.flush();
 }
 

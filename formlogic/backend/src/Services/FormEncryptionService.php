@@ -527,7 +527,7 @@ final class FormEncryptionService
         }
         $stmt = $this->mysql->prepare("
             SELECT COUNT(*) FROM app_flow_bindings b
-            JOIN flow_definitions f ON f.id = b.flow_id
+            JOIN flow_definitions f ON f.id = b.flow_definition_id
             WHERE f.owner_user_id = :u
               AND (b.output_actions_json LIKE :needle ESCAPE '!' OR b.input_map_json LIKE :needle2 ESCAPE '!')
         ");

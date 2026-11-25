@@ -56,19 +56,26 @@ class CustomLogicSanitizer
                 continue;
             }
             $hook = $s['hook'] ?? '';
-            $source = $s['source'] ?? '';
-            if (!in_array($hook, self::VALID_HOOKS, true) || !is_string($source) || $source === '') {
+            $hasSource = is_string($s['source'] ?? null) && $s['source'] !== '';
+            $hasCode = is_string($s['code'] ?? null) && $s['code'] !== '';
+            if (!in_array($hook, self::VALID_HOOKS, true) || (!$hasSource && !$hasCode)) {
                 continue;
             }
-            if (strlen($source) > self::MAX_SOURCE_BYTES) {
+            $body = $hasSource ? (string) $s['source'] : (string) $s['code'];
+            if (strlen($body) > self::MAX_SOURCE_BYTES) {
                 continue;
             }
             $out = [
                 'id' => (is_string($s['id'] ?? null) && $s['id'] !== '') ? $s['id'] : ('script_' . count($scriptsOut)),
                 'hook' => $hook,
                 'runtime' => 'quickjs',
-                'source' => $source,
             ];
+            if ($hasSource) {
+                $out['source'] = (string) $s['source'];
+            }
+            if ($hasCode) {
+                $out['code'] = (string) $s['code'];
+            }
             // Dropping the key would re-label a Python script as JavaScript, which the host would
             // then run as such; an unknown value is refused (see the class doc).
             $raw = $s['language'] ?? null;

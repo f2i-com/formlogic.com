@@ -84,9 +84,11 @@ function cameraStart(req) {
   let control = 2 + softn.crypto.randomInt(8);
   let controlAt = 1 + softn.crypto.randomInt(turns.length + 1);
   // Prune any abandoned previous check for this user and any expired checks (> 15 min) so the table stays bounded.
-  softn.sql.execute("DELETE FROM checks WHERE user_id = ? OR (created_at > 0 AND created_at < unixepoch() - 900)", [user]);
-  softn.sql.execute("INSERT INTO checks(id,user_id,mode,min_value,turns,control,control_at,created_at) VALUES(?,?,?,?,?,?,?,unixepoch())",
-    [body.check, user, mode, body.requirement.min, JSON.stringify(turns), control, controlAt]);
+  // SoftN's SQL runtime allows parameterized timestamps rather than SQLite's unixepoch() function.
+  let now = Math.floor(Date.now() / 1000);
+  softn.sql.execute("DELETE FROM checks WHERE user_id = ? OR (created_at > 0 AND created_at < ?)", [user, now - 900]);
+  softn.sql.execute("INSERT INTO checks(id,user_id,mode,min_value,turns,control,control_at,created_at) VALUES(?,?,?,?,?,?,?,?)",
+    [body.check, user, mode, body.requirement.min, JSON.stringify(turns), control, controlAt, now]);
 
   let count = turns.length + 1;
   let parts = [{text: INSTRUCTIONS + "\n\nThere are " + count + " images."}];

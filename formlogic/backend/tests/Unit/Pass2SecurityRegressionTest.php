@@ -183,18 +183,24 @@ final class Pass2SecurityRegressionTest extends TestCase
         $this->assertStringNotContainsString('-moz-binding', strtolower($clean));
     }
 
-    public function testDataEdgeAnalysisFlagsMissingRequiredInputWithoutDataEdges(): void
+    public function testDataEdgeAnalysisFlagsMissingRequiredInputOnDataflowGraph(): void
     {
         $installed = ['com.acme.op' => [
             'definition' => [
                 'ports' => [
                     ['id' => 'payload', 'direction' => 'input', 'kind' => 'data', 'required' => true],
+                    ['id' => 'context', 'direction' => 'input', 'kind' => 'data', 'required' => false],
                 ],
             ],
         ]];
         $graph = [
-            'nodes' => [['id' => 'n1', 'type' => 'com.acme.op', 'data' => []]],
-            'edges' => [],
+            'nodes' => [
+                ['id' => 'src', 'type' => 'input', 'data' => []],
+                ['id' => 'n1', 'type' => 'com.acme.op', 'data' => []],
+            ],
+            'edges' => [
+                ['id' => 'e1', 'kind' => 'data', 'source' => 'src', 'sourceHandle' => 'out', 'target' => 'n1', 'targetHandle' => 'context'],
+            ],
         ];
         $diags = DataEdgeAnalysis::analyse($graph, $installed);
         $codes = array_column($diags, 'code');

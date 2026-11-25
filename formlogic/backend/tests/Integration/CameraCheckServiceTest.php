@@ -197,7 +197,7 @@ final class CameraCheckServiceTest extends TestCase
         $this->withDataKey('not-a-key', function (): void {
             self::assertFalse(\FormLogic\Support\DataEncryption::fromEnvironment()->usable());
             $started = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
-            $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+            $frames = array_map(fn () => self::validTestJpegDataUrl(), $started['steps']);
             try {
                 $this->checks->submit($this->memberId, $started['id'], $frames);
                 self::fail('a check was sent with a data key that cannot be used');
@@ -497,7 +497,7 @@ final class CameraCheckServiceTest extends TestCase
         $other = $this->makeUser();
         self::$pdo->prepare('UPDATE users SET is_admin = 1 WHERE id = ?')->execute([$other]);
         $started = $this->checks->startTrial($other, 'formlogic.age-gate', 18);
-        $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+        $frames = array_map(fn () => self::validTestJpegDataUrl(), $started['steps']);
         $this->checks->submit($other, $started['id'], $frames);
         // The other administrator's own face, queued for this one's computer: theirs, not the computer owner's.
         $row = self::$pdo->query('SELECT requesting_user_id FROM desktop_ai_requests WHERE owner_user_id = ' . self::$pdo->quote($this->adminId))->fetchColumn();
@@ -583,7 +583,7 @@ final class CameraCheckServiceTest extends TestCase
         $second = $this->checks->start($this->memberId, 'formlogic.age-gate', $this->slug, 'age');
         $turn = self::$pdo->query('SELECT turn FROM camera_checks WHERE id = ' . self::$pdo->quote($second['id']))->fetchColumn();
         self::$pdo->prepare("UPDATE camera_checks SET status = 'started', outcome = NULL, finished_at = NULL, turn = ? WHERE id = ?")->execute([$turn, $first['id']]);
-        $frames = fn (array $started) => array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $started['steps']);
+        $frames = fn (array $started) => array_map(fn () => self::validTestJpegDataUrl(), $started['steps']);
         $refused = function (array $started, string $words) use ($frames): void {
             try {
                 $this->checks->submit($this->memberId, $started['id'], $frames($started));
@@ -710,7 +710,7 @@ final class CameraCheckServiceTest extends TestCase
         self::assertSame('started', $started['status']);
         $steps = $started['steps'];
         self::assertSame('center', $steps[0]['hint']);
-        $frames = array_map(fn () => 'data:image/jpeg;base64,' . base64_encode("\xFF\xD8\xFF\xE0" . random_bytes(40000)), $steps);
+        $frames = array_map(fn () => self::validTestJpegDataUrl(), $steps);
         $this->checks->submit($who, $started['id'], $frames);
 
         // The desktop: claims the turn, opens it, describes each picture as an honest model would.
@@ -793,6 +793,23 @@ final class CameraCheckServiceTest extends TestCase
             }
         }
         return $answer;
+    }
+
+    private static function validTestJpegDataUrl(int $padBytes = 40000): string
+    {
+        $img = imagecreatetruecolor(2, 2);
+        ob_start();
+        imagejpeg($img, null, 85);
+        $raw = (string) ob_get_clean();
+        imagedestroy($img);
+        // Pad with a valid JPEG COM segment before EOI (0xFF 0xD9) so the frame keeps a
+        // realistic camera-frame size while remaining a structurally valid 2x2 JPEG.
+        $commentLen = min(65000, max(0, $padBytes));
+        if ($commentLen > 0 && str_ends_with($raw, "\xFF\xD9")) {
+            $payload = str_repeat("\x41", $commentLen);
+            $raw = substr($raw, 0, -2) . "\xFF\xFE" . pack('n', $commentLen + 2) . $payload . "\xFF\xD9";
+        }
+        return 'data:image/jpeg;base64,' . base64_encode($raw);
     }
 
     private function makeUser(): string

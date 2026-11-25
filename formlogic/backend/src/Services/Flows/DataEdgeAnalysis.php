@@ -36,11 +36,15 @@ final class DataEdgeAnalysis
         $edges = is_array($graph['edges'] ?? null) ? $graph['edges'] : [];
         $nodes = is_array($graph['nodes'] ?? null) ? $graph['nodes'] : [];
 
+        // Data edges only. A graph with none is a control-only graph — nothing to say.
         $dataEdges = [];
         foreach ($edges as $edge) {
             if (is_array($edge) && ($edge['kind'] ?? null) === 'data') {
                 $dataEdges[] = $edge;
             }
+        }
+        if ($dataEdges === []) {
+            return [];
         }
 
         $diagnostics = [];

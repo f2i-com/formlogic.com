@@ -1524,9 +1524,6 @@ class ChatToolsService
     {
         foreach ((is_array($flowInput['nodeCapabilities'] ?? null) ? $flowInput['nodeCapabilities'] : []) as $capability) {
             if (!is_string($capability)) continue;
-            if ($capability === 'formlogic.responses.read' || $capability === 'formlogic.responses.*') {
-                $ctx->requireScope('responses:read');
-            }
             if ($capability === 'formlogic.responses.write' || $capability === 'formlogic.responses.*') {
                 $ctx->requireScope('responses:write');
             }

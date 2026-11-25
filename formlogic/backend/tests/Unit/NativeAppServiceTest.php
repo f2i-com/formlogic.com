@@ -498,10 +498,10 @@ final class NativeAppServiceTest extends TestCase
         ];
         $env = NativeAppService::nodeEnvironment($source, ['SOFTN_BACKEND_ROOT' => '/apps/one', 'SOFTN_HOST_CONTEXT' => '{"userId":"u1"}', 'SOFTN_RECORD_EVENTS' => '[]']);
         $this->assertSame([
-            'Path' => 'C:\\nodejs;C:\\Windows', 'SystemRoot' => 'C:\\Windows', 'TEMP' => 'C:\\tmp', 'HOME' => '/home/php', 'NODE_OPTIONS' => '--stack-size=2000',
+            'Path' => 'C:\\nodejs;C:\\Windows', 'SystemRoot' => 'C:\\Windows', 'TEMP' => 'C:\\tmp', 'HOME' => '/home/php',
             'NODE_NO_WARNINGS' => '1', 'SOFTN_BACKEND_ROOT' => '/apps/one', 'SOFTN_HOST_CONTEXT' => '{"userId":"u1"}', 'SOFTN_RECORD_EVENTS' => '[]',
         ], $env);
-        foreach (['DB_PASSWORD', 'DB_USERNAME', 'APP_KEY', 'OPENAI_API_KEY', 'FORMLOGIC_NODE_BIN', 'NOT_A_STRING'] as $secret) $this->assertArrayNotHasKey($secret, $env);
+        foreach (['NODE_OPTIONS', 'DB_PASSWORD', 'DB_USERNAME', 'APP_KEY', 'OPENAI_API_KEY', 'FORMLOGIC_NODE_BIN', 'NOT_A_STRING'] as $secret) $this->assertArrayNotHasKey($secret, $env);
         $this->assertSame('{"userId":"u1"}', $env['SOFTN_HOST_CONTEXT'], 'the host context comes from the host, never from the process environment');
     }
 
