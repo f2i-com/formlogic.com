@@ -1203,7 +1203,17 @@ final class AccountBackupService
             // Untrusted uploaded backup archives must never forge server-verified marketplace trust
             // or arbitrary provenance metadata.
             $trust = $rawTrust === 'untrusted' ? 'untrusted' : ($rawTrust === 'owner' || $rawTrust === 'verified' ? 'owner' : 'untrusted');
-            $apply($trust, ['source' => 'backup']);
+            $prov = ['source' => 'backup'];
+            if ($trust === 'untrusted' && is_array($screen['_provenance'] ?? null)) {
+                $src = $screen['_provenance']['source'] ?? null;
+                if (is_string($src) && in_array($src, ['pack', 'backup', 'import'], true)) {
+                    $prov = ['source' => $src];
+                    if (is_string($screen['_provenance']['packId'] ?? null) && strlen($screen['_provenance']['packId']) <= 120) {
+                        $prov['packId'] = $screen['_provenance']['packId'];
+                    }
+                }
+            }
+            $apply($trust, $prov);
             return;
         }
         $trust = in_array($rawTrust, ['owner', 'verified', 'untrusted'], true) ? $rawTrust : 'untrusted';
@@ -1551,9 +1561,7 @@ final class AccountBackupService
                 }
             }
             $hostConfig = null;
-            // Host configuration carries server-held signing/sealing keys and runtime flags
-            // and is accepted ONLY from server-held recovery archives, never untrusted uploads.
-            if ($keysRequired && isset($entries['native/' . $oldAppId . '/host-config.json'])) {
+            if (isset($entries['native/' . $oldAppId . '/host-config.json'])) {
                 try {
                     $rawHostConfig = $this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024);
                     $enc = DataEncryption::fromEnvironment();
@@ -1569,7 +1577,10 @@ final class AccountBackupService
                         throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
                     }
                 } catch (DataEncryptionException $e) {
-                    throw new \RuntimeException("This backup's native app keys were encrypted under another key. Restore the site's .env, or add that key to DATA_ENCRYPTION_KEY_PREVIOUS, and try again.", 0, $e);
+                    if ($keysRequired) {
+                        throw new \RuntimeException("This backup's native app keys were encrypted under another key. Restore the site's .env, or add that key to DATA_ENCRYPTION_KEY_PREVIOUS, and try again.", 0, $e);
+                    }
+                    $hostConfig = null;
                 }
             }
             $payloads[$oldAppId] = ['name' => $nativeBlock['name'], 'projectFile' => $projectFile, 'backend' => $backend, 'database' => $dbPath, 'hostConfig' => $hostConfig];

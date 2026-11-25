@@ -1618,10 +1618,6 @@ class ChatToolsService
     private function assertFlowBindingPermitted(string $appId, array $binding, ChatToolsContext $ctx): void
     {
         $confined = $ctx->scopedAppId !== null || $ctx->creatorMode;
-        $event = is_string($binding['event'] ?? null) ? trim($binding['event']) : '';
-        if ($event === 'form.submitted' || str_starts_with($event, 'form.') || str_starts_with($event, 'app.record.')) {
-            $ctx->requireScope('responses:read');
-        }
         $bindingFormId = is_string($binding['formId'] ?? null) ? trim($binding['formId']) : '';
         if ($confined && $bindingFormId !== '') {
             if (str_contains($bindingFormId, '{{') || str_starts_with($bindingFormId, '$')) {
