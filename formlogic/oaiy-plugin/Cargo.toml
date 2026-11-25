@@ -9,7 +9,7 @@ publish = false
 [workspace]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast", "zeroize"] }
 getrandom = "0.3"
