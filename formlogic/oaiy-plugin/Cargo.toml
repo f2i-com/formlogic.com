@@ -23,7 +23,7 @@ ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Com",
   "Win32_System_SystemInformation",
