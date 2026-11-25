@@ -9,7 +9,7 @@ publish = false
 [workspace]
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std", "fast", "zeroize"] }
 getrandom = "0.3"
@@ -23,7 +23,7 @@ ureq = { version = "2", default-features = false, features = ["json", "tls"] }
 zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Com",
   "Win32_System_SystemInformation",
