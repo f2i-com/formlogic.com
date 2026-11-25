@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Box, ClipboardList, Database, Layers, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -32,8 +32,12 @@ function DemoSoftnSandboxPage({ entry, slug }: { entry: NativeEntryInfo; slug: s
   const rawTitle = entry.appName || slug;
   const cleanTitle = rawTitle.replace(/\s*\(SoftN App\)\s*$/i, '').trim() || rawTitle;
 
+  const openingRef = useRef(false);
+  const autoOpenedRef = useRef(false);
+
   const openManagementApp = useCallback(async () => {
-    if (!entry.linkedFormAppSlug || openingManagement) return;
+    if (!entry.linkedFormAppSlug || openingRef.current) return;
+    openingRef.current = true;
     setOpeningManagement(true);
     try {
       // Visitors opening a Demo SoftN App from the landing page aren't signed in yet.
@@ -45,12 +49,14 @@ function DemoSoftnSandboxPage({ entry, slug }: { entry: NativeEntryInfo; slug: s
       }
       navigate(`/app/${encodeURIComponent(entry.linkedFormAppSlug)}`);
     } finally {
+      openingRef.current = false;
       setOpeningManagement(false);
     }
-  }, [entry.linkedFormAppSlug, navigate, openingManagement]);
+  }, [entry.linkedFormAppSlug, navigate]);
 
   useEffect(() => {
-    if (entry.linkedFormAppSlug && new URLSearchParams(location.search).get('view') === 'management') {
+    if (!autoOpenedRef.current && entry.linkedFormAppSlug && new URLSearchParams(location.search).get('view') === 'management') {
+      autoOpenedRef.current = true;
       void Promise.resolve().then(() => openManagementApp());
     }
   }, [entry.linkedFormAppSlug, location.search, openManagementApp]);
@@ -166,9 +172,10 @@ function AppEntryContent({ slug, checkNative }: { slug: string; checkNative: boo
   const cachedRecord = nativeEntryCache.get(cacheKey) ?? null;
   const cached = cachedRecord?.entry ?? null;
   const [loaded, setLoaded] = useState<{ key: string; entry: NativeEntryInfo } | null>(null);
-  const [error, setError] = useState('');
+  const [errorState, setErrorState] = useState<{ key: string; message: string } | null>(null);
 
   const entry = cached ?? (loaded?.key === cacheKey ? loaded.entry : null);
+  const error = errorState?.key === cacheKey ? errorState.message : '';
 
   useEffect(() => {
     if (entry && (!checkNative || (cachedRecord && Date.now() - cachedRecord.at < NATIVE_ENTRY_FRESH_MS))) return;
@@ -176,10 +183,11 @@ function AppEntryContent({ slug, checkNative }: { slug: string; checkNative: boo
     void api.getNativeEntry(slug).then(result => {
       if (cancelled) return;
       if (result.error) {
-        if (checkNative) setError(result.error);
+        if (checkNative) setErrorState({ key: cacheKey, message: result.error });
       } else {
         const resolved = result.data ?? { home: false };
         nativeEntryCache.set(cacheKey, { entry: resolved, at: Date.now() });
+        setErrorState(null);
         setLoaded({ key: cacheKey, entry: resolved });
       }
     });

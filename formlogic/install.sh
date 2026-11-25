@@ -94,7 +94,7 @@ info "Setting up backend..."
 cd "$BACKEND_DIR"
 
 # Create storage directories
-mkdir -p storage/forms storage/hosted-apps storage/native-apps storage/packs storage/uploads storage/pack-screenshots logs
+mkdir -p storage/forms storage/hosted-apps storage/native-apps storage/native-app-uploads storage/packs storage/uploads storage/pack-screenshots logs
 # Databases and backups are written at the default mode, so these folders are what keeps other
 # accounts on this machine out of them.
 chmod -R o-rwx storage logs
@@ -108,24 +108,34 @@ ok "Backend dependencies installed"
 # Create .env if it doesn't exist
 if [[ ! -f .env ]]; then
     # .env holds the JWT secret, the audit key and the database password, so only its owner may
-    # read it (mode 600, as install.php writes it). It is made under umask 077, so it is never
-    # readable by others, not even before the secrets are written into it.
-    (umask 077 && cp .env.example .env)
+    # read it (mode 600, as install.php writes it). Secrets are generated and written inside PHP
+    # under umask 077 so they never appear on process command lines (argv) or in a world-readable file.
+    (
+        umask 077
+        php -r '
+            $tpl = file_get_contents(".env.example");
+            if ($tpl === false) { fwrite(STDERR, "Could not read .env.example\n"); exit(1); }
+            $tpl = str_replace("\r\n", "\n", $tpl);
+            $replacements = [
+                "/^JWT_SECRET=\r?$/m" => "JWT_SECRET=" . bin2hex(random_bytes(32)),
+                "/^# AUDIT_HMAC_KEY=\r?$/m" => "AUDIT_HMAC_KEY=" . bin2hex(random_bytes(32)),
+                "/^# DATA_ENCRYPTION_KEY=\r?$/m" => "DATA_ENCRYPTION_KEY=" . bin2hex(random_bytes(32)),
+            ];
+            foreach ($replacements as $pattern => $value) {
+                $count = 0;
+                $tpl = preg_replace_callback($pattern, static fn () => $value, $tpl, 1, $count);
+                if ($tpl === null || $count !== 1) {
+                    fwrite(STDERR, "Failed to populate secret for pattern: {$pattern}\n");
+                    exit(1);
+                }
+            }
+            $tmp = ".env.tmp-" . bin2hex(random_bytes(6));
+            if (file_put_contents($tmp, $tpl, LOCK_EX) !== strlen($tpl)) { @unlink($tmp); exit(1); }
+            @chmod($tmp, 0600);
+            if (!rename($tmp, ".env")) { @unlink($tmp); exit(1); }
+        '
+    )
     chmod 600 .env
-    # Generate random secrets
-    JWT_SECRET=$(php -r 'echo bin2hex(random_bytes(32));')
-    AUDIT_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
-    DATA_KEY=$(php -r 'echo bin2hex(random_bytes(32));')
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        sed -i '' "s/^JWT_SECRET=$/JWT_SECRET=$JWT_SECRET/" .env
-        sed -i '' "s/^# AUDIT_HMAC_KEY=$/AUDIT_HMAC_KEY=$AUDIT_KEY/" .env
-        sed -i '' "s/^# DATA_ENCRYPTION_KEY=$/DATA_ENCRYPTION_KEY=$DATA_KEY/" .env
-    else
-        sed -i "s/^JWT_SECRET=$/JWT_SECRET=$JWT_SECRET/" .env
-        sed -i "s/^# AUDIT_HMAC_KEY=$/AUDIT_HMAC_KEY=$AUDIT_KEY/" .env
-        sed -i "s/^# DATA_ENCRYPTION_KEY=$/DATA_ENCRYPTION_KEY=$DATA_KEY/" .env
-    fi
-    chmod 600 .env # in case this sed did not keep the mode it replaced the file with
     warn "Created .env from .env.example — please update DB_PASSWORD and other settings"
     warn "Copy DATA_ENCRYPTION_KEY from .env somewhere safe, away from this server. Without it, what it encrypted can never be read."
 else
@@ -164,7 +174,7 @@ fi
 if [[ -z "$DB_PASSWORD" ]]; then
     warn "DB_PASSWORD is empty in .env — please set it before running the app"
     warn "Skipping database initialization"
-elif [[ "$DB_PASSWORD" == *$'\n'* ]]; then
+elif [[ "$DB_PASSWORD" == *$'\n'* || "$DB_PASSWORD" == *$'\r'* ]]; then
     warn "DB_PASSWORD in .env holds a line break, which a MySQL option file cannot carry — create the database by hand"
     warn "Skipping database initialization"
 else
@@ -311,7 +321,7 @@ echo "  1. Update backend/.env with your database password and settings"
 echo "  2. Start the backend:  cd backend && composer start"
 echo "  3. Start the frontend: cd ui && npm run dev"
 echo ""
-echo "Or for production, configure your web server to serve:"
+echo "Or for production, set APP_ENV=production and APP_DEBUG=false in backend/.env, and configure your web server to serve:"
 echo "  - Backend API: backend/public/ (PHP)"
 echo "  - Frontend:    ui/dist/ (static files)"
 echo ""

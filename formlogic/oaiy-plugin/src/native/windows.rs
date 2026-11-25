@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
+use windows_sys::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows_sys::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
 use windows_sys::Win32::UI::Controls::Dialogs::{GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW};
 use windows_sys::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW};
@@ -70,12 +70,19 @@ pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
     dialog.lpszTitle = title.as_ptr();
     dialog.pszDisplayName = name.as_mut_ptr();
     dialog.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
-    // SAFETY: the dialog's new style needs COM on this thread, which is the job's own and ends with
-    // it. The pointers in `dialog` are to buffers above that outlive the call.
-    let chosen = unsafe {
-        CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32);
-        SHBrowseForFolderW(&dialog)
-    };
+    struct ComGuard(bool);
+    impl Drop for ComGuard {
+        fn drop(&mut self) {
+            if self.0 {
+                // SAFETY: paired with a succeeding CoInitializeEx call on this same thread.
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+    // SAFETY: the dialog's new style needs COM on this thread; ComGuard balances CoInitializeEx
+    // whenever it returns S_OK (0) or S_FALSE (1). The pointers in `dialog` outlive the call.
+    let _com = ComGuard(unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) } >= 0);
+    let chosen = unsafe { SHBrowseForFolderW(&dialog) };
     if chosen.is_null() {
         return Ok(None);
     }

@@ -4,6 +4,11 @@ import {
   type DesktopServiceCatalog,
   type DesktopServiceDefinitionAction,
 } from '../client-runtime/desktop/desktopClient';
+import {
+  currentSessionGeneration,
+  isSessionGenerationCurrent,
+  subscribeSessionGeneration,
+} from '../lib/sessionGeneration';
 
 /**
  * The paired Desktop's v3 Service Definition catalog, fetched once per session.
@@ -15,15 +20,27 @@ import {
 
 let serviceCatalogPromise: Promise<DesktopServiceCatalog | null> | null = null;
 
+export function clearServiceCatalogCache(): void {
+  serviceCatalogPromise = null;
+}
+
+subscribeSessionGeneration(() => {
+  serviceCatalogPromise = null;
+});
+
 export function fetchServiceCatalogOnce(): Promise<DesktopServiceCatalog | null> {
   if (!serviceCatalogPromise) {
-    serviceCatalogPromise = desktopClient.servicePlatform.catalog().then(
-      (res) => (res.ok ? res.data : null),
+    const gen = currentSessionGeneration();
+    const pending = desktopClient.servicePlatform.catalog().then(
+      (res) => (isSessionGenerationCurrent(gen) && res.ok ? res.data : null),
       () => null,
     );
-    // A transient failure (Desktop not paired yet) must not poison the session.
-    void serviceCatalogPromise.then((catalog) => {
-      if (catalog === null) serviceCatalogPromise = null;
+    serviceCatalogPromise = pending;
+    // A transient failure (Desktop not paired yet) or stale session must not poison the cache.
+    void pending.then((catalog) => {
+      if (catalog === null && serviceCatalogPromise === pending) {
+        serviceCatalogPromise = null;
+      }
     });
   }
   return serviceCatalogPromise;
@@ -32,15 +49,21 @@ export function fetchServiceCatalogOnce(): Promise<DesktopServiceCatalog | null>
 /** undefined = loading, null = no paired Desktop / catalog unavailable. */
 export function useServiceCatalog(): DesktopServiceCatalog | null | undefined {
   const [catalog, setCatalog] = useState<DesktopServiceCatalog | null | undefined>(undefined);
+  const [sessionTick, setSessionTick] = useState(0);
+  useEffect(() => subscribeSessionGeneration(() => {
+    setCatalog(undefined);
+    setSessionTick((t) => t + 1);
+  }), []);
   useEffect(() => {
     let cancelled = false;
+    const gen = currentSessionGeneration();
     void fetchServiceCatalogOnce().then((next) => {
-      if (!cancelled) setCatalog(next);
+      if (!cancelled && isSessionGenerationCurrent(gen)) setCatalog(next);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [sessionTick]);
   return catalog;
 }
 

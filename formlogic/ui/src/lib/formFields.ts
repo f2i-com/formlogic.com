@@ -47,8 +47,8 @@ export async function saveFormFields(
     try {
       const { signPrivateFormSchema } = await import('./crypto/formCrypto');
       const signed = await signPrivateFormSchema(formId, JSON.stringify(nextFields));
-      if (!signed) return { ok: false, needsVault: true, error: 'The private form schema could not be signed.' };
-      encryptionSchema = signed.encryptionSchema;
+      // `signed === null` means the latest published manifest already covers this exact field list.
+      encryptionSchema = signed?.encryptionSchema;
     } catch (e) {
       return { ok: false, needsVault: true, error: e instanceof Error ? e.message : 'Could not sign the private form schema.' };
     }
@@ -60,11 +60,18 @@ export async function saveFormFields(
     ...(encryptionSchema ? { encryptionSchema } : {}),
   });
   if (result.error) {
+    if (result.code === 'manifest_invalid' && encryptionSchema) {
+      import('./crypto/formCrypto').then((fc) => fc.forgetFormKeys(formId)).catch(() => {});
+    }
     if (result.code === 'form_changed') {
       await useFormStore.getState().loadFullForm(formId, { force: true });
       return { ok: false, changedElsewhere: true, error: 'This form was changed somewhere else, so this change was not saved. Check its latest fields and make the change again.' };
     }
     return { ok: false, error: typeof result.error === 'string' ? result.error : 'The change could not be saved.' };
+  }
+  if (encryptionSchema) {
+    const fc = await import('./crypto/formCrypto');
+    fc.forgetFormKeys(formId);
   }
 
   // Re-seed the builder's copy so it cannot save a pre-edit array over this one.

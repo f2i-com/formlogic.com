@@ -263,7 +263,7 @@ export default defineConfig(({ mode }) => {
           },
           // App PWA manifest (branding only — name/icons/theme; needed for install)
           {
-            urlPattern: ({ url }) => url.origin === self.location.origin && /^\/api\/app\/[^/]+\/manifest\.json$/i.test(url.pathname),
+            urlPattern: ({ sameOrigin, url }) => sameOrigin && /^\/api\/app\/[^/]+\/manifest\.json$/i.test(url.pathname),
             handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'app-manifest-cache',
@@ -287,7 +287,7 @@ export default defineConfig(({ mode }) => {
           // build is a new URL and CacheFirst can never serve a stale engine; the
           // small maxEntries lets the previous one age out after a deploy.
           {
-            urlPattern: ({ url }) => url.origin === self.location.origin && /zipp_wasm_bg-[^/]*\.wasm$/.test(url.pathname),
+            urlPattern: ({ sameOrigin, url }) => sameOrigin && /zipp_wasm_bg-[^/]*\.wasm$/.test(url.pathname),
             handler: 'CacheFirst',
             options: {
               cacheName: 'formlogic-engine-cache',
@@ -300,8 +300,8 @@ export default defineConfig(({ mode }) => {
           // Static image assets ONLY on this origin. Excludes /api/ (case-insensitive) and skips
           // any response marked private or no-store so private uploads are never cached.
           {
-            urlPattern: ({ url }) =>
-              url.origin === self.location.origin &&
+            urlPattern: ({ sameOrigin, url }) =>
+              sameOrigin &&
               !/^\/api(?:\/|$)/i.test(url.pathname) &&
               /\.(?:png|jpg|jpeg|svg|gif|webp)$/i.test(url.pathname),
             handler: 'CacheFirst',

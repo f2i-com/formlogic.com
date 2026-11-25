@@ -13,6 +13,7 @@ description = "The window.FormLogicNative commands a hosted app calls: runtime i
 commands.allow = [
   "runtime_info",
   "runtime_ready",
+  "runtime_open_external",
   "connector_list",
   "connector_status",
   "connector_request",

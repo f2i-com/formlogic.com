@@ -5,6 +5,7 @@
   "main": "ui/main.ui",
   "config": {
     "server": {
+      "requestsPerMinute": 0,
       "allowedOrigins": [
         "https://age-gate.plugin"
       ]
@@ -18,7 +19,7 @@
     },
     "database": {
       "kind": "private-sqlite",
-      "migrations": ["server/migrations/001.sql"]
+      "migrations": ["server/migrations/001.sql", "server/migrations/002.sql"]
     },
     "routes": [
       {

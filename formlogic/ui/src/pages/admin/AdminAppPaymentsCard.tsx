@@ -54,9 +54,16 @@ export function AdminAppPaymentsCard() {
   };
   const adjust = async (walletId: string) => {
     const amount = window.prompt('Credit (or, with a minus sign, debit) this wallet by how many dollars?');
-    if (!amount) return;
-    const note = window.prompt('Why? The note is kept on the wallet\'s ledger.') ?? '';
-    const result = await api.adminAdjustAppWallet(walletId, Math.round(Number(amount) * 100), note);
+    if (amount === null || !amount.trim()) return;
+    const parsed = Number(amount.trim().replace(/^\$/, ''));
+    const cents = Math.round(parsed * 100);
+    if (!Number.isFinite(parsed) || cents === 0) {
+      toast.error('Invalid amount', 'Enter a non-zero dollar amount.');
+      return;
+    }
+    const note = window.prompt('Why? The note is kept on the wallet\'s ledger.');
+    if (note === null) return;
+    const result = await api.adminAdjustAppWallet(walletId, cents, note);
     if (result.error) { toast.error('Not changed', result.error); return; }
     toast.success('Done', `The balance is now ${formatCents(result.data?.balanceCents ?? 0)}.`);
     setAttempt((n) => n + 1);

@@ -121,7 +121,6 @@ class SQLiteConnection
             if (is_resource($initLock)) {
                 flock($initLock, LOCK_UN);
                 fclose($initLock);
-                @unlink($dbPath . '.init');
             }
         }
     }
@@ -195,9 +194,9 @@ class SQLiteConnection
             unset($this->connections[$formId]);
         }
 
-        // Journals first, main file last — a main file without journals is still a
+        // Journals and lockfiles first, main file last — a main file without journals is still a
         // valid database, while orphaned journals would be dangling response data.
-        foreach ([$dbPath . '-wal', $dbPath . '-shm', $dbPath] as $path) {
+        foreach ([$dbPath . '-wal', $dbPath . '-shm', $dbPath . '.init', $dbPath . '.migrate', $dbPath] as $path) {
             if (file_exists($path)) {
                 @unlink($path);
             }
@@ -439,7 +438,6 @@ class SQLiteConnection
             if ($lock !== false) {
                 flock($lock, LOCK_UN);
                 fclose($lock);
-                @unlink($dbPath . '.migrate');
             }
         }
     }

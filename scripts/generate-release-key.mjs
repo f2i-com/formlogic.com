@@ -14,16 +14,21 @@
  */
 
 import { generateKeyPairSync, createHash } from 'node:crypto';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 
 const out = process.argv[2] || 'formlogic-release-signing.pem';
-if (existsSync(out)) {
-  console.error(`refusing to overwrite existing key file: ${out}`);
-  process.exit(1);
-}
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-writeFileSync(out, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+try {
+  // Exclusive creation ('wx') avoids check-then-write TOCTOU and refuses overwriting existing files/symlinks.
+  writeFileSync(out, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600, flag: 'wx' });
+} catch (err) {
+  if (err && err.code === 'EEXIST') {
+    console.error(`refusing to overwrite existing key file: ${out}`);
+    process.exit(1);
+  }
+  throw err;
+}
 
 const spki = publicKey.export({ type: 'spki', format: 'der' });
 const rawPub = spki.subarray(spki.length - 32);

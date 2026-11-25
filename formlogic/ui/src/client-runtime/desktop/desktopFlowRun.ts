@@ -32,6 +32,7 @@ import {
   bytesToBase64,
   decodeTunnelEnvelope,
   encodeTunnelEnvelope,
+  DesktopPinStorageError,
   getDesktopE2ePin,
   keyFingerprint,
   trustDesktopE2eKey,
@@ -203,7 +204,15 @@ async function resolveDesktopKey(
     return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
   }
 
-  const pin = getDesktopE2ePin(resolvedInstance);
+  let pin: DesktopE2ePin | null;
+  try {
+    pin = getDesktopE2ePin(resolvedInstance);
+  } catch (e) {
+    if (e instanceof DesktopPinStorageError) {
+      return failure({ code: e.code, message: e.message });
+    }
+    throw e;
+  }
   if (pin && pin.pubkey !== pubkeyB64) {
     // Key rotation: NEVER trusted silently (plan §5.1/§7).
     const rotation: DesktopE2eKeyRotation = {
@@ -222,17 +231,24 @@ async function resolveDesktopKey(
     });
   }
 
-  if (!pin) {
-    const recorded = trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
-    if (!recorded) {
-      return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
+  try {
+    if (!pin) {
+      const recorded = trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+      if (!recorded) {
+        return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
+      }
+      onTrustEstablished?.(recorded, true);
+    } else {
+      if (pin.deviceName !== deviceName) {
+        trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+      }
+      onTrustEstablished?.({ ...pin, deviceName }, false);
     }
-    onTrustEstablished?.(recorded, true);
-  } else {
-    if (pin.deviceName !== deviceName) {
-      trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+  } catch (e) {
+    if (e instanceof DesktopPinStorageError) {
+      return failure({ code: e.code, message: e.message });
     }
-    onTrustEstablished?.({ ...pin, deviceName }, false);
+    throw e;
   }
   return { ok: true, data: { instanceId: resolvedInstance, publicKey, deviceName } };
 }
@@ -620,52 +636,56 @@ export async function runFlowOnDesktop(
 
   // 2. Per-run ephemeral session + sealed request envelope (counter 0, direction 0x00).
   const session = TunnelSession.create(instanceId, publicKey);
-  const sealedBody: Record<string, unknown> = { v: 1, flowId, inputs: opts.inputs ?? {}, clientSeq: 1 };
-  let envelopeB64: string;
   try {
-    envelopeB64 = encodeTunnelEnvelope(session.sealRequest(sealedBody));
-  } catch (e) {
-    return fail({ code: 'sealed_envelope_invalid', message: errorMessage(e) });
-  }
-
-  // 3. Enqueue onto the desktop's flow lane (§5.2). The backend never sees the plaintext.
-  const enqueueBody: DesktopFlowRunEnqueueBody = {
-    targetInstanceId: instanceId,
-    flowId,
-    ephPub: bytesToBase64(session.ephemeralPublicKey),
-    envelope: envelopeB64,
-    idempotencyKey: generateId(),
-  };
-  const enqueueRes = await api.enqueueDesktopFlowRun(enqueueBody);
-  if (enqueueRes.error) {
-    if (!enqueueRes.status) {
-      // Network failure at enqueue: the run MAY have landed — honest `uncertain` (§5.8),
-      // never a silent retry that could double-run the flow.
-      return fail({
-        code: 'uncertain',
-        message: `The run may or may not have reached the queue (${enqueueRes.error}). Check the request list before retrying.`,
-      });
+    const sealedBody: Record<string, unknown> = { v: 1, flowId, inputs: opts.inputs ?? {}, clientSeq: 1 };
+    let envelopeB64: string;
+    try {
+      envelopeB64 = encodeTunnelEnvelope(session.sealRequest(sealedBody));
+    } catch (e) {
+      return fail({ code: 'sealed_envelope_invalid', message: errorMessage(e) });
     }
-    return fail({ code: enqueueRes.code ?? 'request_failed', message: enqueueRes.error, status: enqueueRes.status });
-  }
-  const requestId = enqueueRes.data?.requestId;
-  if (!requestId) {
-    return fail({ code: 'request_failed', message: 'The queue accepted the run but returned no request id.' });
-  }
-  safeCall(() => onState({ state: 'queued', position: enqueueRes.data?.queuePos ?? 0 }));
 
-  // 4. Stream sealed progress to a terminal outcome, then resolve the result.
-  const terminal = await streamFlowRun(session, requestId, opts, onState);
-  switch (terminal.kind) {
-    case 'done': {
-      // A sealed flow_result frame is authentic on its own; otherwise the status read
-      // (already done inside the stream loop when it ended cleanly) is the authority.
-      safeCall(() => onState({ state: 'done' }));
-      return { ok: true, data: { status: 'done', result: terminal.result } };
+    // 3. Enqueue onto the desktop's flow lane (§5.2). The backend never sees the plaintext.
+    const enqueueBody: DesktopFlowRunEnqueueBody = {
+      targetInstanceId: instanceId,
+      flowId,
+      ephPub: bytesToBase64(session.ephemeralPublicKey),
+      envelope: envelopeB64,
+      idempotencyKey: generateId(),
+    };
+    const enqueueRes = await api.enqueueDesktopFlowRun(enqueueBody);
+    if (enqueueRes.error) {
+      if (!enqueueRes.status) {
+        // Network failure at enqueue: the run MAY have landed — honest `uncertain` (§5.8),
+        // never a silent retry that could double-run the flow.
+        return fail({
+          code: 'uncertain',
+          message: `The run may or may not have reached the queue (${enqueueRes.error}). Check the request list before retrying.`,
+        });
+      }
+      return fail({ code: enqueueRes.code ?? 'request_failed', message: enqueueRes.error, status: enqueueRes.status });
     }
-    case 'failed':
-      return fail({ code: terminal.code, message: terminal.message ?? 'The desktop reported a failure.' });
-    case 'uncertain':
-      return fail({ code: 'uncertain', message: terminal.message }, { state: 'uncertain', message: terminal.message });
+    const requestId = enqueueRes.data?.requestId;
+    if (!requestId) {
+      return fail({ code: 'request_failed', message: 'The queue accepted the run but returned no request id.' });
+    }
+    safeCall(() => onState({ state: 'queued', position: enqueueRes.data?.queuePos ?? 0 }));
+
+    // 4. Stream sealed progress to a terminal outcome, then resolve the result.
+    const terminal = await streamFlowRun(session, requestId, opts, onState);
+    switch (terminal.kind) {
+      case 'done': {
+        // A sealed flow_result frame is authentic on its own; otherwise the status read
+        // (already done inside the stream loop when it ended cleanly) is the authority.
+        safeCall(() => onState({ state: 'done' }));
+        return { ok: true, data: { status: 'done', result: terminal.result } };
+      }
+      case 'failed':
+        return fail({ code: terminal.code, message: terminal.message ?? 'The desktop reported a failure.' });
+      case 'uncertain':
+        return fail({ code: 'uncertain', message: terminal.message }, { state: 'uncertain', message: terminal.message });
+    }
+  } finally {
+    session.destroy();
   }
 }

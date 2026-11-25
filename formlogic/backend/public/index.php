@@ -186,7 +186,9 @@ $container->set(\FormLogic\Controllers\AdminController::class, function (Contain
         $c->get(\FormLogic\Services\PlanService::class),
         $c->get(\FormLogic\Services\RuntimeEngineService::class),
         $c->get(\FormLogic\Services\AdminSupportActivity::class),
-        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class)
+        $c->get(\FormLogic\Services\SiteAiDesktopSettings::class),
+        $c->get(\FormLogic\Services\AppUserService::class),
+        $c->get(\FormLogic\Services\NativeAppService::class)
     );
 });
 
@@ -203,7 +205,10 @@ $container->set(\FormLogic\Services\ScheduledBackupService::class, function (Con
         $c->get(MySQLConnection::class),
         $c->get(\FormLogic\Services\AccountBackupService::class),
         $c->get(\FormLogic\Services\UpgradeService::class),
-        $settings['settings']['backups'] ?? [],
+        ($settings['settings']['backups'] ?? []) + [
+            'privateForms' => (bool) ($settings['settings']['cloud']['privateForms'] ?? false),
+            'uploads' => $settings['settings']['uploads'] ?? [],
+        ],
         $c->get(LoggerInterface::class)
     );
 });
@@ -219,7 +224,10 @@ $container->set(\FormLogic\Services\AccountBackupService::class, function (Conta
         $c->get(\FormLogic\Services\AppUserService::class),
         $c->get(\FormLogic\Services\FlowService::class),
         $c->get(ResponseService::class),
-        $settings['settings']['backups'] ?? [],
+        ($settings['settings']['backups'] ?? []) + [
+            'privateForms' => (bool) ($settings['settings']['cloud']['privateForms'] ?? false),
+            'uploads' => $settings['settings']['uploads'] ?? [],
+        ],
         $settings['settings']['sqlite']['storage_path'],
         $settings['settings']['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads',
         $c->get(\FormLogic\Services\PlanService::class),
@@ -722,7 +730,8 @@ $container->set(\FormLogic\Services\FormSqliteDatabaseService::class, function (
         $c->get(SQLiteConnection::class),
         $c->get(AppService::class),
         $c->get(FormService::class),
-        $c->get(\FormLogic\Services\NativeAppService::class)
+        $c->get(\FormLogic\Services\NativeAppService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 $container->set(\FormLogic\Controllers\AppDatabaseController::class, function (Container $c) {
@@ -888,7 +897,10 @@ $container->set(\FormLogic\Services\AokieCompanionAdmissionSigner::class, functi
     return \FormLogic\Services\AokieCompanionAdmissionSigner::fromEnvironment();
 });
 $container->set(\FormLogic\Services\AokieCompanionDeviceService::class, function (Container $c) {
-    return new \FormLogic\Services\AokieCompanionDeviceService($c->get(MySQLConnection::class));
+    return new \FormLogic\Services\AokieCompanionDeviceService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\AccessGateService::class)
+    );
 });
 $container->set(\FormLogic\Services\AokieCompanionPushService::class, function (Container $c) {
     return new \FormLogic\Services\AokieCompanionPushService($c->get(MySQLConnection::class));
@@ -1453,7 +1465,21 @@ $container->set(\FormLogic\Controllers\FormReportController::class, function (Co
         $c->get(FormService::class),
         $c->get(SQLiteConnection::class),
         $c->get(AppService::class),
-        $c->get(\FormLogic\Services\AppReportService::class)
+        $c->get(\FormLogic\Services\AppReportService::class),
+        $c->get(MySQLConnection::class)
+    );
+});
+
+// Diagram materialisation (explicit factory so PlanService is always injected alongside required services).
+$container->set(\FormLogic\Services\BlueprintMaterializeService::class, function (Container $c) {
+    return new \FormLogic\Services\BlueprintMaterializeService(
+        $c->get(MySQLConnection::class),
+        $c->get(\FormLogic\Services\BlueprintService::class),
+        $c->get(FormService::class),
+        $c->get(AppService::class),
+        $c->get(\FormLogic\Services\FlowService::class),
+        $c->get(AppUserService::class),
+        $c->get(\FormLogic\Services\PlanService::class)
     );
 });
 
@@ -1593,6 +1619,10 @@ $app->add(function (\Psr\Http\Message\ServerRequestInterface $request, \Psr\Http
                 $appService = $container->get(AppService::class);
                 $appRow = $appService->getAppBySlug($slug);
                 if (is_array($appRow)) {
+                    $demoEmail = \FormLogic\Support\Environment::get('DEMO_EMAIL', 'demo@formlogic.local');
+                    $demoOwnerStmt = $container->get(MySQLConnection::class)->getConnection()->prepare('SELECT id FROM users WHERE email = :email LIMIT 1');
+                    $demoOwnerStmt->execute(['email' => $demoEmail]);
+                    $demoOwnerId = $demoOwnerStmt->fetchColumn();
                     $appSettings = is_array($appRow['settings'] ?? null) ? $appRow['settings'] : [];
                     $packSlug = is_string($appSettings['companionSoftnPackSlug'] ?? null)
                         ? trim((string) $appSettings['companionSoftnPackSlug'])
@@ -1600,7 +1630,7 @@ $app->add(function (\Psr\Http\Message\ServerRequestInterface $request, \Psr\Http
                     $linkedSoftnId = is_string($appSettings['linkedSoftnAppId'] ?? null)
                         ? trim((string) $appSettings['linkedSoftnAppId'])
                         : '';
-                    if ($packSlug !== '' && $linkedSoftnId !== '') {
+                    if (is_string($demoOwnerId) && $demoOwnerId !== '' && (string) ($appRow['ownerId'] ?? '') === $demoOwnerId && $packSlug !== '' && $linkedSoftnId !== '') {
                         $sandbox = $container->get(\FormLogic\Services\MarketplaceSandboxService::class);
                         $catalogRow = $container->get(PackCatalogService::class)->getCatalogBySlug($packSlug);
                         if (!is_array($catalogRow) || empty($catalogRow['demo_app_id'])) {
@@ -1660,6 +1690,12 @@ $app->add($corsMiddleware);
 // Add security headers middleware
 $app->add(new SecurityHeadersMiddleware($settings['settings']['isProduction'] ?? false));
 
+$appDomainSessions = new \FormLogic\Support\AppDomainSession(
+    $connectedApp,
+    static fn (string $id): bool => $container->get(\FormLogic\Services\AppDomainSignInService::class)->isLive($id),
+    static fn (string $appId, string $formId): bool => $container->get(\FormLogic\Services\AppService::class)->formBelongsToApp($appId, $formId)
+);
+
 // The unauthenticated default is deliberately small. Exact routes may opt into a
 // larger content-type-specific cap; authenticated policies verify a bearer/cookie
 // token before the stream is consumed. Handler-level file/pack limits still apply.
@@ -1686,7 +1722,7 @@ $app->add(new BodySizeLimitMiddleware(
         ['path' => '#^/api/app/[^/]+/native/uploads$#', 'method' => 'POST', 'maxBytes' => 36 * 1024 * 1024, 'contentTypes' => array_merge($multipart, ['application/json']), 'auth' => false],
 
         ['path' => '#^/api/account/backup/import$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
-        ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => false],
+        ['path' => '#^/api/v1/data-node/restores$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => ['application/zip'], 'auth' => true, 'apiKey' => true],
         ['path' => '#^/api/admin/upgrade/upload$#', 'maxBytes' => $backupMax + (16 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/(application-packages/import|packs/catalog/upload|packs/catalog/publish-softn)$#', 'maxBytes' => $packMax + (4 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/packs/catalog/publish-softn$#', 'maxBytes' => 16 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
@@ -1701,11 +1737,14 @@ $app->add(new BodySizeLimitMiddleware(
         ['path' => '#^/api/packages/install-plans$#', 'maxBytes' => 8 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/ai/generate-form-from-file$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
         ['path' => '#^/api/app/[^/]+/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => true],
-        ['path' => '#^/api/forms(?:/[^/]+)?$#', 'maxBytes' => 4 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        ['path' => '#^/api/forms(?:/[^/]+)?$#', 'method' => 'POST', 'maxBytes' => 4 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
+        ['path' => '#^/api/forms(?:/[^/]+)?$#', 'method' => 'PUT', 'maxBytes' => 4 * 1024 * 1024, 'contentTypes' => ['application/json'], 'auth' => true],
         ['path' => '#^/api/forms/[^/]+/upload$#', 'maxBytes' => $uploadMax + (2 * 1024 * 1024), 'contentTypes' => $multipart, 'auth' => false],
     ],
     $container->get(AuthService::class),
-    $cookieName
+    $cookieName,
+    $appDomainSessions,
+    $container->get(ApiKeyService::class)
 ));
 
 // A native project's upload holds several copies of itself while it is read, checked and written
@@ -1774,12 +1813,7 @@ $app->add(new \FormLogic\Middleware\SqlErrorGuardMiddleware($appLogger));
 // Outside that one, because it has to measure the answer as it will be sent.
 $app->add(new \FormLogic\Middleware\AfterResponseMiddleware());
 
-// Create auth middleware instances
-$appDomainSessions = new \FormLogic\Support\AppDomainSession(
-    $connectedApp,
-    static fn (string $id): bool => $container->get(\FormLogic\Services\AppDomainSignInService::class)->isLive($id),
-    static fn (string $appId, string $formId): bool => in_array($formId, array_column($container->get(\FormLogic\Services\AppService::class)->getAppForms($appId), 'formId'), true)
-);
+// Create auth middleware instances (reusing $appDomainSessions built above for BodySizeLimitMiddleware)
 $authRequired = new AuthMiddleware($container->get(AuthService::class), false, $cookieName, $appDomainSessions);
 $authOptional = new AuthMiddleware($container->get(AuthService::class), true, $cookieName, $appDomainSessions);
 // An app's age gate, on every route that names an app by slug (RouteGateWiringTest holds this file to it).
@@ -2578,7 +2612,7 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     // Import CSV responses (requires auth)
     $group->post('/import', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->importCsv($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($cloudWriteGate)->add($batchImportRateLimiter)->add($authRequired);
 
     // Batch import structured JSON rows with created IDs & linked_record syncing (requires auth)
     $group->post('/batch-import', function ($request, $response) use ($container, $getArgs) {
@@ -2600,7 +2634,7 @@ $app->group('/api/forms/{formId}/responses', function (RouteCollectorProxy $grou
     })->add($authRequired);
     $group->put('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->update($request, $response, $getArgs($request));
-    })->add($authRequired);
+    })->add($cloudWriteGate)->add($authRequired);
     $group->delete('/{id}', function ($request, $response) use ($container, $getArgs) {
         return $container->get(ResponseController::class)->delete($request, $response, $getArgs($request));
     })->add($authRequired);
@@ -2789,6 +2823,10 @@ $app->get('/api/public/forms/{id}/drafts/{token}', function ($request, $response
         $response->getBody()->write(json_encode(['error' => true, 'message' => $loaded['error']]));
         return $response->withStatus(404)->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
     }
+    if ($container->get(\FormLogic\Services\FormEncryptionService::class)->isPrivate($formId)) {
+        $response->getBody()->write(json_encode(['error' => true, 'code' => 'private_form_encrypted', 'message' => 'Server-side drafts are not supported for end-to-end encrypted forms.']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json')->withHeader('Cache-Control', 'no-store');
+    }
     $draft = $container->get(\FormLogic\Services\PublicFormDraftService::class)->getDraft($formId, $token);
     if ($draft === null) {
         $response->getBody()->write(json_encode(['error' => true, 'message' => 'Saved draft not found or expired.']));
@@ -2809,6 +2847,10 @@ $app->get('/api/public/forms/{id}/screen-records', function ($request, $response
     }
     if (empty($form['customScreen']['publicRecords'])) {
         $response->getBody()->write(json_encode(['error' => true, 'message' => 'Public records are not enabled for this form']));
+        return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+    }
+    if ($container->get(\FormLogic\Services\FormEncryptionService::class)->isPrivate($args['id'])) {
+        $response->getBody()->write(json_encode(['error' => true, 'code' => 'private_form_encrypted', 'message' => 'Public records are not available for end-to-end encrypted forms']));
         return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
     }
     // App-scoped forms are served through the authenticated app runtime (mirror the public form gate).
@@ -3099,17 +3141,18 @@ $app->get('/api/packs/screenshots/{file}', function ($request, $response) use ($
     return $response->withStatus(404);
 });
 
+$mktPublishLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'mkt_publish', true);
 $app->post('/api/packs/catalog', function ($request, $response) use ($container) {
     return $container->get(PackCatalogController::class)->publish($request, $response);
-})->add($authRequired);
+})->add($mktPublishLimiter)->add($authRequired);
 
 $app->post('/api/packs/catalog/upload', function ($request, $response) use ($container) {
     return $container->get(PackCatalogController::class)->uploadZip($request, $response);
-})->add($authRequired);
+})->add($mktPublishLimiter)->add($authRequired);
 
 $app->post('/api/packs/catalog/publish-softn', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->publishSoftn($request, $response);
-})->add($authRequired);
+})->add($mktPublishLimiter)->add($authRequired);
 
 $app->post('/api/packs/catalog/seed', function ($request, $response) use ($container) {
     // Any authenticated user may TRIGGER the one-time bootstrap so a brand-new
@@ -3208,13 +3251,14 @@ $app->delete('/api/packs/catalog/{slug}/demo/records', function ($request, $resp
 })->add($mktSandboxLimiter);
 
 // Marketplace licensing, server-side protected install & seller sales
+$mktCommerceLimiter = new RateLimitMiddleware($rateLimiter, 20, 60, 'mkt_commerce', true);
 $app->post('/api/packs/catalog/{slug}/purchase', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->purchase($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($mktCommerceLimiter)->add($authRequired);
 
 $app->post('/api/packs/catalog/{slug}/install', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->install($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($cloudWriteGate)->add($mktCommerceLimiter)->add($authRequired);
 
 $app->get('/api/marketplace/licenses', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->myLicenses($request, $response);
@@ -3237,9 +3281,10 @@ $app->delete('/api/member-plugins/{id}', function ($request, $response) use ($co
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->uninstallMemberPlugin($request, $response, $getArgs($request));
 })->add($authRequired);
 
+$memberPluginInvokeLimiter = new RateLimitMiddleware($rateLimiter, 120, 60, 'member_plugin_invoke', true);
 $app->post('/api/member-plugins/{id}/request', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->invokeMemberPlugin($request, $response, $getArgs($request));
-})->add($authRequired);
+})->add($memberPluginInvokeLimiter)->add($authRequired);
 
 $app->get('/api/apps/{id}/plugins', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\MarketplaceController::class)->listAppPlugins($request, $response, $getArgs($request));
@@ -3546,6 +3591,10 @@ $oauthInfoRateLimiter = new RateLimitMiddleware($rateLimiter, 60, 60, 'oauth_inf
 $app->get('/oauth/authorize', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)
         ->authorizationPage($request, $response);
+})->add($oauthInfoRateLimiter);
+$app->get('/oauth/device', function ($request, $response) use ($container) {
+    return $container->get(\FormLogic\Controllers\McpOAuthController::class)
+        ->devicePage($request, $response);
 })->add($oauthInfoRateLimiter);
 $app->get('/api/oauth/authorize-info', function ($request, $response) use ($container) {
     return $container->get(\FormLogic\Controllers\McpOAuthController::class)->authorizeInfo($request, $response);

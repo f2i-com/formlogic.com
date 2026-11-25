@@ -11,6 +11,7 @@
 // port can't leak its token into the real one. All privileged calls attach
 // `Authorization: Bearer <token>` (EventSource uses `?token=` instead).
 import { getDesktopBaseUrl, type DesktopPairingPollResult, type DesktopPairingStatus } from './desktopTypes';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../../lib/sessionGeneration';
 
 const TOKEN_KEY_PREFIX = 'formlogic-desktop-token:';
 
@@ -224,6 +225,8 @@ export interface PollPairingOptions {
   intervalMs?: number;
   /** Overall cap waiting for the user's native approval, default 120s. */
   timeoutMs?: number;
+  /** Optional cancellation signal. */
+  signal?: AbortSignal;
 }
 
 export type PollPairingResult =
@@ -244,13 +247,21 @@ export async function pollPairing(
   const intervalMs = options.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_POLL_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
+  const sessionGen = currentSessionGeneration();
 
   for (;;) {
+    if (options.signal?.aborted || !isSessionGenerationCurrent(sessionGen) || autoReconnectSuppressed) {
+      return { status: 'timeout' };
+    }
     let poll: DesktopPairingPollResult | null = null;
     try {
+      const timeoutSig = timeoutSignal(FETCH_TIMEOUT_MS);
+      const fetchSignal = options.signal && timeoutSig && typeof AbortSignal !== 'undefined' && typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([timeoutSig, options.signal])
+        : (options.signal ?? timeoutSig);
       const res = await fetch(
         `${getDesktopBaseUrl()}/api/desktop/pairing-requests/${encodeURIComponent(requestId)}`,
-        { credentials: 'omit', cache: 'no-store', signal: timeoutSignal(FETCH_TIMEOUT_MS) }
+        { credentials: 'omit', cache: 'no-store', signal: fetchSignal }
       );
       if (res.ok) {
         const body = (await res.json().catch(() => null)) as { status?: unknown; token?: unknown } | null;
@@ -262,6 +273,9 @@ export async function pollPairing(
       /* transient network failure — keep polling until the deadline */
     }
 
+    if (options.signal?.aborted || !isSessionGenerationCurrent(sessionGen) || autoReconnectSuppressed) {
+      return { status: 'timeout' };
+    }
     if (poll?.status === 'approved' && poll.token) {
       storeDesktopToken(poll.token);
       return { status: 'approved' };
@@ -269,6 +283,16 @@ export async function pollPairing(
     if (poll?.status === 'denied') return { status: 'denied' };
 
     if (Date.now() + intervalMs > deadline) return { status: 'timeout' };
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        options.signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, intervalMs);
+      const onAbort = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }

@@ -50,10 +50,27 @@ use trust::PinnedKeys;
 // direct navigate is overwritten by that load. We stash the target and open it once the
 // shell's first page load finishes; while the app is already running (WARM) we navigate
 // immediately.
-#[derive(Default)]
 struct DeepLinkNav {
     pending: Mutex<Option<String>>,
     shell_ready: AtomicBool,
+    /// One-shot latch allowing navigation to the privileged bundled shell URL (`SHELL_URL`),
+    /// initialized true for startup and re-armed only by `formlogic://home`.
+    allow_shell_nav: AtomicBool,
+    /// Tracks whether `PageLoadEvent::Started` ran for the current hosted-app load, so
+    /// `PageLoadEvent::Finished` can force re-verification on WebView backends that skip
+    /// `Started` and re-apply `DISPLAY_ONLY_SCRIPT` if verification already failed before DOM init.
+    started_seen: AtomicBool,
+}
+
+impl Default for DeepLinkNav {
+    fn default() -> Self {
+        Self {
+            pending: Mutex::new(None),
+            shell_ready: AtomicBool::new(false),
+            allow_shell_nav: AtomicBool::new(true),
+            started_seen: AtomicBool::new(false),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -443,8 +460,12 @@ fn app_key(origin: &str, slug: &str) -> String {
 /// connector read never races the verifier.
 #[derive(Clone)]
 enum OriginVerification {
-    /// Signed-manifest verification is in flight (thread spawned, not yet terminal).
+    /// Initial signed-manifest verification is in flight (thread spawned, not yet terminal).
     Pending,
+    /// Re-verification of a previously verified app is in flight on reload: `ready()` awaits it,
+    /// authoritative failures revoke to `Failed`, and transient offline/network errors restore
+    /// the prior `Verified(caps)` so offline-capable apps keep access to their sync queue.
+    Reverifying(VerifiedCaps),
     /// Verified: the Ed25519 client manifest checked out; these native caps are granted.
     Verified(VerifiedCaps),
     /// Verification definitively failed (missing/invalid signature, fetch error, slug mismatch…).
@@ -485,10 +506,16 @@ impl VerifiedOrigins {
         matches!(self.lock().get(origin), Some(OriginVerification::Verified(_)))
     }
 
+    /// True when the key has reached the terminal `Failed` state.
+    fn is_failed(&self, origin: &str) -> bool {
+        matches!(self.lock().get(origin), Some(OriginVerification::Failed))
+    }
+
     /// Atomically claim verification for an origin: mark it `Pending` and return true iff the
     /// caller should start the verifier thread. Returns false when the origin is already
     /// `Verified` or already `Pending` (a verification is in flight) to avoid duplicate work; a
     /// previously `Failed` origin is retried (re-marked `Pending`) on a fresh navigation.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn begin_verification(&self, origin: &str) -> bool {
         let mut map = self.lock();
         let in_flight = matches!(
@@ -499,6 +526,39 @@ impl VerifiedOrigins {
             map.insert(origin.to_string(), OriginVerification::Pending);
         }
         !in_flight
+    }
+
+    /// Force re-verification on a full page reload (unless one is already in flight) so
+    /// revoked capabilities or rotated server keys take effect without restarting the runtime,
+    /// while preserving prior verified caps in `Reverifying` for transient offline fallback.
+    fn begin_reverification(&self, origin: &str) -> bool {
+        let mut map = self.lock();
+        let next = match map.get(origin) {
+            Some(OriginVerification::Pending) | Some(OriginVerification::Reverifying(_)) => {
+                return false;
+            }
+            Some(OriginVerification::Verified(prior)) => {
+                OriginVerification::Reverifying(prior.clone())
+            }
+            Some(OriginVerification::Failed) | None => OriginVerification::Pending,
+        };
+        map.insert(origin.to_string(), next);
+        true
+    }
+
+    /// Restore previously verified caps when a reload re-verification hits a transient offline
+    /// / network transport error. Returns true iff prior caps were restored (never grants caps
+    /// to an app that was only `Pending` or `Failed`).
+    fn restore_on_offline(&self, origin: &str) -> bool {
+        let (lock, cvar) = &*self.0;
+        let mut map = lock.lock().unwrap();
+        if let Some(OriginVerification::Reverifying(prior)) = map.get(origin).cloned() {
+            map.insert(origin.to_string(), OriginVerification::Verified(prior));
+            cvar.notify_all();
+            true
+        } else {
+            false
+        }
     }
 
     /// Claim verification for an app this session has not tried yet: mark it `Pending` and
@@ -593,8 +653,10 @@ fn caller_identity<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Option<(St
 /// How one app's signed manifest is checked: fetched, verified, and its server's key trusted
 /// (`fetch_and_verify` with the native consent dialog, which `run()` installs). The tests
 /// install their own: the mock runtime has no server and no dialog.
+type VerifierFn = dyn Fn(&str, &str) -> Result<VerifiedCaps, String> + Send + Sync;
+
 #[derive(Clone)]
-struct Verifier(Arc<dyn Fn(&str, &str) -> Result<VerifiedCaps, String> + Send + Sync>);
+struct Verifier(Arc<VerifierFn>);
 
 /// What a page whose app failed verification is told: its bridge is display-only, so the web
 /// runtime uses its browser connectors and queue.
@@ -624,6 +686,10 @@ fn spawn_verifier<R: tauri::Runtime>(webview: &tauri::Webview<R>, verifier: Veri
                 vmap.insert_verified(key, caps);
             }
             Err(e) => {
+                if e.starts_with("network: ") && vmap.restore_on_offline(&key) {
+                    eprintln!("[formlogic] offline during re-verification for {origin} ({slug}); retaining prior verified caps: {e}");
+                    return;
+                }
                 eprintln!("[formlogic] manifest verification FAILED for {origin} ({slug}): {e}");
                 // Record the terminal failure (unblocks ready() with verified=false), and flip
                 // the bridge to display-only so the web runtime falls back, unless the page has
@@ -649,7 +715,7 @@ fn verify_on_page_load<R: tauri::Runtime>(webview: &tauri::Webview<R>, url: &Url
         return;
     };
     let Some(verifier) = webview.try_state::<Verifier>().map(|v| v.inner().clone()) else { return };
-    if webview.state::<VerifiedOrigins>().begin_verification(&app_key(&origin, &slug)) {
+    if webview.state::<VerifiedOrigins>().begin_reverification(&app_key(&origin, &slug)) {
         spawn_verifier(webview, verifier, origin, slug);
     }
 }
@@ -687,31 +753,34 @@ fn require_verified_partition<R: tauri::Runtime>(
 }
 
 /// The tuple origin (scheme://host[:port]) for an http/https app URL, excluding the runtime
-/// shell (tauri.localhost) and non-web schemes.
+/// shell (tauri.localhost / *.tauri.localhost / trailing-dot forms) and non-web schemes.
 fn hosted_app_origin(url: &Url) -> Option<String> {
-    if !matches!(url.scheme(), "http" | "https") {
+    if !matches!(url.scheme(), "http" | "https") || is_shell_url(url) {
         return None;
-    }
-    if url.host_str() == Some("tauri.localhost") {
-        return None; // the runtime's own shell, not a hosted app
     }
     Some(url.origin().ascii_serialization())
 }
 
-/// The app slug from a hosted app URL — the path segment after `/app/` (also matches the
-/// deep-link `/open/app/<slug>` form). None if the app is not served under `/app/<slug>`.
+/// Valid FormLogic app slug: ASCII letters, digits, hyphens, and underscores (1–100 chars).
+fn is_valid_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug.len() <= 100
+        && slug
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// The app slug from a hosted app URL — strictly the leading `/app/<slug>` or deep-link
+/// `/open/app/<slug>` path form. None if the URL is not under those prefixes or the slug is
+/// malformed.
 fn slug_of(url: &Url) -> Option<String> {
     let segments: Vec<&str> = url.path_segments()?.collect();
-    for (i, seg) in segments.iter().enumerate() {
-        if *seg == "app" {
-            if let Some(next) = segments.get(i + 1) {
-                if !next.is_empty() {
-                    return Some((*next).to_string());
-                }
-            }
-        }
-    }
-    None
+    let candidate = match segments.as_slice() {
+        ["app", slug, ..] => *slug,
+        ["open", "app", slug, ..] => *slug,
+        _ => return None,
+    };
+    is_valid_slug(candidate).then(|| candidate.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -860,7 +929,7 @@ fn read_response(body: impl std::io::Read, url: &str) -> Result<String, String> 
     let mut bytes = Vec::new();
     body.take(MAX_MANIFEST_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("reading {url} failed: {e}"))?;
+        .map_err(|e| format!("network: reading {url} failed: {e}"))?;
     if bytes.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(format!("{url} answered with more than {MAX_MANIFEST_BYTES} bytes"));
     }
@@ -868,7 +937,7 @@ fn read_response(body: impl std::io::Read, url: &str) -> Result<String, String> 
 }
 
 fn http_get(client: &reqwest::blocking::Client, url: &str) -> Result<String, String> {
-    let resp = client.get(url).send().map_err(|e| format!("GET {url} failed: {e}"))?;
+    let resp = client.get(url).send().map_err(|e| format!("network: GET {url} failed: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("GET {url} returned HTTP {}", resp.status().as_u16()));
     }
@@ -906,10 +975,18 @@ where
     F: FnMut(&str) -> Result<String, String>,
 {
     let well_known_url = format!("{origin}/.well-known/formlogic-app.json");
-    if let Ok(text) = fetch(&well_known_url) {
-        if let Some(envelope) = parse_manifest_envelope(&text) {
-            return Ok(envelope);
+    match fetch(&well_known_url) {
+        Ok(text) => {
+            if let Some(envelope) = parse_manifest_envelope(&text) {
+                return Ok(envelope);
+            }
         }
+        Err(e) if e.starts_with("network: ") => {
+            // Transport/offline failure against the same origin: do not pay a second timeout
+            // probing the API fallback on the same unreachable host.
+            return Err(e);
+        }
+        Err(_) => {}
     }
     let api_url = format!("{origin}/api/app/{slug}/client-manifest");
     let text = fetch(&api_url)?;
@@ -991,7 +1068,9 @@ fn fetch_and_verify(
     confirm: &dyn Fn(&trust::TrustPrompt) -> bool,
 ) -> Result<VerifiedCaps, String> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
 
@@ -1057,8 +1136,9 @@ const BRIDGE_SCRIPT: &str = r#"
     runtime: {
       getInfo: function () { return invoke('runtime_info'); },
       openExternal: function (url) {
-        try { return invoke('plugin:opener|open_url', { url: url }); }
-        catch (e) { window.open(url, '_blank'); return Promise.resolve(); }
+        return invoke('runtime_open_external', { url: String(url == null ? '' : url) }).catch(function (e) {
+          throw toError(e);
+        });
       },
       // Target of the deep link that launched the runtime (cold start), or null.
       // The shell reads this so it can open straight into the app without ever
@@ -1169,18 +1249,47 @@ const BRIDGE_SCRIPT: &str = r#"
 /// remembered app URL is broken). Distinct from any openable app URL.
 const DEEP_LINK_HOME: &str = "\0home";
 
-/// An app target is safe to open ONLY if it is http/https — never javascript:/file:/data:,
-/// which would otherwise execute in the privileged shell origin.
+/// True when `url` targets the privileged bundled shell origin (`tauri://localhost` on
+/// macOS/Linux/iOS or `http://tauri.localhost` on Windows/Android, including trailing-dot FQDNs).
+fn is_shell_url(url: &Url) -> bool {
+    url.scheme() == "tauri"
+        || url.host_str().is_some_and(|raw| {
+            let h = raw.trim_end_matches('.');
+            h.eq_ignore_ascii_case("tauri.localhost")
+                || h.to_ascii_lowercase().ends_with(".tauri.localhost")
+        })
+}
+
+/// Validate and normalize an external or deep-link target URL: must be http/https, must not
+/// target the privileged shell origin, must not contain embedded userinfo (anti-spoofing), and
+/// must not contain raw ASCII control characters.
+fn normalize_openable(target: &str) -> Option<String> {
+    if target.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return None;
+    }
+    let u = Url::parse(target).ok()?;
+    if !matches!(u.scheme(), "http" | "https") || is_shell_url(&u) {
+        return None;
+    }
+    if !u.username().is_empty() || u.password().is_some() {
+        return None;
+    }
+    Some(u.to_string())
+}
+
+/// An app target is safe to open ONLY if it is http/https and NOT the privileged shell origin —
+/// never javascript:/file:/data:/tauri:// or http://tauri.localhost.
 fn is_openable(target: &str) -> bool {
-    Url::parse(target)
-        .map(|u| matches!(u.scheme(), "http" | "https"))
-        .unwrap_or(false)
+    normalize_openable(target).is_some()
 }
 
 fn deep_link_target(raw: &str) -> Option<String> {
+    if raw.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return None;
+    }
     let parsed = Url::parse(raw).ok()?;
     match parsed.scheme() {
-        "http" | "https" => Some(raw.to_string()),
+        "http" | "https" => normalize_openable(raw),
         "formlogic" => {
             if parsed.host_str() == Some("home") {
                 return Some(DEEP_LINK_HOME.to_string());
@@ -1190,10 +1299,46 @@ fn deep_link_target(raw: &str) -> Option<String> {
                 .query_pairs()
                 .find(|(k, _)| k == "url")
                 .map(|(_, v)| v.into_owned())
-                .filter(|t| is_openable(t))
+                .and_then(|t| normalize_openable(&t))
         }
         _ => None,
     }
+}
+
+static LAST_OPEN_EXTERNAL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Open an external http(s) URL in the OS browser on behalf of a verified hosted app (never
+/// `file://`, `tauri://`, custom OS handlers, embedded userinfo, control chars, or the shell
+/// origin; atomically rate-limited to 1/sec via monotonic clock).
+#[tauri::command]
+fn runtime_open_external<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
+    verified: tauri::State<'_, VerifiedOrigins>,
+    url: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt as _;
+    let _ = require_caps(&webview, &verified)?;
+    let normalized = normalize_openable(&url).ok_or_else(|| {
+        conn_err(
+            CODE_COMMAND_FAILED,
+            "Only valid http:// and https:// URLs without credentials may be opened externally.",
+        )
+    })?;
+    {
+        let mut last = LAST_OPEN_EXTERNAL.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if last.is_some_and(|prev| now.saturating_duration_since(prev) < Duration::from_secs(1)) {
+            return Err(conn_err(
+                CODE_COMMAND_FAILED,
+                "Please wait a moment before opening another external link.",
+            ));
+        }
+        *last = Some(now);
+    }
+    app.opener()
+        .open_url(normalized, None::<&str>)
+        .map_err(|e| conn_err(CODE_COMMAND_FAILED, format!("Could not open URL: {e}")))
 }
 
 /// What to do with a link the runtime was opened with.
@@ -1241,12 +1386,26 @@ fn app_may_be_remembered(url: String, pins: tauri::State<PinnedKeys>) -> bool {
     may_remember(&url, &pins)
 }
 
+/// The bundled shell's URL, used when `formlogic://home` returns a warm runtime to the placeholder.
+const SHELL_URL: &str = if cfg!(any(windows, target_os = "android")) {
+    "http://tauri.localhost/index.html"
+} else {
+    "tauri://localhost/index.html"
+};
+
 /// Open a link's target: navigate the window now if the shell is up (warm), else stash it for
 /// the booting shell (cold), which takes it with `pending_deep_link`.
 fn open_deep_link<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, state: &DeepLinkNav, target: &str) {
     if state.shell_ready.load(Ordering::SeqCst) {
-        // Warm: navigate only to an openable http/https app. The home sentinel (and anything
-        // else) is handled by the shell on boot.
+        if target == DEEP_LINK_HOME {
+            *state.pending.lock().unwrap() = Some(DEEP_LINK_HOME.to_string());
+            state.allow_shell_nav.store(true, Ordering::SeqCst);
+            if let (Some(win), Ok(url)) = (handle.get_webview_window("main"), Url::parse(SHELL_URL)) {
+                let _ = win.navigate(url);
+            }
+            return;
+        }
+        // Warm: navigate only to an openable http/https app.
         if is_openable(target) {
             if let (Some(win), Ok(url)) = (handle.get_webview_window("main"), Url::parse(target)) {
                 let _ = win.navigate(url);
@@ -1259,9 +1418,15 @@ fn open_deep_link<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, state: &DeepL
 }
 
 /// Ask the person, in a native dialog, whether to open a link to a server this runtime does not
-/// know. Blocks until answered, so never call it on the main thread.
+/// know. Blocks until answered, so never call it on the main thread. Only one confirmation dialog
+/// may be shown at a time so a burst of links cannot stack dialogs.
 fn confirm_unknown_link<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, target: &str) -> bool {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    static LINK_PROMPT_LOCK: Mutex<()> = Mutex::new(());
+    let Ok(_guard) = LINK_PROMPT_LOCK.try_lock() else {
+        eprintln!("[formlogic] ignoring unknown deep link while another confirmation dialog is open");
+        return false;
+    };
     let site = Url::parse(target)
         .map(|u| u.origin().ascii_serialization())
         .unwrap_or_else(|_| target.to_string());
@@ -1283,6 +1448,7 @@ fn bridge_commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> boo
     tauri::generate_handler![
         runtime_info,
         runtime_ready,
+        runtime_open_external,
         connector_list,
         connector_status,
         connector_request,
@@ -1294,6 +1460,37 @@ fn bridge_commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> boo
         pending_deep_link,
         app_may_be_remembered
     ]
+}
+
+fn dispatch_deep_link_urls<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    state: &Arc<DeepLinkNav>,
+    urls: Vec<Url>,
+) {
+    for raw in urls {
+        eprintln!("[formlogic] deep link received: {raw}");
+        let pins = handle.state::<PinnedKeys>();
+        match deep_link_action(raw.as_str(), &pins) {
+            None => {
+                eprintln!("[formlogic] no target resolved from {raw}");
+                continue;
+            }
+            Some(DeepLinkAction::Home) => open_deep_link(handle, state, DEEP_LINK_HOME),
+            Some(DeepLinkAction::Open(target)) => open_deep_link(handle, state, &target),
+            Some(DeepLinkAction::Ask(target)) => {
+                // Not on this thread, which may be the main one: the dialog blocks.
+                let (handle, state) = (handle.clone(), state.clone());
+                std::thread::spawn(move || {
+                    if confirm_unknown_link(&handle, &target) {
+                        open_deep_link(&handle, &state, &target);
+                    } else {
+                        eprintln!("[formlogic] the link to {target} was not opened");
+                    }
+                });
+            }
+        }
+        break;
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1317,13 +1514,10 @@ pub fn run() {
             app.manage(verified.clone());
 
             // App data dir hosts the queue, its encryption key, and the TOFU pin store.
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .inspect(|dir| {
-                    let _ = std::fs::create_dir_all(dir);
-                })
-                .unwrap_or_else(|_| std::env::temp_dir());
+            // Fail closed if the OS app-data directory cannot be resolved or created — never
+            // fall back to a shared temp directory where keys/pins could be exposed or tampered.
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
 
             // TOFU signing-key pins (NATIVE-SEC-001) — read by the verifier and the deep-link handler.
             app.manage(PinnedKeys::load(data_dir.join("pinned-keys.json")));
@@ -1368,6 +1562,7 @@ pub fn run() {
             // console only after confirming no deep link is pending; a `shell_ready` latch
             // lets warm deep links (below) navigate immediately.
             let state_load = nav_state.clone();
+            let state_nav = nav_state.clone();
             tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -1377,17 +1572,58 @@ pub fn run() {
             .inner_size(1040.0, 780.0)
             .background_color(Color(8, 11, 22, 255))
             .initialization_script(BRIDGE_SCRIPT)
+            .on_navigation(move |url| {
+                // Allow the bundled shell URL only on initial boot or explicit formlogic://home;
+                // prevent any loaded web page from navigating back to the privileged shell origin
+                // or to non-HTTP schemes like file:// or custom protocol handlers.
+                if is_shell_url(url) {
+                    return state_nav.allow_shell_nav.swap(false, Ordering::SeqCst);
+                }
+                matches!(url.scheme(), "http" | "https")
+            })
+            .on_new_window(|_url, _features| tauri::webview::NewWindowResponse::Deny)
             .on_page_load(move |webview, payload| {
-                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-                    state_load.shell_ready.store(true, Ordering::SeqCst);
-                    // On a top-level navigation to a hosted app, verify its signed client
-                    // manifest off-thread; grant native caps only on success, else make the
-                    // bridge display-only. Verification is keyed per (origin, slug) — app B
-                    // on the same origin NEVER inherits app A's verification — and gated by
-                    // the TOFU signing-key pin (explicit user consent on first use / change).
-                    // A move to another app that loads no page is verified when that app
-                    // first calls the bridge (caller_identity).
-                    verify_on_page_load(webview.as_ref(), payload.url());
+                // Consume the one-shot shell-navigation latch as soon as the shell URL loads,
+                // covering WebView backends (e.g. Android/WebKitGTK) that may skip `on_navigation`
+                // for the initial bundled `WebviewUrl::App("index.html")` load.
+                if is_shell_url(payload.url()) {
+                    state_load.allow_shell_nav.store(false, Ordering::SeqCst);
+                }
+                match payload.event() {
+                    tauri::webview::PageLoadEvent::Started => {
+                        // Start manifest (re-)verification as soon as navigation begins so
+                        // `runtime.ready()` awaits the fresh decision before page scripts run.
+                        if app_to_verify(payload.url()).is_some() {
+                            state_load.started_seen.store(true, Ordering::SeqCst);
+                            verify_on_page_load(webview.as_ref(), payload.url());
+                        } else {
+                            state_load.started_seen.store(false, Ordering::SeqCst);
+                        }
+                    }
+                    tauri::webview::PageLoadEvent::Finished => {
+                        state_load.shell_ready.store(true, Ordering::SeqCst);
+                        let saw_started = state_load.started_seen.swap(false, Ordering::SeqCst);
+                        // Ensure display-only fallback applies once the document exists, re-verify
+                        // on WebView backends that skip `Started`, and re-apply DISPLAY_ONLY_SCRIPT
+                        // if a verification started during `Started` already failed before DOM init.
+                        if let Some((origin, slug)) = app_to_verify(payload.url()) {
+                            if !saw_started {
+                                verify_on_page_load(webview.as_ref(), payload.url());
+                            } else {
+                                let key = app_key(&origin, &slug);
+                                let verified = webview.state::<VerifiedOrigins>();
+                                if verified.is_failed(&key) {
+                                    let _ = webview.eval(DISPLAY_ONLY_SCRIPT);
+                                } else if verified.begin_if_absent(&key) {
+                                    if let Some(verifier) = webview.try_state::<Verifier>() {
+                                        spawn_verifier(webview.as_ref(), verifier.inner().clone(), origin, slug);
+                                    }
+                                }
+                            }
+                        } else {
+                            verify_on_page_load(webview.as_ref(), payload.url());
+                        }
+                    }
                 }
             })
             .build()?;
@@ -1400,31 +1636,15 @@ pub fn run() {
             let handle = app.handle().clone();
             let state_dl = nav_state.clone();
             app.deep_link().on_open_url(move |event| {
-                for raw in event.urls() {
-                    eprintln!("[formlogic] deep link received: {raw}");
-                    let pins = handle.state::<PinnedKeys>();
-                    match deep_link_action(raw.as_str(), &pins) {
-                        None => {
-                            eprintln!("[formlogic] no target resolved from {raw}");
-                            continue;
-                        }
-                        Some(DeepLinkAction::Home) => open_deep_link(&handle, &state_dl, DEEP_LINK_HOME),
-                        Some(DeepLinkAction::Open(target)) => open_deep_link(&handle, &state_dl, &target),
-                        Some(DeepLinkAction::Ask(target)) => {
-                            // Not on this thread, which may be the main one: the dialog blocks.
-                            let (handle, state) = (handle.clone(), state_dl.clone());
-                            std::thread::spawn(move || {
-                                if confirm_unknown_link(&handle, &target) {
-                                    open_deep_link(&handle, &state, &target);
-                                } else {
-                                    eprintln!("[formlogic] the link to {target} was not opened");
-                                }
-                            });
-                        }
-                    }
-                    break;
-                }
+                dispatch_deep_link_urls(&handle, &state_dl, event.urls());
             });
+            // Cold-start launch URLs (Windows/Linux CLI args and Android launch intents) are
+            // captured during tauri_plugin_deep_link::init() before on_open_url is registered;
+            // drain get_current() immediately so cold-start deep links are never dropped.
+            if let Ok(Some(initial_urls)) = app.deep_link().get_current() {
+                let handle_init = app.handle().clone();
+                dispatch_deep_link_urls(&handle_init, &nav_state, initial_urls);
+            }
             Ok(())
         })
         .invoke_handler(bridge_commands())
@@ -2210,5 +2430,71 @@ mod tests {
         );
         assert!(is_openable("https://formlogic.com/app/x"));
         assert!(!is_openable("javascript:alert(1)"));
+        assert!(!is_openable("http://tauri.localhost/index.html"));
+        assert!(!is_openable("http://tauri.localhost./index.html"));
+        assert!(!is_openable("https://sub.tauri.localhost/index.html"));
+        assert!(!is_openable("https://sub.tauri.localhost./index.html"));
+        assert!(!is_openable("tauri://localhost/index.html"));
+        assert_eq!(
+            deep_link_target("formlogic://open?url=http%3A%2F%2Ftauri.localhost%2Findex.html"),
+            None
+        );
+        assert_eq!(deep_link_target("http://tauri.localhost/index.html"), None);
+    }
+
+    #[test]
+    fn reverification_reclaims_verified_origin_and_restores_on_offline() {
+        let origins = VerifiedOrigins::default();
+        let origin = "https://formlogic.com|demo".to_string();
+        assert!(origins.begin_reverification(&origin));
+        assert!(!origins.begin_reverification(&origin), "duplicate while Pending is ignored");
+        // An unverified Pending origin must NEVER be restored by offline fallback.
+        assert!(!origins.restore_on_offline(&origin));
+        origins.insert_verified(origin.clone(), VerifiedCaps::default());
+        assert!(origins.contains(&origin));
+        assert!(origins.begin_reverification(&origin), "reload triggers fresh verification");
+        assert!(!origins.contains(&origin), "caps are paused while Reverifying");
+        // Transient network error restores prior verified caps so offline sync queue keeps working.
+        assert!(origins.restore_on_offline(&origin));
+        assert!(origins.contains(&origin));
+        // Authoritative failure still revokes completely.
+        assert!(origins.begin_reverification(&origin));
+        origins.mark_failed(origin.clone());
+        assert!(!origins.contains(&origin));
+        assert!(origins.is_failed(&origin));
+        assert!(!origins.restore_on_offline(&origin));
+    }
+
+    #[test]
+    fn choose_manifest_short_circuits_on_network_error() {
+        let mut fetched: Vec<String> = Vec::new();
+        let err = choose_manifest_envelope("https://offline.example", "demo", |url| {
+            fetched.push(url.to_string());
+            Err("network: GET timed out".to_string())
+        })
+        .unwrap_err();
+        assert!(err.starts_with("network: "));
+        assert_eq!(
+            fetched,
+            vec!["https://offline.example/.well-known/formlogic-app.json".to_string()],
+            "transport failure must not pay a second timeout hitting the API fallback"
+        );
+    }
+
+    #[test]
+    fn normalize_openable_rejects_userinfo_and_control_chars() {
+        assert_eq!(
+            normalize_openable("https://formlogic.com/app/demo").as_deref(),
+            Some("https://formlogic.com/app/demo")
+        );
+        assert_eq!(normalize_openable("https://user:pass@evil.example/"), None);
+        assert_eq!(normalize_openable("https://formlogic.com@evil.example/"), None);
+        assert_eq!(normalize_openable("https://formlogic.com/app/demo\r\nInjected"), None);
+        assert_eq!(normalize_openable("https://formlogic.com/app/demo\0"), None);
+        assert_eq!(
+            deep_link_target("formlogic://open?url=https%3A%2F%2Fformlogic.com%40evil.example%2F"),
+            None
+        );
+        assert_eq!(deep_link_target("https://user@formlogic.com/app/demo"), None);
     }
 }

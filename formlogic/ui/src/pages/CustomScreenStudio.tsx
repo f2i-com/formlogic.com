@@ -148,6 +148,10 @@ type Mode = 'section' | 'record';
 
 export default function CustomScreenStudio() {
   const { formId } = useParams<{ formId: string }>();
+  return <CustomScreenStudioInner key={formId ?? ''} formId={formId} />;
+}
+
+function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
   const navigate = useNavigate();
   const location = useLocation();
   // Platform-admin acting mode: the live preview renders no record data.
@@ -181,6 +185,13 @@ export default function CustomScreenStudio() {
   const [showAi, setShowAi] = useState(false);
   const { previewOpen, showEditor, previewLabel, togglePreview } = useScreenPreview();
   const previewTimer = useRef<number | undefined>(undefined);
+  const compileSeqRef = useRef(0);
+  const unmountedRef = useRef(false);
+  useEffect(() => () => {
+    unmountedRef.current = true;
+    compileSeqRef.current += 1;
+    window.clearTimeout(previewTimer.current);
+  }, []);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   // The customScreen exactly as loaded — saves MERGE over it so keys this Studio doesn't
@@ -289,8 +300,11 @@ export default function CustomScreenStudio() {
 
   const rebuild = (m: Mode, nextFiles: ScreenFile[]) => {
     window.clearTimeout(previewTimer.current);
+    const seq = ++compileSeqRef.current;
     previewTimer.current = window.setTimeout(async () => {
-      const r = await bundleScreenFiles(nextFiles);
+      const trust = previewTrust.current[m];
+      const r = await bundleScreenFiles(nextFiles, undefined, { allowEsmFetch: trust !== 'untrusted' });
+      if (unmountedRef.current || compileSeqRef.current !== seq) return;
       setCompileError(r.error || null);
       const _trust = previewTrust.current[m];
       if (m === 'section') {

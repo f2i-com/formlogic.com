@@ -1193,12 +1193,20 @@ final class AccountBackupService
      *
      * @param callable(string, array<string, mixed>): void $apply
      */
-    private function restoreScreenTrust(mixed $screen, callable $apply): void
+    private function restoreScreenTrust(mixed $screen, callable $apply, bool $serverHeld = false): void
     {
         if (!is_array($screen) || $screen === []) {
             return;
         }
-        $trust = in_array($screen['_trust'] ?? null, ['owner', 'verified', 'untrusted'], true) ? $screen['_trust'] : 'untrusted';
+        $rawTrust = $screen['_trust'] ?? null;
+        if (!$serverHeld) {
+            // Untrusted uploaded backup archives must never forge server-verified marketplace trust
+            // or arbitrary provenance metadata.
+            $trust = $rawTrust === 'untrusted' ? 'untrusted' : ($rawTrust === 'owner' || $rawTrust === 'verified' ? 'owner' : 'untrusted');
+            $apply($trust, ['source' => 'backup']);
+            return;
+        }
+        $trust = in_array($rawTrust, ['owner', 'verified', 'untrusted'], true) ? $rawTrust : 'untrusted';
         $apply($trust, is_array($screen['_provenance'] ?? null) ? $screen['_provenance'] : ['source' => 'backup']);
     }
 
@@ -1349,8 +1357,8 @@ final class AccountBackupService
 
             // ── Phase 2: records + files + links + native apps (compensate fully on failure) ──
             try {
-                $summary = $this->restoreRecords($structure, $maps, $stagedDbs, $zip, $manifest['entries'], $warnings);
-                $summary['nativeApps'] = $this->restoreNativeApps($nativePayloads, $maps['appIdMap'], $nativeMode, $warnings);
+                $summary = $this->restoreRecords($structure, $maps, $stagedDbs, $zip, $manifest['entries'], $warnings, $serverHeld);
+                $summary['nativeApps'] = $this->restoreNativeApps($nativePayloads, $maps['appIdMap'], $nativeMode, $warnings, $serverHeld);
                 $summary['hostedApps'] = $this->restoreHostedApps($hostedDatabases, $maps['appIdMap'], !$serverHeld);
             } catch (\Throwable $e) {
                 // An app undeleted under its own id found its storage already there: it is
@@ -1543,10 +1551,17 @@ final class AccountBackupService
                 }
             }
             $hostConfig = null;
-            if (isset($entries['native/' . $oldAppId . '/host-config.json'])) {
+            // Host configuration carries server-held signing/sealing keys and runtime flags
+            // and is accepted ONLY from server-held recovery archives, never untrusted uploads.
+            if ($keysRequired && isset($entries['native/' . $oldAppId . '/host-config.json'])) {
                 try {
-                    $configJson = DataEncryption::fromEnvironment()->open(
-                        $this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024),
+                    $rawHostConfig = $this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024);
+                    $enc = DataEncryption::fromEnvironment();
+                    if ($enc->enabled() && !DataEncryption::isSealed($rawHostConfig)) {
+                        throw new \RuntimeException("Native host configuration for app {$oldAppId} must be sealed when DATA_ENCRYPTION_KEY is enabled");
+                    }
+                    $configJson = $enc->open(
+                        $rawHostConfig,
                         self::hostConfigContext($oldAppId)
                     );
                     $hostConfig = json_decode($configJson, true);
@@ -1554,10 +1569,7 @@ final class AccountBackupService
                         throw new \RuntimeException("Native host configuration for app {$oldAppId} is not valid JSON");
                     }
                 } catch (DataEncryptionException $e) {
-                    if ($keysRequired) {
-                        throw new \RuntimeException("This backup's native app keys were encrypted under another key. Restore the site's .env, or add that key to DATA_ENCRYPTION_KEY_PREVIOUS, and try again.", 0, $e);
-                    }
-                    $hostConfig = null;
+                    throw new \RuntimeException("This backup's native app keys were encrypted under another key. Restore the site's .env, or add that key to DATA_ENCRYPTION_KEY_PREVIOUS, and try again.", 0, $e);
                 }
             }
             $payloads[$oldAppId] = ['name' => $nativeBlock['name'], 'projectFile' => $projectFile, 'backend' => $backend, 'database' => $dbPath, 'hostConfig' => $hostConfig];
@@ -1635,7 +1647,7 @@ final class AccountBackupService
      * @param array<string,string> $appIdMap
      * @return list<array{appId:string, name:string, version:int, database:string, cryptoMaterial:string}>
      */
-    private function restoreNativeApps(array $payloads, array $appIdMap, string $mode, array &$warnings): array
+    private function restoreNativeApps(array $payloads, array $appIdMap, string $mode, array &$warnings, bool $serverHeld = false): array
     {
         $restored = [];
         foreach ($payloads as $oldAppId => $payload) {
@@ -1656,7 +1668,7 @@ final class AccountBackupService
                 $restored[] = ['appId' => $newAppId, 'name' => $name, 'version' => $kept['version'], 'database' => $kept['hasDatabase'] ? 'restored' : 'none', 'cryptoMaterial' => NativeAppService::CRYPTO_RESTORED];
                 continue;
             }
-            $result = $this->native->restore($newAppId, self::stagedProject($payload), $payload['database'], $payload['hostConfig']);
+            $result = $this->native->restore($newAppId, self::stagedProject($payload), $payload['database'], $payload['hostConfig'], $serverHeld);
             // An app with no backend has no records here and seals nothing: what it saves stays in
             // its visitors' browsers, so neither warning is about anything it lost.
             $backend = $payload['backend'];
@@ -1872,13 +1884,17 @@ final class AccountBackupService
                 // runtime runs is refused like a flow node's (formlogic-python/1), failing the
                 // import before it is stored rather than being misread later.
                 CustomLogicSanitizer::assertSupportedLanguages($bf['customLogic'] ?? null);
+                $formSettings = is_array($bf['settings'] ?? null) ? $bf['settings'] : [];
+                if (!$opts['serverHeld']) {
+                    unset($formSettings['nativeTableBinding'], $formSettings['sharedDatabaseAppId']);
+                }
                 $this->formService->createForm([
                     'id' => $newId,
                     'userId' => $userId,
                     'title' => (string) $bf['title'],
                     'description' => is_string($bf['description'] ?? null) ? $bf['description'] : null,
                     'status' => $status,
-                    'settings' => is_array($bf['settings'] ?? null) ? $bf['settings'] : [],
+                    'settings' => $formSettings,
                     'theme' => is_array($bf['theme'] ?? null) ? $bf['theme'] : [],
                     'logicScript' => is_string($bf['logicScript'] ?? null) ? $bf['logicScript'] : null,
                     'logicPrompt' => is_string($bf['logicPrompt'] ?? null) ? $bf['logicPrompt'] : null,
@@ -1890,7 +1906,7 @@ final class AccountBackupService
                 // what it likes, so its ids are still held to the format.
                 ], $opts['serverHeld'] && $newId === (string) $bf['id']);
                 $created['forms'][] = ['id' => $newId, 'title' => (string) $bf['title']];
-                $this->restoreScreenTrust($bf['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->formService->setCustomScreenTrust($newId, $trust, $provenance));
+                $this->restoreScreenTrust($bf['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->formService->setCustomScreenTrust($newId, $trust, $provenance), (bool) $opts['serverHeld']);
                 // createForm's INSERT has no published_at column — restore it directly.
                 if (!empty($bf['publishedAt']) && is_string($bf['publishedAt'])) {
                     $this->pdo->prepare('UPDATE forms SET published_at = :p, updated_at = updated_at WHERE id = :id')
@@ -1901,13 +1917,25 @@ final class AccountBackupService
             // E2EE (plan §7): restore vault + per-form key/schema/manifest/grant rows
             // byte-for-byte (ids/epochs are baked into envelope AADs). Runs inside the
             // same transaction so a malformed encryption block rolls the import back.
-            $this->restoreEncryptionRows($structure, $formIdMap, $userId);
+            $this->restoreEncryptionRows($structure, $formIdMap, $userId, (bool) $opts['serverHeld']);
 
             foreach ($structure['apps'] as $ba) {
                 CustomLogicSanitizer::assertSupportedLanguages($ba['customLogic'] ?? null); // as for forms
                 $settings = is_array($ba['settings'] ?? null) ? $ba['settings'] : [];
                 $defaultRoleName = is_string($settings['defaultRoleName'] ?? null) ? $settings['defaultRoleName'] : null;
                 unset($settings['defaultRoleName'], $settings['defaultRoleId']);
+                if (!$opts['serverHeld']) {
+                    unset(
+                        $settings['nativeTableBinding'],
+                        $settings['sharedDatabaseAppId'],
+                        $settings['linkedSoftnAppId'],
+                        $settings['companionSoftnPackSlug'],
+                        $settings['sourceProtected'],
+                        $settings['marketplaceCatalogId'],
+                        $settings['marketplaceSlug'],
+                        $settings['marketplaceLicenseId']
+                    );
+                }
                 $settings = $this->deepRemapIds($settings, $formIdMap);
 
                 $appPayload = [
@@ -1936,7 +1964,7 @@ final class AccountBackupService
                 $app = $this->appService->createApp($appPayload, $userId);
                 $newAppId = (string) $app['id'];
                 $created['apps'][] = ['id' => $newAppId, 'name' => (string) $ba['name']];
-                $this->restoreScreenTrust($ba['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->appService->setCustomScreenTrust($newAppId, $trust, $provenance));
+                $this->restoreScreenTrust($ba['customScreen'] ?? null, fn (string $trust, array $provenance) => $this->appService->setCustomScreenTrust($newAppId, $trust, $provenance), (bool) $opts['serverHeld']);
 
                 $memberForms = is_array($ba['forms'] ?? null) ? $ba['forms'] : [];
                 usort($memberForms, static fn ($a, $b) => ($a['sortOrder'] ?? 0) <=> ($b['sortOrder'] ?? 0));
@@ -2210,11 +2238,30 @@ final class AccountBackupService
      * @param array<string,mixed> $structure
      * @param array<string,string> $formIdMap
      */
-    private function restoreEncryptionRows(array $structure, array $formIdMap, string $userId): void
+    private function restoreEncryptionRows(array $structure, array $formIdMap, string $userId, bool $serverHeld = false): void
     {
         $block = $structure['encryption'] ?? null;
         if (!is_array($block)) {
             return; // pre-E2EE backup — nothing to restore
+        }
+
+        $vault = $block['vault'] ?? null;
+        $formsBlock = is_array($block['forms'] ?? null) ? $block['forms'] : [];
+        if (!is_array($vault) && $formsBlock === []) {
+            return;
+        }
+
+        if (!$serverHeld) {
+            $privateFormsEnabled = array_key_exists('privateForms', $this->config)
+                ? (bool) $this->config['privateForms']
+                : filter_var(\FormLogic\Support\Environment::get('PRIVATE_FORMS', 'false'), FILTER_VALIDATE_BOOLEAN);
+            if (!$privateFormsEnabled) {
+                throw new EncryptionRequestException(
+                    'private_forms_disabled',
+                    'Private forms (end-to-end encryption) are disabled on this server.',
+                    403
+                );
+            }
         }
 
         $b64 = static function (mixed $value, string $field): string {
@@ -2228,8 +2275,34 @@ final class AccountBackupService
             return $decoded;
         };
 
-        $vault = $block['vault'] ?? null;
         if (is_array($vault)) {
+            $kdf = (string) ($vault['kdf'] ?? '');
+            $ops = (int) ($vault['kdfOpslimit'] ?? 0);
+            $mem = (int) ($vault['kdfMemlimit'] ?? 0);
+            $salt = $b64($vault['kdfSalt'] ?? null, 'vault.kdfSalt');
+            $umk = $b64($vault['wrappedUmk'] ?? null, 'vault.wrappedUmk');
+            $umkRec = ($vault['wrappedUmkRecovery'] ?? null) !== null ? $b64($vault['wrappedUmkRecovery'], 'vault.wrappedUmkRecovery') : null;
+            $bundle = $b64($vault['encKeyBundle'] ?? null, 'vault.encKeyBundle');
+            $xpkStr = (string) ($vault['x25519Pk'] ?? '');
+            $edpkStr = (string) ($vault['ed25519Pk'] ?? '');
+            $xpkRaw = $b64($xpkStr, 'vault.x25519Pk');
+            $edpkRaw = $b64($edpkStr, 'vault.ed25519Pk');
+
+            if (!$serverHeld) {
+                if ($kdf !== VaultService::KDF
+                    || $ops < VaultService::MIN_OPSLIMIT || $ops > VaultService::MAX_OPSLIMIT
+                    || $mem < VaultService::MIN_MEMLIMIT || $mem > VaultService::MAX_MEMLIMIT
+                    || strlen($salt) !== VaultService::SALT_BYTES
+                    || strlen($umk) !== VaultService::WRAPPED_UMK_BYTES
+                    || ($umkRec !== null && strlen($umkRec) !== VaultService::WRAPPED_UMK_BYTES)
+                    || strlen($bundle) < VaultService::MIN_KEY_BUNDLE_BYTES || strlen($bundle) > VaultService::MAX_KEY_BUNDLE_BYTES
+                    || strlen($xpkRaw) !== VaultService::PUBLIC_KEY_BYTES || base64_encode($xpkRaw) !== $xpkStr
+                    || strlen($edpkRaw) !== VaultService::PUBLIC_KEY_BYTES || base64_encode($edpkRaw) !== $edpkStr
+                    || (int) ($vault['version'] ?? 1) < 1) {
+                    throw new EncryptionRequestException('vault_invalid', 'Backup vault parameters failed validation.', 400);
+                }
+            }
+
             $this->pdo->prepare("
                 INSERT IGNORE INTO user_vaults
                     (user_id, version, kdf, kdf_salt, kdf_memlimit, kdf_opslimit,
@@ -2239,24 +2312,87 @@ final class AccountBackupService
                     (:u, :version, :kdf, :salt, :mem, :ops, :umk, :umk_rec, :bundle, :xpk, :edpk, :now, :now2)
             ")->execute([
                 'u' => $userId,
-                'version' => (int) ($vault['version'] ?? 1),
-                'kdf' => (string) ($vault['kdf'] ?? 'argon2id13.1'),
-                'salt' => $b64($vault['kdfSalt'] ?? null, 'vault.kdfSalt'),
-                'mem' => (int) ($vault['kdfMemlimit'] ?? 0),
-                'ops' => (int) ($vault['kdfOpslimit'] ?? 0),
-                'umk' => $b64($vault['wrappedUmk'] ?? null, 'vault.wrappedUmk'),
-                'umk_rec' => ($vault['wrappedUmkRecovery'] ?? null) !== null ? $b64($vault['wrappedUmkRecovery'], 'vault.wrappedUmkRecovery') : null,
-                'bundle' => $b64($vault['encKeyBundle'] ?? null, 'vault.encKeyBundle'),
-                'xpk' => (string) ($vault['x25519Pk'] ?? ''),
-                'edpk' => (string) ($vault['ed25519Pk'] ?? ''),
+                'version' => max(1, (int) ($vault['version'] ?? 1)),
+                'kdf' => $kdf !== '' ? $kdf : VaultService::KDF,
+                'salt' => $salt,
+                'mem' => $mem,
+                'ops' => $ops,
+                'umk' => $umk,
+                'umk_rec' => $umkRec,
+                'bundle' => $bundle,
+                'xpk' => $xpkStr,
+                'edpk' => $edpkStr,
                 'now' => date('Y-m-d H:i:s'),
                 'now2' => date('Y-m-d H:i:s'),
             ]);
         }
 
-        $formsBlock = is_array($block['forms'] ?? null) ? $block['forms'] : [];
+        // Resolve authoritative vault public keys for the target account (for Ed25519 verification on untrusted uploads).
+        $vaultStmt = $this->pdo->prepare('SELECT x25519_pk, ed25519_pk FROM user_vaults WHERE user_id = :u');
+        $vaultStmt->execute(['u' => $userId]);
+        $vaultRow = $vaultStmt->fetch(PDO::FETCH_ASSOC);
+        $userEdPkB64 = is_array($vaultRow) ? (string) ($vaultRow['ed25519_pk'] ?? '') : '';
+        $userXPkB64 = is_array($vaultRow) ? (string) ($vaultRow['x25519_pk'] ?? '') : '';
+        $userEdPkRaw = $userEdPkB64 !== '' ? base64_decode($userEdPkB64, true) : false;
+        $userXPkRaw = $userXPkB64 !== '' ? base64_decode($userXPkB64, true) : false;
+        $userSignerKeyId = is_string($userEdPkRaw) && strlen($userEdPkRaw) === 32 ? substr(hash('sha256', $userEdPkRaw), 0, 16) : '';
+
+        // Index forms, apps, webhooks, and bindings in backup for §9.1 structural enforcement on untrusted uploads.
+        $formsById = [];
+        foreach (is_array($structure['forms'] ?? null) ? $structure['forms'] : [] as $bf) {
+            if (is_array($bf) && is_string($bf['id'] ?? null)) {
+                $formsById[$bf['id']] = $bf;
+            }
+        }
+        $attachedFormIds = [];
+        foreach (is_array($structure['apps'] ?? null) ? $structure['apps'] : [] as $ba) {
+            if (!is_array($ba)) continue;
+            foreach (is_array($ba['forms'] ?? null) ? $ba['forms'] : [] as $af) {
+                if (is_array($af) && is_string($af['formId'] ?? null)) $attachedFormIds[$af['formId']] = true;
+            }
+            foreach (is_array($ba['navConfig'] ?? null) ? $ba['navConfig'] : [] as $nav) {
+                if (is_array($nav) && is_string($nav['formId'] ?? null)) $attachedFormIds[$nav['formId']] = true;
+            }
+        }
+        $webhookFormIds = [];
+        foreach (is_array($structure['webhooks'] ?? null) ? $structure['webhooks'] : [] as $wh) {
+            if (is_array($wh) && is_string($wh['formId'] ?? null)) $webhookFormIds[$wh['formId']] = true;
+        }
+        $bindingFormIds = [];
+        foreach (['bindings', 'formBindings', 'appBindings'] as $bKey) {
+            foreach (is_array($structure[$bKey] ?? null) ? $structure[$bKey] : [] as $bb) {
+                if (is_array($bb) && is_string($bb['formId'] ?? null) && $bb['formId'] !== '') {
+                    $bindingFormIds[$bb['formId']] = true;
+                }
+            }
+        }
+        $referenceBlobs = [];
+        foreach (is_array($structure['flows'] ?? null) ? $structure['flows'] : [] as $fl) {
+            if (is_array($fl) && isset($fl['flowJson'])) {
+                $blob = is_string($fl['flowJson']) ? $fl['flowJson'] : json_encode($fl['flowJson']);
+                if (is_string($blob) && $blob !== '') $referenceBlobs[] = $blob;
+            }
+        }
+        foreach (is_array($structure['appBindings'] ?? null) ? $structure['appBindings'] : [] as $bb) {
+            if (!is_array($bb)) continue;
+            foreach (['inputMap', 'outputActions', 'inputMapJson', 'outputActionsJson'] as $k) {
+                if (!isset($bb[$k])) continue;
+                $blob = is_string($bb[$k]) ? $bb[$k] : json_encode($bb[$k]);
+                if (is_string($blob) && $blob !== '') $referenceBlobs[] = $blob;
+            }
+        }
+        foreach (is_array($structure['apps'] ?? null) ? $structure['apps'] : [] as $ba) {
+            if (!is_array($ba)) continue;
+            foreach (['reports', 'customScreen'] as $k) {
+                if (!isset($ba[$k]) || $ba[$k] === null || $ba[$k] === [] || $ba[$k] === '') continue;
+                $blob = is_string($ba[$k]) ? $ba[$k] : json_encode($ba[$k]);
+                if (is_string($blob) && $blob !== '' && $blob !== '[]' && $blob !== '{}') $referenceBlobs[] = $blob;
+            }
+        }
+
         $now = date('Y-m-d H:i:s');
         $active = static fn (string $state): string => $state === 'trashed' ? 'active' : $state;
+        $blockedFieldTypes = ['linked_record', 'file_upload', 'camera'];
         foreach ($formsBlock as $oldFormId => $fb) {
             $oldFormId = (string) $oldFormId;
             $formId = $formIdMap[$oldFormId] ?? null;
@@ -2268,48 +2404,139 @@ final class AccountBackupService
             if ($exists->fetchColumn() !== false) {
                 continue; // parked rows from trash — TrashService flips them back
             }
+
+            if (!$serverHeld) {
+                if (!is_string($userEdPkRaw) || strlen($userEdPkRaw) !== 32 || !is_string($userXPkRaw) || strlen($userXPkRaw) !== 32 || !function_exists('sodium_crypto_sign_verify_detached')) {
+                    throw new EncryptionRequestException('vault_required', 'A valid vault is required to restore private forms.', 400);
+                }
+                $formMeta = $formsById[$oldFormId] ?? null;
+                if (!is_array($formMeta) || isset($attachedFormIds[$oldFormId]) || isset($webhookFormIds[$oldFormId]) || isset($bindingFormIds[$oldFormId])) {
+                    throw new EncryptionRequestException('private_form_invalid', 'Private forms in uploaded backups must be standalone with no app, webhook, or flow bindings.', 400);
+                }
+                foreach ($referenceBlobs as $blob) {
+                    if ($oldFormId !== '' && str_contains($blob, $oldFormId)) {
+                        throw new EncryptionRequestException('private_form_invalid', 'Private forms in uploaded backups cannot be referenced by flows, bindings, reports, or app screens.', 400);
+                    }
+                }
+                if (!empty($formMeta['customScreen'])) {
+                    throw new EncryptionRequestException('private_form_invalid', 'Private forms cannot carry a custom screen.', 400);
+                }
+                foreach (is_array($formMeta['fields'] ?? null) ? $formMeta['fields'] : [] as $field) {
+                    if (is_array($field) && in_array((string) ($field['type'] ?? ''), $blockedFieldTypes, true)) {
+                        throw new EncryptionRequestException('private_form_invalid', 'Private form contains an unsupported field type.', 400);
+                    }
+                }
+            }
+
             $enc = is_array($fb['encryption'] ?? null) ? $fb['encryption'] : [];
+            $encState = $active((string) ($enc['state'] ?? 'active'));
+            if (!$serverHeld && !in_array($encState, ['active', 'enabling'], true)) {
+                throw new EncryptionRequestException('encryption_payload_invalid', 'Invalid form encryption state in backup.', 400);
+            }
             $this->pdo->prepare("
                 INSERT INTO form_encryption (form_id, mode, current_ingest_epoch, current_fk_epoch, state, enabled_by, enabled_at)
                 VALUES (:f, 'private', :ie, :fe, :state, :by, :at)
             ")->execute([
                 'f' => $formId,
-                'ie' => (int) ($enc['currentIngestEpoch'] ?? 1),
-                'fe' => (int) ($enc['currentFkEpoch'] ?? 1),
-                'state' => $active((string) ($enc['state'] ?? 'active')),
-                'by' => (string) ($enc['enabledBy'] ?? $userId),
+                'ie' => max(1, (int) ($enc['currentIngestEpoch'] ?? 1)),
+                'fe' => max(1, (int) ($enc['currentFkEpoch'] ?? 1)),
+                'state' => $encState,
+                // Always bind ownership to the target user on untrusted uploads.
+                'by' => $serverHeld ? (string) ($enc['enabledBy'] ?? $userId) : $userId,
                 'at' => $enc['enabledAt'] ?? $now,
             ]);
+
+            $verifiedSchemas = [];
             foreach (is_array($fb['schemaVersions'] ?? null) ? $fb['schemaVersions'] : [] as $r) {
+                $schemaJson = $b64($r['schemaJsonB64'] ?? null, 'schemaVersions.schemaJsonB64');
+                $schemaHash = (string) ($r['schemaHash'] ?? '');
+                $version = (int) ($r['version'] ?? 0);
+                if (!$serverHeld) {
+                    if ($version < 1 || !preg_match('/^[0-9a-f]{64}$/', $schemaHash) || !hash_equals(hash('sha256', $schemaJson), $schemaHash)) {
+                        throw new EncryptionRequestException('manifest_invalid', 'Restored schema version hash mismatch.', 400);
+                    }
+                }
+                $verifiedSchemas[$version] = $schemaHash;
                 $this->pdo->prepare("
                     INSERT INTO form_schema_versions (id, form_id, version, schema_json, schema_hash, created_at)
                     VALUES (:id, :f, :v, :json, :hash, :at)
                 ")->execute([
                     'id' => (string) ($r['id'] ?? ''),
                     'f' => $formId,
-                    'v' => (int) ($r['version'] ?? 0),
-                    'json' => $b64($r['schemaJsonB64'] ?? null, 'schemaVersions.schemaJsonB64'),
-                    'hash' => (string) ($r['schemaHash'] ?? ''),
+                    'v' => $version,
+                    'json' => $schemaJson,
+                    'hash' => $schemaHash,
                     'at' => $r['createdAt'] ?? $now,
                 ]);
             }
+
+            $ingestionKeysById = [];
             foreach (is_array($fb['ingestionKeys'] ?? null) ? $fb['ingestionKeys'] : [] as $r) {
+                $keyId = (string) ($r['id'] ?? '');
+                $epoch = (int) ($r['epoch'] ?? 0);
+                $pkB64 = (string) ($r['publicKey'] ?? '');
+                $skRaw = $b64($r['wrappedSecret'] ?? null, 'ingestionKeys.wrappedSecret');
+                $kState = $active((string) ($r['state'] ?? 'active'));
+                if (!$serverHeld) {
+                    $pkRaw = base64_decode($pkB64, true);
+                    if ($epoch < 1 || $pkRaw === false || strlen($pkRaw) !== 32 || base64_encode($pkRaw) !== $pkB64
+                        || strlen($skRaw) !== 80 || !in_array($kState, ['active', 'retiring', 'retired'], true)) {
+                        throw new EncryptionRequestException('encryption_payload_invalid', 'Restored ingestion key is invalid.', 400);
+                    }
+                }
+                $ingestionKeysById[$keyId] = ['epoch' => $epoch, 'publicKey' => $pkB64];
                 $this->pdo->prepare("
                     INSERT INTO form_ingestion_keys (id, form_id, epoch, public_key, wrapped_secret, fk_epoch, state, accept_until, created_at)
                     VALUES (:id, :f, :e, :pk, :sk, :fe, :state, :until, :at)
                 ")->execute([
-                    'id' => (string) ($r['id'] ?? ''),
+                    'id' => $keyId,
                     'f' => $formId,
-                    'e' => (int) ($r['epoch'] ?? 0),
-                    'pk' => (string) ($r['publicKey'] ?? ''),
-                    'sk' => $b64($r['wrappedSecret'] ?? null, 'ingestionKeys.wrappedSecret'),
-                    'fe' => (int) ($r['fkEpoch'] ?? 1),
-                    'state' => $active((string) ($r['state'] ?? 'active')),
+                    'e' => $epoch,
+                    'pk' => $pkB64,
+                    'sk' => $skRaw,
+                    'fe' => max(1, (int) ($r['fkEpoch'] ?? 1)),
+                    'state' => $kState,
                     'until' => $r['acceptUntil'] ?? null,
                     'at' => $r['createdAt'] ?? $now,
                 ]);
             }
-            foreach (is_array($fb['manifests'] ?? null) ? $fb['manifests'] : [] as $r) {
+
+            $manifestsList = is_array($fb['manifests'] ?? null) ? $fb['manifests'] : [];
+            if (!$serverHeld && $manifestsList === []) {
+                throw new EncryptionRequestException('manifest_invalid', 'Private form backup is missing signed manifests.', 400);
+            }
+            foreach ($manifestsList as $r) {
+                $keyId = (string) ($r['keyId'] ?? '');
+                $ingestEpoch = (int) ($r['ingestEpoch'] ?? 0);
+                $sv = (int) ($r['schemaVersion'] ?? 0);
+                $hash = (string) ($r['schemaHash'] ?? '');
+                $content = (string) ($r['contentSuite'] ?? '');
+                $wrap = (string) ($r['wrapSuite'] ?? '');
+                $skid = (string) ($r['signerKeyId'] ?? '');
+                $spk = (string) ($r['signerPk'] ?? '');
+                $signedBytes = $b64($r['signedBytesB64'] ?? null, 'manifests.signedBytesB64');
+                $sig = $b64($r['signature'] ?? null, 'manifests.signature');
+                $exp = $r['expiresAt'] ?? null;
+
+                if (!$serverHeld) {
+                    $ik = $ingestionKeysById[$keyId] ?? null;
+                    if ($ik === null || $ik['epoch'] !== $ingestEpoch
+                        || ($verifiedSchemas[$sv] ?? null) !== $hash
+                        || $content !== EnvelopeValidator::CONTENT_SUITE
+                        || $wrap !== EnvelopeValidator::WRAP_SUITE
+                        || $spk !== $userEdPkB64
+                        || $skid !== $userSignerKeyId
+                        || strlen($sig) !== 64) {
+                        throw new EncryptionRequestException('manifest_invalid', 'Restored manifest metadata failed verification.', 400);
+                    }
+                    $expectedCanonical = 'flmanifest:1|' . $formId . '|' . $keyId . '|' . $ingestEpoch . '|' . $ik['publicKey']
+                        . '|' . EnvelopeValidator::CONTENT_SUITE . '|' . EnvelopeValidator::WRAP_SUITE
+                        . '|' . $sv . '|' . $hash . '|' . $skid . '|' . (is_string($exp) && $exp !== '' ? $exp : '-');
+                    if ($signedBytes !== $expectedCanonical || !sodium_crypto_sign_verify_detached($sig, $signedBytes, $userEdPkRaw)) {
+                        throw new EncryptionRequestException('manifest_invalid', 'Restored manifest Ed25519 signature verification failed.', 400);
+                    }
+                }
+
                 $this->pdo->prepare("
                     INSERT INTO form_manifests
                         (id, form_id, manifest_seq, key_id, ingest_epoch, schema_version, schema_hash,
@@ -2321,22 +2548,54 @@ final class AccountBackupService
                     'id' => (string) ($r['id'] ?? ''),
                     'f' => $formId,
                     'seq' => (int) ($r['manifestSeq'] ?? 0),
-                    'key' => (string) ($r['keyId'] ?? ''),
-                    'epoch' => (int) ($r['ingestEpoch'] ?? 0),
-                    'sv' => (int) ($r['schemaVersion'] ?? 0),
-                    'hash' => (string) ($r['schemaHash'] ?? ''),
-                    'content' => (string) ($r['contentSuite'] ?? ''),
-                    'wrap' => (string) ($r['wrapSuite'] ?? ''),
-                    'skid' => (string) ($r['signerKeyId'] ?? ''),
-                    'spk' => (string) ($r['signerPk'] ?? ''),
-                    'bytes' => $b64($r['signedBytesB64'] ?? null, 'manifests.signedBytesB64'),
-                    'sig' => $b64($r['signature'] ?? null, 'manifests.signature'),
+                    'key' => $keyId,
+                    'epoch' => $ingestEpoch,
+                    'sv' => $sv,
+                    'hash' => $hash,
+                    'content' => $content,
+                    'wrap' => $wrap,
+                    'skid' => $skid,
+                    'spk' => $spk,
+                    'bytes' => $signedBytes,
+                    'sig' => $sig,
                     'at' => $r['createdAt'] ?? $now,
-                    'exp' => $r['expiresAt'] ?? null,
+                    'exp' => $exp,
                     'sup' => $r['supersededAt'] ?? null,
                 ]);
             }
-            foreach (is_array($fb['grants'] ?? null) ? $fb['grants'] : [] as $r) {
+
+            $grantsList = is_array($fb['grants'] ?? null) ? $fb['grants'] : [];
+            if (!$serverHeld && $grantsList === []) {
+                throw new EncryptionRequestException('grant_invalid', 'Private form backup is missing owner key grants.', 400);
+            }
+            foreach ($grantsList as $r) {
+                $grantId = (string) ($r['id'] ?? '');
+                $fkEpoch = (int) ($r['fkEpoch'] ?? 1);
+                $wk = $b64($r['wrappedKey'] ?? null, 'grants.wrappedKey');
+                $wrap = (string) ($r['wrapSuite'] ?? '');
+                $role = (string) ($r['role'] ?? 'owner');
+                $gkid = (string) ($r['grantorKeyId'] ?? '');
+                $gpk = (string) ($r['granteePk'] ?? '');
+                $sv = (int) ($r['sigVersion'] ?? 1);
+                $sig = $b64($r['signature'] ?? null, 'grants.signature');
+                $exp = $r['expiresAt'] ?? null;
+                $gState = $active((string) ($r['state'] ?? 'active'));
+
+                if (!$serverHeld) {
+                    if ($grantId === '' || $fkEpoch < 1 || strlen($wk) !== 80 || strlen($sig) !== 64
+                        || $wrap !== EnvelopeValidator::WRAP_SUITE || $role !== 'owner' || $sv !== 1
+                        || $gkid !== $userSignerKeyId || $gpk !== $userXPkB64
+                        || !in_array($gState, ['active', 'revoked'], true)) {
+                        throw new EncryptionRequestException('grant_invalid', 'Restored key grant metadata failed verification.', 400);
+                    }
+                    $grantCanonical = 'flgrant:1|' . $grantId . '|' . $formId . '|' . $fkEpoch . '|' . $userId . '|' . $userId
+                        . '|' . hash('sha256', $userXPkRaw) . '|' . hash('sha256', $wk)
+                        . '|' . EnvelopeValidator::WRAP_SUITE . '|owner|' . (is_string($exp) && $exp !== '' ? $exp : '-');
+                    if (!sodium_crypto_sign_verify_detached($sig, $grantCanonical, $userEdPkRaw)) {
+                        throw new EncryptionRequestException('grant_invalid', 'Restored key grant Ed25519 signature verification failed.', 400);
+                    }
+                }
+
                 $this->pdo->prepare("
                     INSERT INTO form_key_grants
                         (id, form_id, user_id, fk_epoch, wrapped_key, wrap_suite, role, grantor_user_id,
@@ -2344,20 +2603,20 @@ final class AccountBackupService
                     VALUES
                         (:id, :f, :u, :fe, :wk, :wrap, :role, :gu, :gkid, :gpk, :sv, :sig, :exp, :state, :at)
                 ")->execute([
-                    'id' => (string) ($r['id'] ?? ''),
+                    'id' => $grantId,
                     'f' => $formId,
-                    'u' => (string) ($r['userId'] ?? $userId),
-                    'fe' => (int) ($r['fkEpoch'] ?? 1),
-                    'wk' => $b64($r['wrappedKey'] ?? null, 'grants.wrappedKey'),
-                    'wrap' => (string) ($r['wrapSuite'] ?? ''),
-                    'role' => (string) ($r['role'] ?? 'owner'),
-                    'gu' => (string) ($r['grantorUserId'] ?? $userId),
-                    'gkid' => (string) ($r['grantorKeyId'] ?? ''),
-                    'gpk' => (string) ($r['granteePk'] ?? ''),
-                    'sv' => (int) ($r['sigVersion'] ?? 1),
-                    'sig' => $b64($r['signature'] ?? null, 'grants.signature'),
-                    'exp' => $r['expiresAt'] ?? null,
-                    'state' => $active((string) ($r['state'] ?? 'active')),
+                    'u' => $serverHeld ? (string) ($r['userId'] ?? $userId) : $userId,
+                    'fe' => $fkEpoch,
+                    'wk' => $wk,
+                    'wrap' => $wrap,
+                    'role' => $role,
+                    'gu' => $serverHeld ? (string) ($r['grantorUserId'] ?? $userId) : $userId,
+                    'gkid' => $gkid,
+                    'gpk' => $gpk,
+                    'sv' => $sv,
+                    'sig' => $sig,
+                    'exp' => $exp,
+                    'state' => $gState,
                     'at' => $r['createdAt'] ?? $now,
                 ]);
             }
@@ -2401,16 +2660,22 @@ final class AccountBackupService
      * @param array{formIdMap: array<string,string>} $maps
      * @return array{responses:int, files:int}
      */
-    private function restoreRecords(array $structure, array $maps, array $stagedDbs, \ZipArchive $zip, array $entries, array &$warnings): array
+    private function restoreRecords(array $structure, array $maps, array $stagedDbs, \ZipArchive $zip, array $entries, array &$warnings, bool $serverHeld = false): array
     {
         $formIdMap = $maps['formIdMap'];
 
         // Old field defs per form (they carry the OLD linked-record targets that
         // drive the answer remap) + new (remapped) fields for normalize/links.
         $oldFieldsByForm = [];
+        $privateFormsByOldId = [];
         foreach ($structure['forms'] as $bf) {
-            $oldFieldsByForm[(string) $bf['id']] = is_array($bf['fields'] ?? null) ? $bf['fields'] : [];
+            $fid = (string) $bf['id'];
+            $oldFieldsByForm[$fid] = is_array($bf['fields'] ?? null) ? $bf['fields'] : [];
+            if (($bf['encryption'] ?? null) === 'private') {
+                $privateFormsByOldId[$fid] = true;
+            }
         }
+        $envelopeValidator = new EnvelopeValidator();
 
         // Pre-generate every response id (ids only — memory is 2 uuids per row).
         // A form that kept its ORIGINAL id keeps its original response ids too —
@@ -2446,6 +2711,21 @@ final class AccountBackupService
             $hasTags = $this->sqliteHasTable($src, 'tags');
             $expectedLinks[$newFormId] = 0;
 
+            $isPrivateForm = isset($privateFormsByOldId[$oldFormId]);
+            $acceptableManifests = [];
+            if ($isPrivateForm && !$serverHeld) {
+                $mStmt = $this->pdo->prepare('SELECT key_id, ingest_epoch, schema_version, schema_hash FROM form_manifests WHERE form_id = :f');
+                $mStmt->execute(['f' => $newFormId]);
+                foreach ($mStmt->fetchAll(PDO::FETCH_ASSOC) as $mrow) {
+                    $acceptableManifests[] = [
+                        'key_id' => (string) $mrow['key_id'],
+                        'ingest_epoch' => (int) $mrow['ingest_epoch'],
+                        'schema_version' => (int) $mrow['schema_version'],
+                        'schema_hash' => (string) $mrow['schema_hash'],
+                    ];
+                }
+            }
+
             for ($offset = 0; ; $offset += 500) {
                 $rows = $src->query("SELECT id, answers, metadata, status, submitted_at, updated_at FROM responses ORDER BY rowid LIMIT 500 OFFSET {$offset}")
                     ->fetchAll(PDO::FETCH_ASSOC);
@@ -2461,6 +2741,21 @@ final class AccountBackupService
                     $oldId = (string) $row['id'];
                     $answers = json_decode((string) $row['answers'], true);
                     $answers = is_array($answers) ? $answers : [];
+
+                    if ($isPrivateForm && !$serverHeld) {
+                        $rev = isset($answers['rev']) && is_int($answers['rev']) && $answers['rev'] >= 1 ? $answers['rev'] : 1;
+                        $check = $envelopeValidator->validateEnvelope($answers, $newFormId, $acceptableManifests, $rev > 1 ? $rev - 1 : null);
+                        if (!$check['ok']) {
+                            throw new EncryptionRequestException(
+                                $check['code'] ?? 'envelope_invalid',
+                                'Private form backup contains an invalid response envelope: ' . ($check['message'] ?? 'malformed'),
+                                400
+                            );
+                        }
+                        if (($answers['recordId'] ?? null) !== $responseIdMap[$oldFormId][$oldId]) {
+                            throw new EncryptionRequestException('envelope_invalid', 'Private form envelope recordId does not match response id.', 400);
+                        }
+                    }
 
                     // Remap linked_record answers old→new response ids; values that
                     // don't map (dangling at export time) are dropped — they'd be
@@ -2522,6 +2817,31 @@ final class AccountBackupService
         // answers already point at them via the normalize url rewrite).
         $filesRestored = 0;
         $idsByEntry = self::idsByEntry($structure['forms']);
+        $uploadsCfg = is_array($this->config['uploads'] ?? null) ? $this->config['uploads'] : [];
+        $maxUploadFileBytes = (int) ($uploadsCfg['maxFileSize'] ?? (10 * 1024 * 1024));
+        $allowedUploadMimes = is_array($uploadsCfg['allowedTypes'] ?? null) && $uploadsCfg['allowedTypes'] !== []
+            ? $uploadsCfg['allowedTypes']
+            : [
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'image/webp',
+            ];
+        $allowedExtsByMime = [
+            'application/pdf' => ['pdf'],
+            'application/msword' => ['doc'],
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => ['docx'],
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+            'image/gif' => ['gif'],
+            'image/webp' => ['webp'],
+        ];
+        $maxFormUploadBytes = 2 * 1024 * 1024 * 1024;
+        $bytesPerForm = [];
+        $finfo = !$serverHeld ? new \finfo(FILEINFO_MIME_TYPE) : null;
         foreach ($entries as $name => $sha) {
             if (!str_starts_with($name, 'files/')) {
                 continue;
@@ -2535,7 +2855,29 @@ final class AccountBackupService
             if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
                 throw new \RuntimeException('Could not create the uploads directory for a restored form');
             }
-            $this->extractEntryStreaming($zip, $name, $dir . '/' . $basename);
+            $dest = $dir . '/' . $basename;
+            $this->extractEntryStreaming($zip, $name, $dest);
+            if (!$serverHeld) {
+                $size = (int) (@filesize($dest) ?: 0);
+                if ($size > $maxUploadFileBytes) {
+                    @unlink($dest);
+                    throw new \RuntimeException("Backup file {$basename} exceeds the maximum upload size.");
+                }
+                $bytesPerForm[$newFormId] = ($bytesPerForm[$newFormId] ?? 0) + $size;
+                if ($bytesPerForm[$newFormId] > $maxFormUploadBytes) {
+                    @unlink($dest);
+                    throw new \RuntimeException('Restored files exceed the per-form storage limit.');
+                }
+                $mime = $finfo !== null ? (string) $finfo->file($dest) : '';
+                $ext = strtolower(pathinfo($basename, PATHINFO_EXTENSION));
+                $allowedExts = $allowedExtsByMime[$mime] ?? null;
+                if (!in_array($mime, $allowedUploadMimes, true)
+                    || ($allowedExts !== null && $ext !== '' && !in_array($ext, $allowedExts, true))
+                    || in_array($ext, ['php', 'phtml', 'phar', 'html', 'htm', 'svg', 'js', 'mjs', 'cjs', 'exe', 'sh', 'bat', 'cmd', 'ps1', 'dll'], true)) {
+                    @unlink($dest);
+                    throw new \RuntimeException("Backup file {$basename} has a disallowed type ({$mime}).");
+                }
+            }
             $filesRestored++;
         }
 
@@ -2925,6 +3267,7 @@ final class AccountBackupService
         }
         $pdo = new PDO('sqlite:' . $path, null, null, $options);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->exec('PRAGMA trusted_schema = OFF');
         if ($options === []) {
             $pdo->exec('PRAGMA query_only = 1');
         }

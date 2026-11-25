@@ -101,7 +101,10 @@ fn main() {
     let prelude = match prelude_path {
         Some(path) => match std::fs::read_to_string(&path) {
             Ok(text) => text,
-            Err(e) => return emit_done_error(&format!("cannot read the prelude at {path}: {e}")),
+            Err(e) => {
+                eprintln!("cannot read the prelude at {path}: {e}");
+                return emit_done_error("cannot read the prelude");
+            }
         },
         None => return emit_done_error("no prelude was supplied"),
     };
@@ -129,10 +132,14 @@ fn run(guest_args: Vec<String>, memory_mb: u64, fuel: u64, deadline_ms: u64) -> 
         .args(&guest_args)
         .build_p1();
 
+    let memory_bytes = usize::try_from(memory_mb.clamp(16, 4096))
+        .unwrap_or(512)
+        .saturating_mul(1024 * 1024);
     let limits = StoreLimitsBuilder::new()
-        .memory_size((memory_mb as usize).saturating_mul(1024 * 1024))
+        .memory_size(memory_bytes)
         .instances(1)
         .tables(8)
+        .table_elements(100_000)
         .memories(1)
         .trap_on_grow_failure(false)
         .build();

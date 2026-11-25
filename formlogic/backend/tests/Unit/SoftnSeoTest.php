@@ -188,4 +188,42 @@ final class SoftnSeoTest extends TestCase
         self::assertSame(200, $rbRes->getStatusCode());
         self::assertStringContainsString('Sitemap: https://acmebakery.example/sitemap.xml', (string) $rbRes->getBody());
     }
+
+    public function testMembersOnlyCustomDomainDoesNotLeakHeadAndSendsNoindex(): void
+    {
+        $native = $this->installHtmlApp('bakery-private', 'members');
+        $look = new AppLookService($native);
+        $seo = new SoftnSeoService($native, $look);
+        $app = $this->appRow('published');
+        $app['id'] = 'bakery-private';
+        $app['name'] = 'Secret Bakery Portal';
+
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getAppBySlug')->willReturn($app);
+        $domains = $this->createMock(AppDomainService::class);
+        $domains->method('isThisSiteHost')->willReturnCallback(static fn(string $h) => $h === 'forms.example');
+        $domains->method('resolveAppSlugByHost')->willReturnCallback(static fn(string $h) => $h === 'private.example' ? ['slug' => 'acme-bakery', 'mode' => 'runtime_direct'] : null);
+
+        $controller = new AppLookController($apps, $look, $domains, $seo);
+        $reqFactory = new ServerRequestFactory();
+
+        // Visiting a members-only custom domain must never leak app metadata or snapshot, and must emit noindex
+        $req = $reqFactory->createServerRequest('GET', 'https://private.example/')
+            ->withHeader('Host', 'private.example')
+            ->withHeader('User-Agent', 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+        $res = $controller->sharePage($req, new Response(), []);
+        $body = (string) $res->getBody();
+        self::assertSame(200, $res->getStatusCode());
+        self::assertSame('noindex, nofollow', $res->getHeaderLine('X-Robots-Tag'));
+        self::assertStringContainsString('<meta name="robots" content="noindex, nofollow">', $body);
+        self::assertStringNotContainsString('Secret Bakery Portal', $body);
+        self::assertStringNotContainsString('Fresh Sourdough Daily', $body);
+        self::assertStringNotContainsString('data-fl-seo-snapshot', $body);
+
+        // Even without SoftnSeoService, domainHead() must not leak members-only app identity on the root page
+        $lookOnlyController = new AppLookController($apps, $look, $domains);
+        $plainRes = $lookOnlyController->sharePage($req, new Response(), []);
+        self::assertSame(200, $plainRes->getStatusCode());
+        self::assertStringNotContainsString('Secret Bakery Portal', (string) $plainRes->getBody());
+    }
 }

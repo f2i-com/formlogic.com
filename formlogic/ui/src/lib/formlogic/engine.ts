@@ -214,7 +214,13 @@ async function evaluate(
     }, budgetMs + WATCHDOG_GRACE_MS);
 
     pending.set(id, { resolve, reject, timer });
-    w.postMessage(request);
+    try {
+      w.postMessage(request);
+    } catch (err) {
+      clearTimeout(timer);
+      pending.delete(id);
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
   });
 }
 

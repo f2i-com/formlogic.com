@@ -50,6 +50,9 @@ const DB = {
   username: process.env.SMOKE_DB_USERNAME || 'root',
   password: process.env.SMOKE_DB_PASSWORD || '',
 };
+if (!/^[A-Za-z0-9_-]+$/.test(DB.database)) {
+  fail(`SMOKE_DB_DATABASE must contain only letters, digits, '_' and '-' (got ${JSON.stringify(DB.database)})`);
+}
 const PORT = Number(process.env.SMOKE_PORT || 8091);
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -98,8 +101,11 @@ function findZip() {
 
 function extract(zip, dest) {
   if (process.platform === 'win32') {
-    execFileSync('powershell', ['-NoProfile', '-Command',
-      `Expand-Archive -LiteralPath '${zip}' -DestinationPath '${dest}' -Force`], { stdio: 'inherit' });
+    execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+      'Expand-Archive -LiteralPath $env:FL_ZIP -DestinationPath $env:FL_DEST -Force'], {
+      stdio: 'inherit',
+      env: { ...process.env, FL_ZIP: zip, FL_DEST: dest },
+    });
   } else {
     execFileSync('unzip', ['-q', zip, '-d', dest], { stdio: 'inherit' });
   }
@@ -176,6 +182,10 @@ async function main() {
       'manifest.json', 'hosted-runtime/index.html', 'hosted-runtime/runtime-manifest.json',
       'api/storage/hosted-apps/.gitkeep',
       'api/storage/native-apps/.gitkeep',
+      'api/storage/.htaccess',
+      'api/logs/.htaccess',
+      'api/storage/uploads/.htaccess',
+      'api/storage/native-app-uploads/.htaccess',
       'api/public/index.php', 'api/public/.htaccess', 'api/config/settings.php',
       'api/database/schema.sql', 'api/database/migrate.php', 'api/composer.json',
       'api/vendor/autoload.php', 'api/.env.example', 'api/bin/upgrade.php', 'api/bin/provision-demo.php', 'api/VERSION',
@@ -275,13 +285,13 @@ async function main() {
     const routerPath = path.join(docroot, 'smoke-router.php');
     writeFileSync(routerPath, `<?php
 $uri = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$root = __DIR__;
+$root = realpath(__DIR__) ?: __DIR__;
 if ($uri === '/api' || str_starts_with($uri, '/api/')) {
     require $root . '/api/public/index.php';
     return true;
 }
 $path = realpath($root . $uri);
-if ($uri !== '/' && $path !== false && is_file($path) && str_starts_with($path, $root) && basename($path) !== 'smoke-router.php') {
+if ($uri !== '/' && $path !== false && is_file($path) && str_starts_with($path, $root . DIRECTORY_SEPARATOR) && basename($path) !== 'smoke-router.php') {
     return false;
 }
 header('Content-Type: text/html; charset=UTF-8');

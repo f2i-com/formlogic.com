@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { Panel } from '../../components/ui/Panel';
@@ -23,8 +23,14 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
   const [busy, setBusy] = useState<string | null>(null);
   const [plugin, setPlugin] = useState(plugins[0]?.manifestId ?? '');
   const [probe, setProbe] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
   const [trial, setTrial] = useState(false);
   const [revision, setRevision] = useState(0);
+  const probeSeqRef = useRef(0);
+
+  useEffect(() => () => {
+    probeSeqRef.current += 1;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,17 +61,35 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
     setRevision((n) => n + 1);
   };
   const runProbe = async () => {
+    if (probing) return;
+    const seq = ++probeSeqRef.current;
+    setProbing(true);
     setProbe('Sending a control picture to the model…');
-    const started = await api.adminProbeCameraCheck(plugin);
-    if (started.error || !started.data) { setProbe(started.error ?? 'The test could not start.'); return; }
-    let current = started.data;
-    const until = Date.now() + 600_000;
-    while (current.status !== 'done' && Date.now() < until) {
-      await sleep(2500);
-      const next = await api.getCameraCheck(current.id);
-      if (next.data) current = next.data;
+    try {
+      const started = await api.adminProbeCameraCheck(plugin);
+      if (probeSeqRef.current !== seq) return;
+      if (started.error || !started.data) { setProbe(started.error ?? 'The test could not start.'); return; }
+      let current = started.data;
+      const until = Date.now() + 600_000;
+      while (current.status !== 'done' && Date.now() < until) {
+        await sleep(2500);
+        if (probeSeqRef.current !== seq) return;
+        const next = await api.getCameraCheck(current.id);
+        if (probeSeqRef.current !== seq) return;
+        if (next.error) {
+          setProbe(next.error);
+          return;
+        }
+        if (next.data) current = next.data;
+      }
+      if (probeSeqRef.current === seq) {
+        setProbe(current.message ?? 'The test ended.');
+      }
+    } finally {
+      if (probeSeqRef.current === seq) {
+        setProbing(false);
+      }
     }
-    setProbe(current.message ?? 'The test ended.');
   };
 
   if (!state) return error ? <p role="alert" className="text-sm text-red-600 dark:text-red-400">{error}</p> : null;
@@ -110,7 +134,7 @@ export function AdminCameraCheckCard({ plugins }: { plugins: InstalledPlugin[] }
               </select>
             )}
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => void runProbe()}>Does it read images?</Button>
+              <Button size="sm" variant="outline" isLoading={probing} disabled={probing} onClick={() => void runProbe()}>Does it read images?</Button>
               <Button size="sm" variant="outline" onClick={() => setTrial(true)}>Try it on yourself</Button>
             </div>
             {probe && <p role="status" className="text-sm text-gray-700 dark:text-slate-300">{probe}</p>}

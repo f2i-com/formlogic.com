@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Puzzle } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
@@ -36,35 +36,52 @@ export function PluginVerifyPage() {
   const slug = params.get('app') ?? '';
   const kind = params.get('kind') ?? '';
   const requestedReturn = params.get('return') ?? undefined;
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notYet, setNotYet] = useState(false);
-  const [camera, setCamera] = useState(false);
+  const paramKey = `${user?.id ?? ''}:${pluginId}:${slug}:${kind}:${requestedReturn ?? ''}`;
+  const [fetchState, setFetchState] = useState<{ key: string; loaded: Loaded | null; error: string | null }>({ key: '', loaded: null, error: null });
+  const [notYetKey, setNotYetKey] = useState<string | null>(null);
+  const [cameraKey, setCameraKey] = useState<string | null>(null);
+  const loaded = fetchState.key === paramKey ? fetchState.loaded : null;
+  const error = fetchState.key === paramKey ? fetchState.error : null;
+  const notYet = notYetKey === paramKey;
+  const camera = cameraKey === paramKey;
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
-    if (!user || !slug || !kind) return;
+    const seq = ++requestSeqRef.current;
+    if (!user || !slug || !kind) return () => { requestSeqRef.current += 1; };
     let cancelled = false;
     void api.getPluginContext(pluginId, slug, kind, requestedReturn).then((result) => {
-      if (cancelled) return;
-      if (result.error || !result.data) { setError(result.error ?? 'This page could not be opened.'); return; }
-      setLoaded(result.data);
+      if (cancelled || requestSeqRef.current !== seq) return;
+      if (result.error || !result.data) {
+        setFetchState({ key: paramKey, loaded: null, error: result.error ?? 'This page could not be opened.' });
+        return;
+      }
+      setFetchState({ key: paramKey, loaded: result.data, error: null });
     });
-    return () => { cancelled = true; };
-  }, [user, pluginId, slug, kind, requestedReturn]);
+    return () => {
+      cancelled = true;
+      requestSeqRef.current += 1;
+    };
+  }, [user, pluginId, slug, kind, requestedReturn, paramKey]);
 
   const goOn = useCallback((to: string) => {
-    // An app's own domain is another site: leave this one for it.
-    if (/^https?:\/\//i.test(to)) window.location.assign(to);
-    else navigate(to, { replace: true });
+    // An app's own domain is another site: leave this one for it; otherwise require a safe root-relative path.
+    if (/^https?:\/\//i.test(to)) {
+      window.location.assign(to);
+      return;
+    }
+    navigate(/^\/(?!\/)/.test(to) ? to : '/', { replace: true });
   }, [navigate]);
 
   // The plugin says it is done: go on if the server now holds the pass, and say so if it doesn't.
   const onDone = useCallback(() => {
+    const seq = requestSeqRef.current;
     void api.getPluginContext(pluginId, slug, kind, requestedReturn).then((result) => {
+      if (requestSeqRef.current !== seq) return;
       if (result.data?.requirement.satisfied) goOn(result.data.returnTo);
-      else setNotYet(true);
+      else setNotYetKey(paramKey);
     });
-  }, [pluginId, slug, kind, requestedReturn, goOn]);
+  }, [pluginId, slug, kind, requestedReturn, paramKey, goOn]);
 
   // What the plugin's page is told: the app, what it asks, whether the site's camera check is there
   // for it, and its settings; nothing about the member.
@@ -74,7 +91,7 @@ export function PluginVerifyPage() {
     camera: loaded.camera === true,
     settings: loaded.settings ?? {},
   } : null, [loaded]);
-  const openCamera = useCallback(() => setCamera(true), []);
+  const openCamera = useCallback(() => setCameraKey(paramKey), [paramKey]);
   const bridge = useMemo(() => context ? { context, onDone, ...(loaded?.camera ? { onCamera: openCamera } : {}) } : undefined, [context, onDone, loaded, openCamera]);
 
   if (!user) return <Navigate to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`} replace />;
@@ -121,7 +138,7 @@ export function PluginVerifyPage() {
                 pluginName={loaded.plugin.name}
                 start={() => api.startCameraCheck(loaded.plugin.id, loaded.app.slug, loaded.requirement.kind)}
                 onPassed={onDone}
-                onClose={() => setCamera(false)}
+                onClose={() => setCameraKey(null)}
               />
             )}
           </>

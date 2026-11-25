@@ -6,7 +6,7 @@ namespace FormLogic\Controllers;
 
 use FormLogic\Controllers\Concerns\JsonResponseTrait;
 use FormLogic\Helpers\IpResolver;
-use FormLogic\Services\{AppService, CloudFlowRunner, FlowService, NativeAppCalls, NativeAppService, NativeRecordEventRouter, PlanService, PluginService, RateLimiter};
+use FormLogic\Services\{AccessGateService, AppService, CloudFlowRunner, FlowService, NativeAppCalls, NativeAppService, NativeRecordEventRouter, PlanService, PluginService, RateLimiter};
 use FormLogic\Support\SessionOriginPolicy;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -127,7 +127,9 @@ class ExternalAppApiController
                     'corsOrigins' => $policy['corsOrigins'],
                     'invokePath' => '/api/v1/apps/' . $slug . '/invoke',
                     'routesPath' => '/api/v1/apps/' . $slug . '/routes/',
-                    'publicRoutesPath' => ($app['status'] ?? '') === 'published' && in_array($policy['authMode'], ['public', 'both'], true)
+                    'publicRoutesPath' => ($app['status'] ?? '') === 'published'
+                        && in_array($policy['authMode'], ['public', 'both'], true)
+                        && AccessGateService::normalizeRequirements($app['settings']['requires'] ?? null) === []
                         ? '/api/public/apps/' . $slug . '/routes/'
                         : null,
                 ],
@@ -199,6 +201,9 @@ class ExternalAppApiController
         $policy = self::externalApiPolicy($app);
         if (!$policy['enabled'] || !in_array($policy['authMode'], ['public', 'both'], true)) {
             return $this->applyAppCors($request, $this->jsonError($response, 'Public API access is not enabled for this app.', 403, 'public_api_disabled'), $policy);
+        }
+        if (AccessGateService::normalizeRequirements($app['settings']['requires'] ?? null) !== []) {
+            return $this->applyAppCors($request, $this->jsonError($response, 'Public API access is unavailable for apps with access-gate requirements.', 403, 'access_gate_required'), $policy);
         }
         $ownerId = (string) ($app['ownerId'] ?? '');
         return $this->dispatchDirectHttpRoute($request, $response, $app, $ownerId, (string) ($args['path'] ?? ''), 'public_api');
@@ -520,17 +525,23 @@ class ExternalAppApiController
         }
 
         // Strict path canonicalization & traversal rejection BEFORE blocked/allowed prefix matching
-        // (closes double-slash, dot-segment, percent-encoded dot/slash, backslash, and case bypasses).
+        // (closes double-slash, dot-segment, query/fragment/matrix smuggling, percent-encoded
+        // route bypass, backslash, and case bypasses).
         $decodedPath = rawurldecode($path);
         if (
             $path === ''
             || !str_starts_with($path, '/')
+            || !str_starts_with($decodedPath, '/')
             || strlen($path) > 2048
+            || strlen($decodedPath) > 2048
             || str_contains($path, '\\')
             || str_contains($decodedPath, '\\')
             || str_contains($path, '//')
             || str_contains($decodedPath, '//')
-            || preg_match('/%(?:2e|2f|5c|00|25)/i', $path) === 1
+            || strpbrk($path, '?#;') !== false
+            || strpbrk($decodedPath, '?#;') !== false
+            || preg_match('/%(?:2e|2f|5c|00|25|3f|23|3b)/i', $path) === 1
+            || preg_match('/%[0-9a-f]{2}/i', $decodedPath) === 1
             || preg_match('#(?:^|/)\.\.?(?:/|$)#', $path) === 1
             || preg_match('#(?:^|/)\.\.?(?:/|$)#', $decodedPath) === 1
             || preg_match('/[\x00-\x1f\x7f]/', $path) === 1
@@ -538,6 +549,9 @@ class ExternalAppApiController
         ) {
             return $decorate($this->jsonError($response, 'Provide a valid backend path starting with "/".', 400));
         }
+        // Canonicalize to the single-decoded path so policy checks and downstream container
+        // routers inspect the exact same path (blocking `%61dmin` / `%73ite` smuggling).
+        $path = $decodedPath;
         $lowerPath = strtolower($path);
         if (str_starts_with($lowerPath, PluginService::SITE_ROUTE_PREFIX)) {
             return $decorate($this->jsonError($response, 'Not found', 404));

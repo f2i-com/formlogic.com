@@ -204,17 +204,20 @@ class BlueprintService
 
     public function commitOperations(string $ownerUserId, string $blueprintId, array $batch): array
     {
-        [$row, $planned, $semanticOps, $layoutOps] = $this->planBatch($ownerUserId, $blueprintId, $batch);
         $changeSetId = 'cs_' . bin2hex(random_bytes(10));
-        $currentSemantic = (int) $row['semantic_revision'];
-        $newSemantic = $semanticOps > 0 ? $currentSemantic + 1 : $currentSemantic;
-        $newLayout = $layoutOps > 0 ? ((int) $row['layout_revision']) + 1 : (int) $row['layout_revision'];
 
         $ownTxn = !$this->mysql->inTransaction();
         if ($ownTxn) {
             $this->mysql->beginTransaction();
         }
         try {
+            // Lock the blueprint row before planning so concurrent commits with the same
+            // baseSemanticRevision serialize cleanly instead of overwriting each other.
+            [$row, $planned, $semanticOps, $layoutOps] = $this->planBatch($ownerUserId, $blueprintId, $batch, true);
+            $currentSemantic = (int) $row['semantic_revision'];
+            $newSemantic = $semanticOps > 0 ? $currentSemantic + 1 : $currentSemantic;
+            $newLayout = $layoutOps > 0 ? ((int) $row['layout_revision']) + 1 : (int) $row['layout_revision'];
+
             foreach ($planned as $plan) {
                 // Inverses capture PRE-apply state (an update's undo must restore the old
                 // properties), so compute them before the write.
@@ -222,10 +225,21 @@ class BlueprintService
                 $this->applyOperation($blueprintId, $plan, $newSemantic);
                 $this->recordOperation($blueprintId, $changeSetId, $ownerUserId, $plan, $inverse, $newSemantic, $newLayout, (string) ($batch['origin'] ?? 'manual'));
             }
-            $this->mysql->prepare('
+            $upd = $this->mysql->prepare('
                 UPDATE blueprints SET semantic_revision = :s, layout_revision = :l, updated_by = :actor
-                WHERE id = :b
-            ')->execute(['s' => $newSemantic, 'l' => $newLayout, 'actor' => $ownerUserId, 'b' => $blueprintId]);
+                WHERE id = :b AND semantic_revision = :expected
+            ');
+            $upd->execute([
+                's' => $newSemantic,
+                'l' => $newLayout,
+                'actor' => $ownerUserId,
+                'b' => $blueprintId,
+                'expected' => $currentSemantic,
+            ]);
+            if ($semanticOps > 0 && $upd->rowCount() !== 1) {
+                $latest = $this->ownedRow($ownerUserId, $blueprintId);
+                throw new BlueprintRevisionConflictException((int) ($latest['semantic_revision'] ?? $currentSemantic));
+            }
             if ($ownTxn) {
                 $this->mysql->commit();
             }
@@ -499,13 +513,14 @@ class BlueprintService
         if ($formIds === []) {
             return;
         }
-        $placeholders = implode(',', array_fill(0, count($formIds), '?'));
+        $uniqueFormIds = array_values(array_unique($formIds));
+        $placeholders = implode(',', array_fill(0, count($uniqueFormIds), '?'));
         // Only the owner's own forms: anyone can put any id on a diagram, and a form that
         // is not theirs reads as missing rather than handing them its title.
         $stmt = $this->mysql->prepare(
             "SELECT id, title, field_count, updated_at FROM forms WHERE id IN ({$placeholders}) AND user_id = ?"
         );
-        $stmt->execute([...array_values(array_unique($formIds)), $ownerUserId]);
+        $stmt->execute([...$uniqueFormIds, $ownerUserId]);
         $live = [];
         foreach ($stmt->fetchAll() as $form) {
             $live[(string) $form['id']] = $form;
@@ -545,9 +560,9 @@ class BlueprintService
      *
      * @return array{0: array, 1: array[], 2: int, 3: int} [$blueprintRow, $plannedOps, $semanticOps, $layoutOps]
      */
-    private function planBatch(string $ownerUserId, string $blueprintId, array $batch): array
+    private function planBatch(string $ownerUserId, string $blueprintId, array $batch, bool $forUpdate = false): array
     {
-        $row = $this->ownedRow($ownerUserId, $blueprintId);
+        $row = $this->ownedRow($ownerUserId, $blueprintId, $forUpdate);
         if ($row === null) {
             throw new \InvalidArgumentException('Unknown blueprint');
         }
@@ -624,7 +639,7 @@ class BlueprintService
      *
      * @param array<string, array{0: mixed, 1: mixed}> $edgeEnds each stored line's [sourceId, targetId]
      */
-    private function validateOperation(mixed $op, array &$live, array $edgeEnds, int $seq): array
+    private function validateOperation(mixed $op, array &$live, array &$edgeEnds, int $seq): array
     {
         if (!is_array($op)) {
             throw new \InvalidArgumentException('Each operation must be an object');
@@ -664,6 +679,9 @@ class BlueprintService
                 $resourceRef = is_array($op['resourceRef'] ?? null) ? $op['resourceRef'] : null;
                 $this->assertJsonSize($properties, 'properties', $this->propertiesCap($elementType));
                 $live[$targetId] = $elementType;
+                if ($elementType === 'edge') {
+                    $edgeEnds[$targetId] = [$properties['sourceId'] ?? null, $properties['targetId'] ?? null];
+                }
                 return [
                     'type' => $type,
                     'operationId' => $operationId,
@@ -689,6 +707,7 @@ class BlueprintService
                 if ($properties !== null) {
                     if ($live[$targetId] === 'edge') {
                         $this->assertEdgeProperties($properties, $live);
+                        $edgeEnds[$targetId] = [$properties['sourceId'] ?? null, $properties['targetId'] ?? null];
                     }
                     $this->assertJsonSize($properties, 'properties', $this->propertiesCap($live[$targetId]));
                 }
@@ -716,7 +735,7 @@ class BlueprintService
                         throw new \InvalidArgumentException("Element '{$targetId}' is still referenced by edge '{$id}'");
                     }
                 }
-                unset($live[$targetId]);
+                unset($live[$targetId], $edgeEnds[$targetId]);
                 return ['type' => $type, 'operationId' => $operationId, 'seq' => $seq, 'targetId' => $targetId];
 
             case 'blueprint.layout.set':
@@ -931,9 +950,10 @@ class BlueprintService
         ')->execute(['b' => $blueprintId, 'id' => $elementId, 'layout' => json_encode($layout)]);
     }
 
-    private function ownedRow(string $ownerUserId, string $blueprintId): ?array
+    private function ownedRow(string $ownerUserId, string $blueprintId, bool $forUpdate = false): ?array
     {
-        $stmt = $this->mysql->prepare('SELECT * FROM blueprints WHERE id = :id AND owner_user_id = :o LIMIT 1');
+        $lock = $forUpdate && $this->mysql->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite' ? ' FOR UPDATE' : '';
+        $stmt = $this->mysql->prepare('SELECT * FROM blueprints WHERE id = :id AND owner_user_id = :o LIMIT 1' . $lock);
         $stmt->execute(['id' => $blueprintId, 'o' => $ownerUserId]);
         $row = $stmt->fetch();
         return $row === false ? null : $row;

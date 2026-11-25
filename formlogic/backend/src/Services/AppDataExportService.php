@@ -155,6 +155,7 @@ class AppDataExportService
 
         $zip = new \ZipArchive();
         if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+            $this->removeDir($staging);
             throw new \RuntimeException('Could not create the export archive');
         }
 
@@ -793,7 +794,13 @@ TXT;
         }
         // Opportunistic sweep of leftovers older than 2h (crashed/abandoned exports).
         foreach (glob($dir . '/app-data-*') ?: [] as $old) {
-            if (is_file($old) && filemtime($old) < time() - 7200) {
+            $mtime = @filemtime($old);
+            if ($mtime === false || $mtime >= time() - 7200) {
+                continue;
+            }
+            if (is_dir($old)) {
+                $this->removeDir($old);
+            } elseif (is_file($old)) {
                 @unlink($old);
             }
         }

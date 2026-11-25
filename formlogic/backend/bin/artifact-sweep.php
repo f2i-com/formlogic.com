@@ -37,19 +37,23 @@ if (PHP_SAPI !== 'cli') {
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
+$settings = require __DIR__ . '/../config/settings.php';
+$config = $settings['settings']['mysql'];
 
-$config = [
-    'host' => $_ENV['DB_HOST'] ?? 'localhost',
-    'port' => $_ENV['DB_PORT'] ?? '3306',
-    'database' => $_ENV['DB_DATABASE'] ?? 'formlogic',
-    'username' => $_ENV['DB_USERNAME'] ?? 'formlogic',
-    'password' => $_ENV['DB_PASSWORD'] ?? '',
-    'charset' => 'utf8mb4',
-    'collation' => 'utf8mb4_unicode_ci',
-];
+$lockHandle = \FormLogic\Support\CronLock::take('artifact-sweep');
+if ($lockHandle === null) {
+    fwrite(STDERR, sprintf("[%s] another artifact sweep is already running; exiting\n", date('c')));
+    exit(0);
+}
 
 try {
     $mysql = new MySQLConnection($config);
+    try {
+        $mysql->ensureSchemaCurrent();
+    } catch (\Throwable $e) {
+        fwrite(STDERR, sprintf("[%s] schema init failed: %s\n", date('c'), $e->getMessage()));
+    }
     $summary = (new ArtifactService($mysql))->sweep(2000);
     // Drafts for the SoftN directory expire the same way: a site where nobody drafts again would keep them.
     $drafts = \FormLogic\Services\SoftnDirectoryService::sweepExpired($mysql->getConnection());

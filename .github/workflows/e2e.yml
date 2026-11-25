@@ -28,6 +28,9 @@ on:
   #   # Nightly at 15:20 UTC (~01:20 AEST) — off the top-of-hour rush.
   #   - cron: '20 15 * * *'
 
+permissions:
+  contents: read
+
 jobs:
   e2e:
     name: E2E golden paths
@@ -57,6 +60,8 @@ jobs:
       E2E_PASSWORD: password123
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up PHP
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2

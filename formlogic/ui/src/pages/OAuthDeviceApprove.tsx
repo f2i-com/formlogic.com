@@ -49,7 +49,12 @@ export function OAuthDeviceApprove() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<'approved' | 'denied' | null>(null);
-  const autoLookedUp = useRef(false);
+  const lastAutoCodeRef = useRef<string | null>(null);
+  const lookupSeqRef = useRef(0);
+
+  useEffect(() => () => {
+    lookupSeqRef.current += 1;
+  }, []);
 
   const isDemo = user?.isDemo === true;
 
@@ -65,10 +70,12 @@ export function OAuthDeviceApprove() {
       setLookupError('Enter the 8-character code shown by your AI assistant (for example, ABCD-EFGH).');
       return;
     }
+    const seq = ++lookupSeqRef.current;
     setLoading(true);
     setLookupError(null);
     setActionError(null);
     const res = await api.getOAuthDeviceInfo(formatted);
+    if (lookupSeqRef.current !== seq) return;
     setLoading(false);
     if (res.data) {
       setInfo(res.data);
@@ -81,8 +88,9 @@ export function OAuthDeviceApprove() {
   }, []);
 
   useEffect(() => {
-    if (!user || !initialCode || autoLookedUp.current) return;
-    autoLookedUp.current = true;
+    if (!user || !initialCode || lastAutoCodeRef.current === initialCode) return;
+    lastAutoCodeRef.current = initialCode;
+    setCodeInput(initialCode);
     void lookupCode(initialCode);
   }, [user, initialCode, lookupCode]);
 

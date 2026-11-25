@@ -716,9 +716,15 @@ class FlowService
             throw new \InvalidArgumentException("Unknown flow '{$clean['flow']}' in this app");
         }
 
+        if (array_key_exists('formId', $data) && is_string($data['formId'])) {
+            $this->assertBindableForm($data['formId']);
+        }
         $formId = array_key_exists('formId', $data)
             ? $this->sanitizeBindingFormId($appId, $data['formId'])
             : $existing['formId'];
+        if (array_key_exists('formId', $data)) {
+            $this->assertBindableForm($formId);
+        }
         $connectorId = array_key_exists('connectorId', $data)
             ? $this->sanitizeConnectorId($data['connectorId'])
             : $existing['connectorId'];

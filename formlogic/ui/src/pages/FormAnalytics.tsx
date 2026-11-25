@@ -19,6 +19,7 @@ import { useAuthStore } from '../stores/authStore';
 import { api, type FormAnalytics as FormAnalyticsType } from '../lib/api';
 import { cn, formatDate, sanitizeFilename, parseServerDate } from '../lib/utils';
 import { isEncryptedEnvelope } from '../lib/crypto/envelope';
+import { getFormPrivacyState, type FormPrivacy } from '../lib/crypto/formCrypto';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { useFloatingPopover } from '../hooks/useFloatingPopover';
 import { EmbedModal } from '../components/builder/EmbedModal';
@@ -85,13 +86,23 @@ export default function FormAnalytics() {
   // so the field breakdown and Recent Responses table reflect real data.
   const responses = storageMode === 'api' ? apiResponses : localResponses;
 
-  // E2EE (§9.2): a private form's answers are ciphertext — answer-derived surfaces
-  // (field breakdown, answer previews) render the private placeholder instead of
-  // silently empty charts. Count-based surfaces (over-time chart) stay: they are
-  // computed from non-content columns and remain meaningful.
+  // E2EE (§9.2): drive private-form handling from authoritative encryption metadata
+  // (form.encryption / GET /forms/{id}/encryption) rather than waiting for an encrypted row.
+  const [privacyState, setPrivacyState] = useState<{ formId: string; privacy: FormPrivacy } | null>(null);
+  useEffect(() => {
+    if (storageMode !== 'api' || !user || !formId) return;
+    let cancelled = false;
+    void getFormPrivacyState(formId).then((privacy) => {
+      if (!cancelled) setPrivacyState({ formId, privacy });
+    });
+    return () => { cancelled = true; };
+  }, [storageMode, user, formId]);
+
   const isPrivateForm = useMemo(
-    () => responses.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers)),
-    [responses],
+    () => form?.encryption?.mode === 'private'
+      || (privacyState !== null && privacyState.formId === formId && privacyState.privacy === 'private')
+      || responses.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers)),
+    [form?.encryption?.mode, privacyState, formId, responses],
   );
 
   // Calculate local analytics
@@ -888,8 +899,8 @@ export default function FormAnalytics() {
                                   {isPrivateForm
                                     ? '🔒'
                                     : field.type === 'linked_record'
-                                      ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                                      : formatPreviewValue(field, response.answers[field.id])}
+                                      ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers?.[field.id]))
+                                      : formatPreviewValue(field, response.answers?.[field.id])}
                                 </dd>
                               </div>
                             ))}
@@ -941,8 +952,8 @@ export default function FormAnalytics() {
                           const text = isPrivateForm
                             ? '🔒'
                             : field.type === 'linked_record'
-                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers[field.id]))
-                              : formatPreviewValue(field, response.answers[field.id]);
+                              ? (resolvedLinkLabel(response, field.id) ?? formatPreviewValue(field, response.answers?.[field.id]))
+                              : formatPreviewValue(field, response.answers?.[field.id]);
                           return (
                             <td key={field.id} className="truncate px-3 py-1.5 text-[13px] text-gray-600 dark:text-slate-300" title={text}>
                               {text}

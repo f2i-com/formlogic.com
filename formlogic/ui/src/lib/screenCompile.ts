@@ -248,22 +248,27 @@ function esmReactVendorId(pathname: string): string | null {
 /** Image assets: imported from JS/TSX they resolve to a data: URI string (default export). */
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|ico|bmp|avif|svg)$/i;
 
-/** The virtual-filesystem + embedded-vendor + esm.sh resolver shared by every screen bundle. */
-function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
+/** The virtual-filesystem + embedded-vendor + optional compile-time esm.sh resolver shared by every screen bundle. */
+function screenVfsPlugin(map: Map<string, string>, vendors: Vendors, allowEsmFetch: boolean): Plugin {
   // Per-build budgets so one screen can't quietly pull a huge dependency graph.
   let esmModules = 0;
   let esmBytes = 0;
   // Every route to the network ends here, so the origin is checked here: a specifier that starts
   // with a slash ('//host/x', or '/host/x' after the bare-name prefix) parses as another host.
-  const toEsm = (url: URL): { path: string; namespace: string } | { errors: Array<{ text: string }> } =>
-    url.origin !== ESM_ORIGIN
-      ? { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${url.origin}).` }] }
-      : /\.css$/i.test(url.pathname)
-      ? { path: '\0css-stub', namespace: 'css-stub' } // package css can't inject into the shell — no-op
-      : (() => {
-          const reactId = esmReactVendorId(url.pathname);
-          return reactId ? { path: reactId, namespace: 'vendor' } : { path: url.href, namespace: 'esm' };
-        })();
+  const toEsm = (url: URL): { path: string; namespace: string } | { errors: Array<{ text: string }> } => {
+    if (url.origin !== ESM_ORIGIN) {
+      return { errors: [{ text: `Only ${ESM_ORIGIN} URL imports are allowed (got ${url.origin}).` }] };
+    }
+    if (/\.css$/i.test(url.pathname)) {
+      return { path: '\0css-stub', namespace: 'css-stub' }; // package css can't inject into the shell — no-op
+    }
+    const reactId = esmReactVendorId(url.pathname);
+    if (reactId) return { path: reactId, namespace: 'vendor' };
+    if (!allowEsmFetch) {
+      return { errors: [{ text: `External npm import '${url.href}' is disabled at view time — precompile the screen in the Studio.` }] };
+    }
+    return { path: url.href, namespace: 'esm' };
+  };
   return {
     name: 'formlogic-vfs',
     setup(build) {
@@ -345,8 +350,14 @@ function screenVfsPlugin(map: Map<string, string>, vendors: Vendors): Plugin {
   };
 }
 
+export interface ScreenCompileOptions {
+  /** Allow fetching npm packages from https://esm.sh. True for Studio authoring, false for view-time rendering. */
+  allowEsmFetch?: boolean;
+}
+
 /** Bundle one entry against a virtual file map. All screen compilation funnels through here. */
-async function runBundle(map: Map<string, string>, entryPath: string): Promise<{ js: string; error?: string }> {
+async function runBundle(map: Map<string, string>, entryPath: string, options?: ScreenCompileOptions): Promise<{ js: string; error?: string }> {
+  const allowEsmFetch = options?.allowEsmFetch ?? true;
   try {
     const [esbuild, vendors] = await Promise.all([ensureEsbuild(), ensureVendors()]);
     const result = await esbuild.build({
@@ -359,7 +370,7 @@ async function runBundle(map: Map<string, string>, entryPath: string): Promise<{
       // TSX/JSX → the automatic runtime on preact (aliased from react too). No effect on .ts/.js files.
       jsx: 'automatic',
       jsxImportSource: 'preact',
-      plugins: [screenVfsPlugin(map, vendors)],
+      plugins: [screenVfsPlugin(map, vendors, allowEsmFetch)],
     });
     // esbuild-wasm names the in-memory output '<stdout>', so match .js OR fall back to the first output.
     const jsOut = result.outputFiles?.find((o) => o.path.endsWith('.js')) ?? result.outputFiles?.[0];
@@ -380,7 +391,7 @@ async function runBundle(map: Map<string, string>, entryPath: string): Promise<{
  * npm imports resolve against the embedded built-ins (react/preact) first, then via esm.sh at
  * COMPILE time (fetched by the host and inlined — the sandbox itself stays network-free).
  */
-export async function bundleScreenFiles(files: ScreenFile[], entry?: string): Promise<{ html: string; css: string; js: string; error?: string }> {
+export async function bundleScreenFiles(files: ScreenFile[], entry?: string, options?: ScreenCompileOptions): Promise<{ html: string; css: string; js: string; error?: string }> {
   const map = new Map(files.map((f) => [normalizePath(f.path), f.content]));
   const html = map.get('index.html') ?? '<div id="root"></div>';
   const css = files.filter((f) => /\.css$/i.test(f.path)).map((f) => f.content).join('\n');
@@ -389,25 +400,30 @@ export async function bundleScreenFiles(files: ScreenFile[], entry?: string): Pr
   if (!entryPath) {
     return { html, css, js: '', error: 'No entry file — add an index.ts (or index.tsx).' };
   }
-  const r = await runBundle(map, entryPath);
+  const r = await runBundle(map, entryPath, options);
   return { html, css, js: r.js, error: r.error };
 }
 
 /**
  * Resolve a screen (single-file OR multi-file) to the { html, css, js } the sandbox iframe runs.
- * Prefers a multi-file `files` project; else precompiled `js`; else compiles single-file `ts`.
+ * Prefers precompiled `js`; otherwise compiles locally without making host-origin esm.sh fetches
+ * (so untrusted screens cannot trigger outbound network fetches from the host page at view time).
  */
-export async function resolveScreenAssets(screen: { html?: string; css?: string; js?: string; ts?: string; files?: ScreenFile[]; entry?: string }): Promise<{ html: string; css: string; js: string; error?: string }> {
+export async function resolveScreenAssets(
+  screen: { html?: string; css?: string; js?: string; ts?: string; files?: ScreenFile[]; entry?: string },
+  options?: ScreenCompileOptions,
+): Promise<{ html: string; css: string; js: string; error?: string }> {
+  const compileOpts: ScreenCompileOptions = { allowEsmFetch: options?.allowEsmFetch ?? false };
   // Prefer the precompiled artifact (the Studio bundles/compiles on save + stores derived html/css), so
   // public/runtime pages never load esbuild. Only bundle/compile on the fly when there's no `js`.
   if (screen.js) {
     return { html: screen.html || '', css: screen.css || '', js: screen.js };
   }
   if (screen.files && screen.files.length > 0) {
-    return bundleScreenFiles(screen.files, screen.entry);
+    return bundleScreenFiles(screen.files, screen.entry, compileOpts);
   }
   if (screen.ts && screen.ts.trim()) {
-    const r = await compileScreenCode(screen.ts);
+    const r = await compileScreenCode(screen.ts, compileOpts);
     return { html: screen.html || '', css: screen.css || '', js: r.js, error: r.error };
   }
   return { html: screen.html || '', css: screen.css || '', js: '' };
@@ -419,14 +435,14 @@ export async function resolveScreenAssets(screen: { html?: string; css?: string;
  * TSX dialect first (it parses plain TS identically, apart from angle-bracket type assertions —
  * `<Foo>value` — which fall back to a plain-TS pass). Never throws — returns { js, error }.
  */
-export async function compileScreenCode(source: string): Promise<CompileResult> {
+export async function compileScreenCode(source: string, options?: ScreenCompileOptions): Promise<CompileResult> {
   const src = source ?? '';
   if (src.trim() === '') {
     return { js: '' };
   }
-  const tsx = await runBundle(new Map([['index.tsx', src]]), 'index.tsx');
+  const tsx = await runBundle(new Map([['index.tsx', src]]), 'index.tsx', options);
   if (!tsx.error) return { js: tsx.js };
-  const ts = await runBundle(new Map([['index.ts', src]]), 'index.ts');
+  const ts = await runBundle(new Map([['index.ts', src]]), 'index.ts', options);
   if (!ts.error) return { js: ts.js };
   return { js: '', error: tsx.error };
 }

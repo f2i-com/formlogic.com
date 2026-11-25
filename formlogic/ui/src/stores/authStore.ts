@@ -152,7 +152,7 @@ export async function teardownUserSession(
   if (broadcast) publishSessionTransition('fl-teardown', userId, reason);
 
   const keepFormsFor = reason === 'session-expired' && !api.isDemoMode() && takeUpDeviceMode() ? userId : null;
-  await clearUserSessionData(generation, memoryOnly, keepFormsFor);
+  await clearUserSessionData(memoryOnly, keepFormsFor);
 
   if (reason !== 'session-expired') await forgetQueuedSubmissions(userId, generation);
 
@@ -363,7 +363,7 @@ async function purgeBackgroundSyncQueue(queueName: string): Promise<void> {
       const db = open.result;
       try {
         if (!db.objectStoreNames.contains('requests')) {
-          db.close();
+          db.close?.();
           resolve();
           return;
         }
@@ -376,18 +376,18 @@ async function purgeBackgroundSyncQueue(queueName: string): Promise<void> {
           cursor.delete();
           cursor.continue();
         };
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); resolve(); };
-        tx.onabort = () => { db.close(); resolve(); };
+        tx.oncomplete = () => { db.close?.(); resolve(); };
+        tx.onerror = () => { db.close?.(); resolve(); };
+        tx.onabort = () => { db.close?.(); resolve(); };
       } catch {
-        db.close();
+        db.close?.();
         resolve();
       }
     };
   });
 }
 
-async function clearUserSessionData(generation: number, memoryOnly: boolean, keepFormsFor: string | null): Promise<void> {
+async function clearUserSessionData(memoryOnly: boolean, keepFormsFor: string | null): Promise<void> {
   // Cancel pending debounced saves so stale callbacks can't fire after the purge.
   clearAllDebounceTimers();
 

@@ -32,6 +32,69 @@
         // if this document is ever opened directly or framed without `sandbox="allow-scripts"`.
         if (window.origin !== 'null') return;
         var initialized = false;
+        function copyAttrs(from, to) {
+          for (var i = 0; i < from.attributes.length; i++) {
+            to.setAttribute(from.attributes[i].name, from.attributes[i].value);
+          }
+        }
+        function isBlockedNode(node) {
+          if (!node || node.nodeType !== 1) return false;
+          var tag = node.tagName.toUpperCase();
+          if (tag === 'BASE') return true;
+          if (tag === 'META') {
+            var he = String(node.getAttribute('http-equiv') || '').trim().toLowerCase();
+            if (he === 'content-security-policy' || he === 'refresh') return true;
+          }
+          return false;
+        }
+        function stripBlockedDescendants(root) {
+          var bad = root.querySelectorAll('base, meta[http-equiv]');
+          for (var i = 0; i < bad.length; i++) {
+            if (isBlockedNode(bad[i]) && bad[i].parentNode) {
+              bad[i].parentNode.removeChild(bad[i]);
+            }
+          }
+        }
+        function appendHeadNodes(parsedHead) {
+          var node = parsedHead.firstChild;
+          while (node) {
+            var next = node.nextSibling;
+            if (isBlockedNode(node)) {
+              node = next;
+              continue;
+            }
+            if (node.nodeType === 1) {
+              var tag = node.tagName.toUpperCase();
+              if (tag === 'TITLE') {
+                document.title = node.textContent || '';
+                node = next;
+                continue;
+              }
+              if (tag === 'SCRIPT') {
+                var s = document.createElement('script');
+                copyAttrs(node, s);
+                s.textContent = node.textContent || '';
+                document.head.appendChild(s);
+                node = next;
+                continue;
+              }
+            }
+            var imported = document.importNode(node, true);
+            if (imported.nodeType === 1) stripBlockedDescendants(imported);
+            document.head.appendChild(imported);
+            node = next;
+          }
+        }
+        function activateScripts(root) {
+          var scripts = root.querySelectorAll('script');
+          for (var i = 0; i < scripts.length; i++) {
+            var old = scripts[i];
+            var fresh = document.createElement('script');
+            copyAttrs(old, fresh);
+            fresh.textContent = old.textContent || '';
+            if (old.parentNode) old.parentNode.replaceChild(fresh, old);
+          }
+        }
         window.addEventListener('message', function (e) {
           var m = e.data;
           if (initialized || !m || m.__flScreenDoc == null) return;
@@ -43,12 +106,51 @@
           if (e.source !== window.parent) return;
           if (e.origin !== location.protocol + '//' + location.host) return;
           initialized = true;
-          document.open();
-          document.write(String(m.__flScreenDoc));
-          document.close();
+          // Bind the transferred MessagePort inside a one-shot claim helper consumed by the
+          // host-injected SDK shim in <head> before any user markup/script executes. A
+          // MessagePort cannot cross document navigation, so any navigation escape — even to a
+          // stalled-load response — loses SDK bridge access immediately.
+          var hostPort = e.ports && e.ports[0] ? e.ports[0] : null;
+          if (hostPort) {
+            var claimed = false;
+            window.addEventListener('pagehide', function () {
+              if (!hostPort) return;
+              try { hostPort.postMessage({ __flScreenClosed: true }); } catch (err) {}
+              try { hostPort.close(); } catch (err) {}
+              hostPort = null;
+            });
+            window.__flClaimPort = function () {
+              if (claimed) return null;
+              claimed = true;
+              try { delete window.__flClaimPort; } catch (err) { window.__flClaimPort = undefined; }
+              return hostPort;
+            };
+          }
+          // Hydrate into the already-loaded document without document.open()/write()/close():
+          // keeps this document's CSP policy container intact AND fires zero second iframe `load`
+          // events, so ANY subsequent iframe `load` event unconditionally indicates navigation escape.
+          var parsed = new DOMParser().parseFromString(String(m.__flScreenDoc), 'text/html');
+          document.documentElement.className = parsed.documentElement ? parsed.documentElement.className : '';
+          if (parsed.head) appendHeadNodes(parsed.head);
+          document.body.innerHTML = '';
+          if (parsed.body) {
+            var child = parsed.body.firstChild;
+            while (child) {
+              var next = child.nextSibling;
+              if (!isBlockedNode(child)) {
+                var importedBodyNode = document.importNode(child, true);
+                if (importedBodyNode.nodeType === 1) stripBlockedDescendants(importedBodyNode);
+                document.body.appendChild(importedBodyNode);
+              }
+              child = next;
+            }
+            activateScripts(document.body);
+          }
+          document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));
         });
-        // The parent also re-sends on the iframe load event; this ready ping
-        // covers the reverse race (listener attached before the parent's).
+        // Signal readiness after the message listener is attached; the parent waits for
+        // the iframe's initial load event before sending __flScreenDoc so load #1 is
+        // guaranteed to be screen-host.html before any untrusted script executes.
         window.parent.postMessage({ __flScreenHostReady: true }, '*');
       })();
     </script>

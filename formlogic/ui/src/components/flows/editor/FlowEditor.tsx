@@ -14,8 +14,8 @@ import {
   useEdgesState,
   useNodesState,
   type Connection,
-  type EdgeChange,
-  type NodeChange,
+  type EdgeChangeset,
+  type NodeChangeset,
 } from '@xyflow/react';
 import { ArrowLeft, Check, Loader2, PlayCircle, Plus, Redo2, RefreshCw, Save, Undo2, History, X, Zap } from 'lucide-react';
 import { cn } from '../../../lib/utils';
@@ -263,13 +263,14 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   }, [serialized, applyGraph, syncHistFlags]);
 
   // Snapshot before structural (add/remove/connect/patch) edits — NOT position drags.
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
-    if (changes.some((c) => c.type === 'remove')) pushHistory();
+  const onNodesChange = useCallback((changes: NodeChangeset<FlowRFNode>) => {
+    const hasRemoval = changes.getByType('remove').length > 0;
+    if (hasRemoval) pushHistory();
     onNodesChangeBase(changes);
-    if (changes.some((c) => c.type === 'remove')) setSelectedId(null);
+    if (hasRemoval) setSelectedId(null);
   }, [onNodesChangeBase, pushHistory]);
-  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
-    if (changes.some((c) => c.type === 'remove')) pushHistory();
+  const onEdgesChange = useCallback((changes: EdgeChangeset<FlowRFEdge>) => {
+    if (changes.getByType('remove').length > 0) pushHistory();
     onEdgesChangeBase(changes);
   }, [onEdgesChangeBase, pushHistory]);
 

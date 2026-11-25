@@ -439,6 +439,8 @@ function AppRoutes() {
         <Route path="/accept-invite" element={<AcceptInvite />} />
         <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
         <Route path="/oauth/device" element={<OAuthDeviceApprove />} />
+        <Route path="/sign-in/domain" element={<SignInFirst />} />
+        <Route path="/plugins/:plugin/verify" element={<SignInFirst />} />
 
         <Route path="/docs" element={<Docs />} />
         <Route path="/ai-setup" element={<AiSetupPage />} />
@@ -447,6 +449,7 @@ function AppRoutes() {
         <Route path="/terms" element={<LegalPage type="terms" />} />
         <Route path="/form/:formId" element={<FormResponse />} />
         <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
+        <Route path="/device-check" element={<DeviceCheck />} />
         <Route path="/download" element={<DownloadPage />} />
         <Route path="/app/:appSlug/native/*" element={<NativeAppPage />} />
         <Route path="/app/:appSlug/project" element={<HostedAppPage />} />
@@ -547,6 +550,7 @@ function AppRoutes() {
 
       {/* Native-runtime App Link fallback (see signed-out block). */}
       <Route path="/open/app/:appSlug/*" element={<OpenInApp />} />
+      <Route path="/device-check" element={<DeviceCheck />} />
       <Route path="/download" element={<DownloadPage />} />
       {/* App runtime (full screen, separate layout) */}
       <Route path="/app/:appSlug/native/*" element={<NativeAppPage />} />

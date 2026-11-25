@@ -62,6 +62,7 @@ class IpSafetyTest extends TestCase
         $this->assertSame('hooks.example.com:443:8.8.8.8', IpSafety::curlResolveEntry('HtTpS://hooks.example.com/x', '8.8.8.8'));
         $this->assertSame('hooks.example.com:80:8.8.8.8', IpSafety::curlResolveEntry('HTTP://hooks.example.com/x', '8.8.8.8'));
         $this->assertSame('hooks.example.com:8443:8.8.8.8', IpSafety::curlResolveEntry('HTTPS://hooks.example.com:8443/x', '8.8.8.8'));
+        $this->assertSame('hooks.example.com:443:[2001:4860:4860::8888]', IpSafety::curlResolveEntry('https://hooks.example.com/x', '2001:4860:4860::8888'));
         $this->assertNull(IpSafety::curlResolveEntry('not a url', '8.8.8.8'));
     }
 

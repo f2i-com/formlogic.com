@@ -9,7 +9,9 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface as RequestHandler;
 use Slim\Psr7\Response as SlimResponse;
+use FormLogic\Services\ApiKeyService;
 use FormLogic\Services\AuthService;
+use FormLogic\Support\AppDomainSession;
 
 /**
  * Middleware to limit request body size
@@ -21,6 +23,8 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
     private array $routePolicies;
     private ?AuthService $authService;
     private string $cookieName;
+    private ?AppDomainSession $appDomainSessions;
+    private ?ApiKeyService $apiKeys;
 
     /**
      * @param int $maxBytes Maximum allowed request body size in bytes (default 1MB)
@@ -29,19 +33,23 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
         int $maxBytes = 1024 * 1024,
         array $routePolicies = [],
         ?AuthService $authService = null,
-        string $cookieName = 'formlogic_auth'
+        string $cookieName = 'formlogic_auth',
+        ?AppDomainSession $appDomainSessions = null,
+        ?ApiKeyService $apiKeys = null
     )
     {
         $this->maxBytes = $maxBytes;
         $this->routePolicies = $routePolicies;
         $this->authService = $authService;
         $this->cookieName = $cookieName;
+        $this->appDomainSessions = $appDomainSessions;
+        $this->apiKeys = $apiKeys;
     }
 
     public function process(Request $request, RequestHandler $handler): Response
     {
-        [$maxBytes, $requiresAuth] = $this->limitFor($request);
-        if ($requiresAuth && !$this->hasValidSession($request)) {
+        [$maxBytes, $requiresAuth, $allowApiKey] = $this->limitFor($request);
+        if ($requiresAuth && !$this->hasValidSession($request, $allowApiKey)) {
             return $this->unauthorized();
         }
         // Check Content-Length header first (fast path)
@@ -84,7 +92,7 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
         return $handler->handle($request);
     }
 
-    /** @return array{0:int,1:bool} */
+    /** @return array{0:int,1:bool,2:bool} */
     private function limitFor(Request $request): array
     {
         $path = $request->getUri()->getPath();
@@ -97,25 +105,42 @@ class BodySizeLimitMiddleware implements MiddlewareInterface
             ) {
                 continue;
             }
-            return [(int) ($policy['maxBytes'] ?? $this->maxBytes), (bool) ($policy['auth'] ?? false)];
+            return [(int) ($policy['maxBytes'] ?? $this->maxBytes), (bool) ($policy['auth'] ?? false), (bool) ($policy['apiKey'] ?? false)];
         }
-        return [$this->maxBytes, false];
+        return [$this->maxBytes, false, false];
     }
 
-    private function hasValidSession(Request $request): bool
+    private function hasValidSession(Request $request, bool $allowApiKey = false): bool
     {
+        $bearer = null;
+        if (preg_match('/^Bearer\s+(.+)$/i', $request->getHeaderLine('Authorization'), $match)) {
+            $bearer = trim($match[1]);
+        }
+        if ($allowApiKey && is_string($bearer) && str_starts_with($bearer, 'flk_') && $this->apiKeys !== null) {
+            if ($this->apiKeys->validateKey($bearer) !== null) {
+                return true;
+            }
+        }
         if ($this->authService === null) {
             return false;
         }
-        $token = null;
-        if (preg_match('/^Bearer\s+(.+)$/i', $request->getHeaderLine('Authorization'), $match)) {
-            $token = trim($match[1]);
-        }
+        $token = $bearer;
         if ($token === null || $token === '') {
             $token = $request->getCookieParams()[$this->cookieName] ?? null;
         }
-        return is_string($token) && $token !== ''
-            && ($this->authService->validateToken($token) !== null || $this->authService->validateAppDomainToken($token) !== null);
+        if (!is_string($token) || $token === '') {
+            return false;
+        }
+        if ($this->authService->validateToken($token) !== null) {
+            return true;
+        }
+        if ($this->appDomainSessions !== null) {
+            $domainSession = $this->authService->validateAppDomainToken($token);
+            if ($domainSession !== null && $this->appDomainSessions->admits($request, $domainSession)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function unauthorized(): Response

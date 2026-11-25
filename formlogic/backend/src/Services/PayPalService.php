@@ -56,7 +56,7 @@ class PayPalService
 
     public function isConfigured(): bool
     {
-        return $this->clientId !== '' && $this->secret !== '';
+        return !$this->standInRefused && $this->clientId !== '' && $this->secret !== '';
     }
 
     /** Whether PAYPAL_BASE_URL named a stand-in outside development (refused: see the constructor). */

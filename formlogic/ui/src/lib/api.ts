@@ -1218,7 +1218,7 @@ class ApiClient {
         data = await response.json();
       } catch {
         if (!response.ok) {
-          if (response.status === 401) {
+          if (response.status === 401 && requestCredentials !== 'omit') {
             this.handleUnauthorized(generation);
           }
           return { error: `Server error (${response.status})`, status: response.status };
@@ -1227,7 +1227,7 @@ class ApiClient {
       }
 
       if (!response.ok) {
-        if (response.status === 401) {
+        if (response.status === 401 && requestCredentials !== 'omit') {
           this.handleUnauthorized(generation);
         }
         const d = data as Record<string, unknown>;
@@ -1472,7 +1472,7 @@ class ApiClient {
     a.href = url;
     a.download = 'formlogic-my-data.json';
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   /** Download an app form's responses as CSV (server-gated on the export_responses permission). */
@@ -1496,7 +1496,7 @@ class ApiClient {
     const safe = (fileLabel || 'form').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'form';
     a.download = `${safe}-responses.csv`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async logout(): Promise<ApiResponse<{ message: string }>> {
@@ -1580,7 +1580,7 @@ class ApiClient {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     return Number(response.headers.get('X-Backup-Restore-Limit')) || null;
   }
 
@@ -1857,7 +1857,12 @@ class ApiClient {
   async recordFormStart(formId: string): Promise<void> {
     if (this.isAdminActing()) return; // never pollute an owner's analytics funnel
     try {
-      await fetch(`${this.baseUrl}/forms/${seg(formId)}/start`, { method: 'POST', credentials: 'include' });
+      const csrfToken = this.getCsrfToken();
+      await fetch(`${this.baseUrl}/forms/${seg(formId)}/start`, {
+        method: 'POST',
+        credentials: 'include',
+        ...(csrfToken ? { headers: { 'X-CSRF-Token': csrfToken } } : {}),
+      });
     } catch { /* best-effort: never block the fill on an analytics ping */ }
   }
 
@@ -2140,7 +2145,7 @@ class ApiClient {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(downloadUrl);
+    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
   }
 
   // Download JSON export
@@ -2166,7 +2171,7 @@ class ApiClient {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(downloadUrl);
+    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
   }
 
   // Health check
@@ -2761,12 +2766,12 @@ class ApiClient {
    * `updates: 'live'` in the answer: this person is shown a newer version as it is published
    * (NativeAppView asks `getNativeVersion` while the app is open).
    */
-  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string }) => void, have?: { media?: string }): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; updates?: 'live'; updatesEvery?: number }>> {
+  async getNativeRuntime(slug: string, onLook?: (look: import('./appLook').NativeLook | null, early?: { name?: string }) => void, have?: { media?: string }): Promise<ApiResponse<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; isOwner?: boolean; updates?: 'live'; updatesEvery?: number }>> {
     // The project without its media, and its media as one pack beside it (from FormLogic v0.1.24):
     // a game's pictures and sound came inside this JSON in base64, tens of megabytes on every
     // opening. The pack's address names its content, so the browser keeps it while the app is
     // unchanged. A server before the pack ignores the query and sends `assets` as it always did.
-    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; updates?: 'live'; updatesEvery?: number }>(`/app/${encodeURIComponent(slug)}/native?media=pack&frame=${siteFrameValue(slug)}`);
+    const result = await this.request<{ name: string; project: import('./nativeHosting').NativeRuntimeProject; engine?: { id: ClientEngineId; revision: string }; look?: unknown; isOwner?: boolean; updates?: 'live'; updatesEvery?: number }>(`/app/${encodeURIComponent(slug)}/native?media=pack&frame=${siteFrameValue(slug)}`);
     // `frame`: for a JavaScript app, the value its address is made this browser's own with
     // (lib/siteFrame). A SoftN app's answer has no such address, and the server reads nothing of it.
     // The app's look (AppLookService) before its media: the page shows the app's own loading colours
@@ -5089,7 +5094,7 @@ class ApiClient {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(downloadUrl);
+    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
   }
 
   /**
@@ -5116,7 +5121,7 @@ class ApiClient {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(downloadUrl);
+    setTimeout(() => window.URL.revokeObjectURL(downloadUrl), 1000);
   }
 
   /** Import a .formlogic ARCHIVE (ZIP) — the server verifies + extracts it and stamps trust.

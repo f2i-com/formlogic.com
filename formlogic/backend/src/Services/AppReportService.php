@@ -390,18 +390,190 @@ class AppReportService
     public function sanitizeDashboardCss(string $css): string
     {
         $css = substr($css, 0, self::DASHBOARD_CSS_MAX);
-        // A literal </style> would break out of the runtime's injected tag.
-        $css = preg_replace('/<\/?\s*style/i', '', $css) ?? '';
-        // No remote fetches: @import always; url(...) unless a data: URI.
-        $css = preg_replace('/@import[^;]*;?/i', '', $css) ?? '';
-        $css = preg_replace_callback(
-            '~url\s*\(\s*(["\']?)([^)"\']*)\1\s*\)~i',
-            static fn (array $m) => stripos(trim($m[2]), 'data:') === 0 ? $m[0] : 'none',
-            $css
-        ) ?? '';
-        // Legacy scriptable-CSS constructs (defense in depth for old engines).
-        $css = preg_replace('/expression\s*\(|-moz-binding|behavior\s*:/i', '', $css) ?? '';
+        // Strip CSS comments first so `url(/*x*/...)` cannot disguise function names.
+        $css = preg_replace('/\/\*[\s\S]*?\*\//', '', $css) ?? '';
+        // Run all normalization and stripping passes to a bounded fixed point so interleaved
+        // forbidden tokens (e.g. `u-moz-bindingrl(...)` or `</st-moz-bindingyle>`) can never
+        // reassemble after a later pass removes an inner token.
+        for ($iter = 0; $iter < 10; $iter++) {
+            $prev = $css;
+            // Strip CSS comments (including unclosed trailing comments).
+            $css = preg_replace('/\/\*[\s\S]*?(?:\*\/|$)/', ' ', $css) ?? '';
+            // Decode CSS hex escapes (`\75 ` -> `u`) and single-char escapes (`\u` -> `u`).
+            $css = preg_replace_callback(
+                '/\\\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?/',
+                static function (array $m): string {
+                    $cp = (int) hexdec($m[1]);
+                    return ($cp >= 0x20 && $cp <= 0x7E) ? chr($cp) : '';
+                },
+                $css
+            ) ?? '';
+            $css = preg_replace('/\\\\([^\r\n\f])/', '$1', $css) ?? '';
+            $css = str_replace('\\', '', $css);
+            // Neutralize any <style> / </style> tag breakouts.
+            $css = preg_replace('/<\/?\s*style/i', ' ', $css) ?? '';
+            // Strip @import and @font-face rules (no external font fetches or global font hijacking; handle EOF unclosed blocks).
+            $css = preg_replace('/@import\b[^;]*;?/i', ' ', $css) ?? '';
+            $css = preg_replace('/@font-face\s*\{[^}]*(?:\}|$)/i', ' ', $css) ?? '';
+            // Strip image-set / -webkit-image-set / src(...) with balanced parentheses so nested url() can't escape.
+            $css = self::stripCssFunctions($css, ['-webkit-image-set', 'image-set', 'src']);
+            // Sanitize every url(...) via balanced-paren scanning (treats EOF as closing and rejects
+            // unclosed url( or trailing URL modifiers while keeping strict inline base64 raster data URIs).
+            $css = self::sanitizeCssUrls($css);
+            // Legacy scriptable-CSS constructs (defense in depth for old engines); replace with space so tokens cannot glue.
+            $css = preg_replace('/expression\s*\(|-moz-binding|behavior\s*:/i', ' ', $css) ?? '';
+            if ($css === $prev) {
+                break;
+            }
+        }
         return trim($css);
+    }
+
+    /**
+     * Replace named CSS functions (e.g. `image-set(...)`) with `none` using balanced-parenthesis
+     * scanning so nested `url(...)` arguments cannot truncate the stripped range.
+     *
+     * @param list<string> $names Lowercase function names ordered longest-prefix first.
+     */
+    private static function stripCssFunctions(string $input, array $names): string
+    {
+        $lower = strtolower($input);
+        $len = strlen($input);
+        $out = '';
+        $i = 0;
+        while ($i < $len) {
+            $matchedOpenPos = -1;
+            foreach ($names as $name) {
+                $nlen = strlen($name);
+                if (substr($lower, $i, $nlen) === $name) {
+                    if ($i > 0 && preg_match('/[a-z0-9_-]/', $lower[$i - 1]) === 1) {
+                        continue;
+                    }
+                    $j = $i + $nlen;
+                    while ($j < $len && ctype_space($input[$j])) {
+                        $j++;
+                    }
+                    if ($j < $len && $input[$j] === '(') {
+                        $matchedOpenPos = $j;
+                        break;
+                    }
+                }
+            }
+            if ($matchedOpenPos >= 0) {
+                $j = $matchedOpenPos + 1;
+                $depth = 1;
+                $quote = '';
+                while ($j < $len && $depth > 0) {
+                    $ch = $input[$j];
+                    if ($quote !== '') {
+                        if ($ch === '\\') {
+                            $j += 2;
+                            continue;
+                        }
+                        if ($ch === $quote) {
+                            $quote = '';
+                        }
+                        $j++;
+                        continue;
+                    }
+                    if ($ch === '"' || $ch === "'") {
+                        $quote = $ch;
+                        $j++;
+                        continue;
+                    }
+                    if ($ch === '(') {
+                        $depth++;
+                    } elseif ($ch === ')') {
+                        $depth--;
+                    }
+                    $j++;
+                }
+                $out .= 'none';
+                $i = $j;
+                continue;
+            }
+            $out .= $input[$i];
+            $i++;
+        }
+        return $out;
+    }
+
+    /**
+     * Sanitize `url(...)` calls using balanced-parenthesis scanning (treating EOF as closing).
+     * Keeps a `url(...)` call ONLY when explicitly closed with `)` and its entire trimmed inner
+     * argument is a strict inline base64 raster `data:image/...` URI with no trailing modifiers.
+     */
+    private static function sanitizeCssUrls(string $input): string
+    {
+        $lower = strtolower($input);
+        $len = strlen($input);
+        $out = '';
+        $i = 0;
+        while ($i < $len) {
+            if (substr($lower, $i, 3) === 'url'
+                && ($i === 0 || preg_match('/[a-z0-9_-]/', $lower[$i - 1]) !== 1)) {
+                $j = $i + 3;
+                while ($j < $len && ctype_space($input[$j])) {
+                    $j++;
+                }
+                if ($j < $len && $input[$j] === '(') {
+                    $argStart = $j + 1;
+                    $j = $argStart;
+                    $depth = 1;
+                    $quote = '';
+                    while ($j < $len && $depth > 0) {
+                        $ch = $input[$j];
+                        if ($quote !== '') {
+                            if ($ch === '\\') {
+                                $j += 2;
+                                continue;
+                            }
+                            if ($ch === $quote) {
+                                $quote = '';
+                            }
+                            $j++;
+                            continue;
+                        }
+                        if ($ch === '"' || $ch === "'") {
+                            $quote = $ch;
+                            $j++;
+                            continue;
+                        }
+                        if ($ch === '(') {
+                            $depth++;
+                        } elseif ($ch === ')') {
+                            $depth--;
+                        }
+                        $j++;
+                    }
+                    // Closed explicitly with balanced parens and no unclosed quote.
+                    if ($depth === 0 && $quote === '') {
+                        $inner = trim(substr($input, $argStart, ($j - 1) - $argStart));
+                        $raw = null;
+                        if (strlen($inner) >= 2 && ($inner[0] === '"' || $inner[0] === "'") && $inner[strlen($inner) - 1] === $inner[0]) {
+                            $q = $inner[0];
+                            $unquoted = substr($inner, 1, -1);
+                            if (!str_contains($unquoted, $q)) {
+                                $raw = trim($unquoted);
+                            }
+                        } elseif (!preg_match('/[\s"\']/', $inner)) {
+                            $raw = $inner;
+                        }
+                        if ($raw !== null && preg_match('/^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+\/=]+$/i', $raw) === 1) {
+                            $out .= substr($input, $i, $j - $i);
+                            $i = $j;
+                            continue;
+                        }
+                    }
+                    $out .= 'none';
+                    $i = $j;
+                    continue;
+                }
+            }
+            $out .= $input[$i];
+            $i++;
+        }
+        return $out;
     }
 
     /**

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ExternalLink, Globe, Loader2, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api';
@@ -58,34 +58,51 @@ function permissionWords(permissions: Record<string, unknown>): string[] {
  */
 export function SoftnDirectoryApprove() {
   const { draftId = '' } = useParams<{ draftId: string }>();
-  const [draft, setDraft] = useState<SoftnDraft | null>(null);
+  const [activeDraftId, setActiveDraftId] = useState(draftId);
+  const [loadedDraft, setLoadedDraft] = useState<{ draftId: string; data: SoftnDraft } | null>(null);
+  const draft = loadedDraft?.draftId === draftId ? loadedDraft.data : null;
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const draftIdRef = useRef(draftId);
+
+  if (activeDraftId !== draftId) {
+    setActiveDraftId(draftId);
+    setLoadedDraft(null);
+    setError('');
+    setWorking(false);
+  }
 
   useEffect(() => {
+    draftIdRef.current = draftId;
     let cancelled = false;
     void api.getSoftnDraft(draftId).then((answer) => {
-      if (cancelled) return;
+      if (cancelled || draftIdRef.current !== draftId) return;
       if (answer.error || !answer.data) setError(answer.error ?? 'This draft could not be found.');
-      else setDraft(answer.data);
+      else setLoadedDraft({ draftId, data: answer.data });
     });
     return () => { cancelled = true; };
   }, [draftId]);
 
   const approve = async (anyway = false) => {
+    if (!loadedDraft || loadedDraft.draftId !== draftId || working) return;
+    const requestedDraftId = draftId;
     setWorking(true);
     setError('');
-    const answer = await api.approveSoftnDraft(draftId, anyway);
-    if (answer.data && !answer.error) {
-      setDraft(answer.data);
-      setWorking(false);
-      return;
+    try {
+      const answer = await api.approveSoftnDraft(requestedDraftId, anyway);
+      if (draftIdRef.current !== requestedDraftId) return;
+      if (answer.data && !answer.error) {
+        setLoadedDraft({ draftId: requestedDraftId, data: answer.data });
+        return;
+      }
+      // Refused: the draft may have moved on (another tab, an unclear try), and the buttons should say what is left.
+      setError(answer.error ?? 'It could not be published.');
+      const current = await api.getSoftnDraft(requestedDraftId);
+      if (draftIdRef.current !== requestedDraftId) return;
+      if (current.data && !current.error) setLoadedDraft({ draftId: requestedDraftId, data: current.data });
+    } finally {
+      if (draftIdRef.current === requestedDraftId) setWorking(false);
     }
-    // Refused: the draft may have moved on (another tab, an unclear try), and the buttons should say what is left.
-    setError(answer.error ?? 'It could not be published.');
-    const current = await api.getSoftnDraft(draftId);
-    if (current.data && !current.error) setDraft(current.data);
-    setWorking(false);
   };
 
   // The app shell already holds the page's <main>.

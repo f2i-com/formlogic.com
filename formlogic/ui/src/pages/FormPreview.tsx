@@ -197,7 +197,9 @@ export default function FormPreview() {
   );
 
   // A section-screen widget dashboard replaces the default form in preview (owner → live data).
-  if (!forceForm && !acting && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
+  // Private E2EE forms never render custom screens or dashboards.
+  const isPrivateForm = form.encryption?.mode === 'private';
+  if (!isPrivateForm && !forceForm && !acting && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard) {
     return (
       <div className={cn('min-h-dvh w-full bg-gray-50 dark:bg-slate-950 flex flex-col', chatDockOffset && 'mr-96')}>
         <SiteChatWidget />
@@ -219,7 +221,7 @@ export default function FormPreview() {
   }
 
   // A custom screen replaces the default form in preview too (owner context → live data).
-  if (!forceForm && !acting && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
+  if (!isPrivateForm && !forceForm && !acting && form.customScreen?.enabled && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length)) {
     return (
       <div className={cn('h-dvh w-full bg-white dark:bg-slate-950 flex flex-col', chatDockOffset && 'mr-96')}>
         <SiteChatWidget />

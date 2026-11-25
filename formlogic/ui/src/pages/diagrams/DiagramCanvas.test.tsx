@@ -7,7 +7,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Edge, Node, NodeChange } from '@xyflow/react';
+import { NodeChangeset, type Edge, type Node } from '@xyflow/react';
 import type { Blueprint, BlueprintElement, BlueprintOperation } from '../../types/blueprints';
 import { useToastStore } from '../../stores/toastStore';
 import { DiagramCanvas } from './DiagramCanvas';
@@ -16,7 +16,7 @@ type FlowProps = {
   nodes: Node[];
   edges: Edge[];
   nodeTypes: Record<string, React.ComponentType<Record<string, unknown>>>;
-  onNodesChange: (changes: NodeChange[]) => void;
+  onNodesChange: (changes: NodeChangeset) => void;
   onSelectionChange: (selection: { nodes: Node[]; edges: Edge[] }) => void;
   onDoubleClick: (event: React.MouseEvent) => void;
 };
@@ -62,9 +62,9 @@ vi.mock('@xyflow/react', async (importOriginal) => {
               onKeyDown={(event) => {
                 const step = STEPS[event.key];
                 if (!step || !node.selected) return;
-                props.onNodesChange(props.nodes.filter((each) => each.selected).map((each) => ({
+                props.onNodesChange(new actual.NodeChangeset(props.nodes.filter((each) => each.selected).map((each) => ({
                   id: each.id, type: 'position' as const, position: { x: each.position.x + step[0], y: each.position.y + step[1] }, dragging: false,
-                })));
+                }))));
               }}
             >
               <Card id={node.id} data={node.data} selected={Boolean(node.selected)} />
@@ -131,7 +131,7 @@ async function show(blueprint: Blueprint) {
 /** Selects these cards as React Flow does: their `selected` changes, then the selection is told. */
 async function select(...ids: string[]) {
   await act(async () => {
-    flow.props.onNodesChange(ids.map((id) => ({ id, type: 'select' as const, selected: true })));
+    flow.props.onNodesChange(new NodeChangeset(ids.map((id) => ({ id, type: 'select' as const, selected: true }))));
   });
   await act(async () => {
     flow.props.onSelectionChange({ nodes: flow.props.nodes.filter((node) => ids.includes(node.id)), edges: [] });

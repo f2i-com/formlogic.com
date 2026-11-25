@@ -56,7 +56,15 @@ final class AokieCompanionDeviceService
         'assistance_respond', 'end_caller',
     ];
 
-    public function __construct(private readonly MySQLConnection $mysql) {}
+    public function __construct(
+        private readonly MySQLConnection $mysql,
+        private ?AccessGateService $accessGate = null,
+    ) {}
+
+    private function accessGate(): AccessGateService
+    {
+        return $this->accessGate ??= new AccessGateService($this->mysql);
+    }
 
     /**
      * OAuth consent or the linked Desktop key is the approval ceremony. A revoked
@@ -1011,7 +1019,7 @@ final class AokieCompanionDeviceService
             return false;
         }
         $stmt = $this->db()->prepare(
-            "SELECT 1
+            "SELECT d.user_id
              FROM aokie_companion_devices d
              JOIN apps a ON a.id = d.app_id AND a.status = 'published'
              JOIN aokie_companion_routing_members rm ON rm.device_id = d.id
@@ -1039,7 +1047,11 @@ final class AokieCompanionDeviceService
             'holder' => $holderKeyThumbprint,
             'permission' => AppPermissions::AOKIE_COMPANION_ASSISTANCE,
         ]);
-        return $stmt->fetchColumn() !== false;
+        $userId = $stmt->fetchColumn();
+        if (!is_string($userId) || $userId === '') {
+            return false;
+        }
+        return $this->accessGate()->admitsMember($appId, $userId);
     }
 
     /** Atomically resolve and, for round-robin, advance one deterministic group. */
@@ -1092,7 +1104,11 @@ final class AokieCompanionDeviceService
                 $memberParams['permission'] = $requiredPermission;
             }
             $members->execute($memberParams);
-            $candidates = $members->fetchAll(PDO::FETCH_ASSOC);
+            $gate = $this->accessGate();
+            $candidates = array_values(array_filter(
+                $members->fetchAll(PDO::FETCH_ASSOC),
+                static fn (array $candidate): bool => $gate->admitsMember($appId, (string) ($candidate['user_id'] ?? ''))
+            ));
             $selected = [];
             if ($candidates !== []) {
                 if ($row['policy'] === 'all') {

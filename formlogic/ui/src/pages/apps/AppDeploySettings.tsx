@@ -27,6 +27,10 @@ const LABEL = 'mb-1.5 block text-sm font-medium text-gray-700 dark:text-slate-30
 
 export function AppDeploySettings() {
   const { appId } = useParams<{ appId: string }>();
+  return <AppDeploySettingsInner key={appId ?? ''} appId={appId} />;
+}
+
+function AppDeploySettingsInner({ appId }: { appId: string | undefined }) {
   const navigate = useNavigate();
   const paths = useResourcePaths();
   // Origin-relative Back: opened from the App Studio this returns to its step.
@@ -64,7 +68,9 @@ export function AppDeploySettings() {
   }, [dirty]);
 
   useEffect(() => {
+    let cancelled = false;
     fetchApps().then(() => {
+      if (cancelled) return;
       if (appId) {
         const found = useAppStore.getState().getApp(appId) as App | undefined;
         if (found) {
@@ -73,7 +79,10 @@ export function AppDeploySettings() {
           setPwaThemeColor(found.settings?.pwaThemeColor ?? found.theme?.primaryColor ?? '#6366f1');
         }
       }
-    }).finally(() => setLoaded(true));
+    }).finally(() => {
+      if (!cancelled) setLoaded(true);
+    });
+    return () => { cancelled = true; };
   }, [appId, fetchApps]);
 
   const handleSavePwa = async () => {
@@ -326,7 +335,7 @@ export function AppDeploySettings() {
 
           <div className="min-w-0 space-y-4">
             {/* Custom domains */}
-            <CustomDomainsPanel appId={appId!} appSlug={app.slug} published={app.status === 'published'} />
+            <CustomDomainsPanel key={appId} appId={appId!} appSlug={app.slug} published={app.status === 'published'} />
 
             {/* Local runtime (OAIY Desktop, or FormLogic Desktop as fallback) — hidden
                 while acting: this panel shows the signed-in ADMIN's own machine, not the owner's. */}
@@ -354,7 +363,7 @@ export function AppDeploySettings() {
 
         <div className="mt-4 space-y-4">
           {/* App logic */}
-          <AppLogicPanel appId={appId!} initialLogic={app.customLogic} onDirtyChange={setLogicDirty} />
+          <AppLogicPanel key={appId} appId={appId!} initialLogic={app.customLogic} onDirtyChange={setLogicDirty} />
 
           {/* FormLogic Flows (event-driven automations, docs/FORMLOGIC_FLOWS.md) */}
           <FlowsPanel appId={appId!} appSlug={app.slug} />

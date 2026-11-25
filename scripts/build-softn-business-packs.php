@@ -27,12 +27,16 @@ require $repoRoot . '/formlogic/backend/vendor/autoload.php';
 use FormLogic\Services\NativeAppService;
 use FormLogic\Services\PackService;
 
-$sourceBase = $argv[1] ?? 'C:/Users/User/.gemini/antigravity/brain/5b7270e9-a7fd-4697-9f45-c04b372e8383/scratch/softn-Examples/bundles/business';
+$sourceBase = rtrim((string) ($argv[1] ?? (getenv('SOFTN_EXAMPLES_BUSINESS_DIR') ?: '')), '/\\');
 $legacyPacksBase = $repoRoot . '/formlogic/backend/resources/packs';
 $outBase = $repoRoot . '/formlogic/backend/resources/softn-packs';
 
-if (!is_dir($sourceBase)) {
-    fwrite(STDERR, "Source directory not found: {$sourceBase}\n");
+if ($sourceBase === '' || !is_dir($sourceBase)) {
+    fwrite(STDERR, "Usage: php scripts/build-softn-business-packs.php <path-to-softn-Examples/bundles/business>\n");
+    fwrite(STDERR, "   or set SOFTN_EXAMPLES_BUSINESS_DIR to that directory.\n");
+    if ($sourceBase !== '') {
+        fwrite(STDERR, "Source directory not found: {$sourceBase}\n");
+    }
     exit(1);
 }
 if (!is_dir($outBase)) {
@@ -367,7 +371,7 @@ foreach (APP_MAP as $softnDir => $legacyPackId) {
     $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($srcDir, FilesystemIterator::SKIP_DOTS));
     $allRelPaths = [];
     foreach ($it as $entry) {
-        if (!$entry->isFile()) continue;
+        if (!$entry->isFile() || $entry->isLink()) continue;
         $rel = str_replace('\\', '/', substr($entry->getPathname(), strlen($srcDir) + 1));
         if ($rel === '.htaccess' || str_ends_with($rel, '/.DS_Store') || $rel === '.DS_Store') continue;
         $allRelPaths[] = [$rel, $entry->getPathname()];
@@ -387,7 +391,13 @@ foreach (APP_MAP as $softnDir => $legacyPackId) {
     $seedRel = is_string($manifest['databases'][0]['seedSql'] ?? null)
         ? (string) $manifest['databases'][0]['seedSql']
         : 'server/migrations/schema.sql';
-    $schemaSql = (string) file_get_contents($srcDir . '/' . $seedRel);
+    $realSrcDir = realpath($srcDir);
+    $realSeed = $realSrcDir !== false ? realpath($srcDir . '/' . $seedRel) : false;
+    if ($realSrcDir === false || $realSeed === false || !str_starts_with($realSeed, rtrim($realSrcDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)) {
+        fwrite(STDERR, "Invalid seedSql path outside {$srcDir}: {$seedRel}\n");
+        exit(1);
+    }
+    $schemaSql = (string) file_get_contents($realSeed);
     $parsedTables = parseSqlSchema($schemaSql);
     $enumsByCol = parseControllerEnums($srcDir);
 

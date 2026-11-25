@@ -351,14 +351,22 @@ async function handleChangePassphrase(payload: {
   const sodium = await getSodium();
   const secrets = requireUnlocked();
   const { userId, currentPassphrase, newPassphrase } = payload;
+  if (userId !== secrets.userId) {
+    throw new WorkerError('vault_unlock_failed', 'Vault user mismatch');
+  }
   assertPassphraseStrength(newPassphrase, 'New passphrase');
   const wire = parseVaultWire(payload.vault);
-  // Verify the CURRENT passphrase against the served wrap before rewrapping — the
-  // server can't check it (E2EE), so the client must.
+  // Verify the CURRENT passphrase against the served wrap AND confirm it unwraps to the
+  // exact UMK currently held in memory before rewrapping.
   const puk = await derivePuk(currentPassphrase, wire.kdf);
+  let unwrappedUmk: Uint8Array | null = null;
   try {
-    await unwrapKey(wire.wrappedUmk, puk, umkAad(userId));
+    unwrappedUmk = await unwrapKey(wire.wrappedUmk, puk, umkAad(userId));
+    if (!bytesEqual(unwrappedUmk, secrets.umk)) {
+      throw new WorkerError('vault_unlock_failed', 'Served vault does not match unlocked vault');
+    }
   } finally {
+    if (unwrappedUmk) sodium.memzero(unwrappedUmk);
     sodium.memzero(puk);
   }
   // Rewrap-only by construction (§11): only the passphrase-side wrapper changes; the
@@ -592,7 +600,7 @@ async function handleLoadFormKeys(payload: {
   const entry: FormKeyEntry = { fk, fkEpoch: grant.fkEpoch, ingestion: new Map() };
   try {
     for (const key of ingestionKeys) {
-      if (key.state === 'retired') continue;
+      if (key.state === 'retired' || key.state === 'trashed') continue;
       const sk = await unwrapKey(fromB64(key.wrappedSecret), fk, `flingest:1|${formId}|${key.epoch}|${key.fkEpoch}`);
       // Fail closed if the unwrapped secret doesn't match the served public key.
       const derived = sodium.crypto_scalarmult_base(sk);
@@ -607,6 +615,11 @@ async function handleLoadFormKeys(payload: {
     sodium.memzero(fk);
     for (const ing of entry.ingestion.values()) sodium.memzero(ing.sk);
     throw e;
+  }
+  const previous = formKeys.get(formId);
+  if (previous) {
+    sodium.memzero(previous.fk);
+    for (const ing of previous.ingestion.values()) sodium.memzero(ing.sk);
   }
   formKeys.set(formId, entry);
   return { loadedEpochs: [...entry.ingestion.keys()] };

@@ -69,7 +69,9 @@ fn loopback(host: &str) -> bool {
 pub fn normalise_server(typed: &str) -> Result<String, String> {
     let bad = || "That isn't a server address. Enter it as https://your-formlogic.example.".to_string();
     let typed = typed.trim().trim_end_matches('/');
-    if typed.is_empty() || typed.len() > 200 || typed.chars().any(|c| c.is_whitespace() || c.is_control() || "\\@?#%\"'<>".contains(c)) {
+    // Require printable ASCII graphic characters across scheme, authority, and path so Unicode
+    // BiDi override/isolate marks or homoglyphs in the path cannot spoof confirmation dialogs.
+    if typed.is_empty() || typed.len() > 200 || typed.chars().any(|c| !c.is_ascii_graphic() || "\\@?#%\"'<>".contains(c)) {
         return Err(bad());
     }
     let (scheme, rest) = match typed.split_once("://") {
@@ -276,7 +278,7 @@ pub fn redeem(server: &str, code: &str) -> Result<Account, String> {
 pub fn plain_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 254
-        && !name.chars().any(|c| c.is_control() || c.is_whitespace() || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'))
+        && !name.chars().any(|c| c.is_control() || c.is_whitespace() || matches!(c, '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}'))
 }
 
 /// Whether this server knows the plugin, before a browser opens on a page that says it doesn't.
@@ -341,9 +343,11 @@ mod tests {
             "", "ftp://example.com", "file:///etc/passwd", "https://user:pw@example.com", "https://good.example@evil.example", "https://example.com?x=1", "https://example.com#x",
             "https://exa mple.com", "https://example.com\\@evil.example", "https://example.com/../x", "https://example.com:99999", "https://example.com:0", "https://example.com:x",
             "https://-example.com", "https:///x", "javascript:alert(1)",
+            "https://evil.example/\u{202e}moc.cigolmrof", "https://evil.example/\u{061c}spoof",
         ] {
             assert!(normalise_server(bad).is_err(), "{bad}");
         }
+        assert!(!plain_name("user\u{061c}@example.com"));
     }
 
     #[test]

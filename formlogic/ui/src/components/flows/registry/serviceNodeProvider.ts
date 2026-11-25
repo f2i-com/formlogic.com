@@ -2,6 +2,7 @@ import { Layers, Sparkles, Mic, Image, Volume2, FileText } from 'lucide-react';
 import type { NodeSpec } from '../editor/nodeCatalog';
 import type { FlowNodeProvider } from './types';
 import { flowNodeRegistry } from './FlowNodeRegistry';
+import { subscribeSessionGeneration } from '../../../lib/sessionGeneration';
 import type { DesktopServiceCatalog, DesktopServiceDefinition, DesktopServiceDefinitionAction } from '../../../client-runtime/desktop/desktopClient';
 
 /**
@@ -106,3 +107,10 @@ export const serviceNodeProvider: FlowNodeProvider = {
 };
 
 flowNodeRegistry.register(serviceNodeProvider);
+
+// Withdraw paired-Desktop service projections immediately across logout / account switch.
+subscribeSessionGeneration(() => {
+  if (catalog !== null) {
+    setServiceCatalogForProjections(null);
+  }
+});

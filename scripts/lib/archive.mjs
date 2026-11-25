@@ -121,11 +121,18 @@ export function readArchive(zip) {
   const problem = (message) => problems.push(message);
   if (zip.length < 22) return { entries, problems: ['too short to be a zip'] };
   const tail = zip.subarray(zip.length - 22);
-  if (tail.readUInt32LE(0) !== 0x06054b50) problem('end-of-central-directory record not where it should be');
+  if (tail.readUInt32LE(0) !== 0x06054b50) {
+    return { entries, problems: ['end-of-central-directory record not where it should be'] };
+  }
   const count = tail.readUInt16LE(10);
   const cdSize = tail.readUInt32LE(12);
   const cdStart = tail.readUInt32LE(16);
-  if (cdStart + cdSize + 22 !== zip.length) problem('central directory does not end at the record');
+  if (cdStart + cdSize + 22 !== zip.length) {
+    return { entries, problems: ['central directory does not end at the record'] };
+  }
+  const maxEntryBytes = 512 * 1024 * 1024;
+  const maxTotalBytes = 1024 * 1024 * 1024;
+  let totalInflatedBytes = 0;
   let p = cdStart;
   for (let i = 0; i < count; i++) {
     if (p + 46 > zip.length || zip.readUInt32LE(p) !== 0x02014b50) {
@@ -141,8 +148,16 @@ export function readArchive(zip) {
     const clen = zip.readUInt16LE(p + 32);
     const mode = zip.readUInt32LE(p + 38) >>> 16;
     const local = zip.readUInt32LE(p + 42);
+    if (p + 46 + nlen + xlen + clen > zip.length) {
+      problem(`central entry ${i} extends past end of archive`);
+      break;
+    }
     const name = zip.subarray(p + 46, p + 46 + nlen).toString('utf8');
     p += 46 + nlen + xlen + clen;
+    if ((mode & 0o170000) === 0o120000) {
+      problem(`${name}: symbolic links are not allowed in archives`);
+      continue;
+    }
     if (local + 30 > zip.length || zip.readUInt32LE(local) !== 0x04034b50) {
       problem(`${name}: local header signature`);
       continue;
@@ -150,14 +165,31 @@ export function readArchive(zip) {
     const lnlen = zip.readUInt16LE(local + 26);
     const lxlen = zip.readUInt16LE(local + 28);
     const dataStart = local + 30 + lnlen + lxlen;
+    if (dataStart + csize > zip.length) {
+      problem(`${name}: compressed data extends past end of archive`);
+      continue;
+    }
+    if (method !== 0 && method !== 8) {
+      problem(`${name}: unsupported compression method ${method}`);
+      continue;
+    }
+    if (usize > maxEntryBytes) {
+      problem(`${name}: uncompressed size ${usize} exceeds ${maxEntryBytes} byte limit`);
+      continue;
+    }
+    if (totalInflatedBytes + usize > maxTotalBytes) {
+      problem(`${name}: cumulative uncompressed archive size exceeds ${maxTotalBytes} byte limit`);
+      break;
+    }
     const body = zip.subarray(dataStart, dataStart + csize);
     let data;
     try {
-      data = method === 0 ? body : zlib.inflateRawSync(body);
+      data = method === 0 ? body : zlib.inflateRawSync(body, { maxOutputLength: Math.min(maxEntryBytes, maxTotalBytes - totalInflatedBytes) });
     } catch (error) {
       problem(`${name}: does not inflate (${error.message})`);
       continue;
     }
+    totalInflatedBytes += data.length;
     if (data.length !== usize) problem(`${name}: inflates to ${data.length} bytes, header says ${usize}`);
     if (crc32(data) !== crc) problem(`${name}: CRC mismatch`);
     entries.set(name, { data, method, mode, size: usize, compressedSize: csize });

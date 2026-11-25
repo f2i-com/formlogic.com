@@ -50,14 +50,33 @@ if (isset($options['--new-key-pair'])) {
         exit(2);
     }
     [$public, $secret] = BackupEnvelope::generateKeyPair();
-    $handle = fopen($file, 'x');
+    $oldUmask = umask(0077);
+    try {
+        $handle = @fopen($file, 'x');
+    } finally {
+        umask($oldUmask);
+    }
     if ($handle === false) {
+        if (function_exists('sodium_memzero')) {
+            sodium_memzero($secret);
+        }
         fwrite(STDERR, "Could not create {$file}\n");
         exit(1);
     }
-    chmod($file, 0600);
+    if (PHP_OS_FAMILY !== 'Windows' && !@chmod($file, 0600)) {
+        fclose($handle);
+        @unlink($file);
+        if (function_exists('sodium_memzero')) {
+            sodium_memzero($secret);
+        }
+        fwrite(STDERR, "Could not restrict permissions on {$file}\n");
+        exit(1);
+    }
     fwrite($handle, $secret . "\n");
     fclose($handle);
+    if (function_exists('sodium_memzero')) {
+        sodium_memzero($secret);
+    }
     echo "Secret key written to {$file}. Keep it off this server, and keep a second copy: nothing else opens these backups.\n";
     echo "BACKUP_PUBLIC_KEY={$public}\n";
     exit(0);
@@ -65,8 +84,15 @@ if (isset($options['--new-key-pair'])) {
 
 $with = [];
 if (isset($options['--secret-key-file'])) {
-    $secret = base64_decode(trim((string) @file_get_contents($options['--secret-key-file'])), true);
+    $rawKeyText = trim((string) @file_get_contents($options['--secret-key-file']));
+    $secret = base64_decode($rawKeyText, true);
+    if (function_exists('sodium_memzero')) {
+        sodium_memzero($rawKeyText);
+    }
     if (!is_string($secret) || strlen($secret) !== SODIUM_CRYPTO_BOX_SECRETKEYBYTES) {
+        if (is_string($secret) && function_exists('sodium_memzero')) {
+            sodium_memzero($secret);
+        }
         fwrite(STDERR, "That is not a secret key file.\n");
         exit(2);
     }
@@ -77,27 +103,56 @@ if (isset($options['--secret-key-file'])) {
 
 $target = rtrim((string) ($paths[0] ?? ''), '/\\');
 if ($with === [] || $target === '' || !file_exists($target)) {
+    if (function_exists('sodium_memzero')) {
+        if (isset($with['secretKey']) && is_string($with['secretKey'])) sodium_memzero($with['secretKey']);
+        if (isset($with['passphrase']) && is_string($with['passphrase'])) sodium_memzero($with['passphrase']);
+    }
     fwrite(STDERR, "Usage: php backend/bin/open-backup.php <file or folder> --secret-key-file=<file> | --passphrase\n");
     exit(2);
 }
 
+$listWithExt = static function (string $dir, string $ext): array {
+    if (!is_dir($dir)) return [];
+    $entries = @scandir($dir);
+    if (!is_array($entries)) return [];
+    $out = [];
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..' || !str_ends_with($entry, $ext)) continue;
+        $full = $dir . DIRECTORY_SEPARATOR . $entry;
+        if (is_file($full)) $out[] = $full;
+    }
+    sort($out);
+    return $out;
+};
+
 $sealed = is_dir($target)
-    ? [...(glob($target . '/*' . BackupEnvelope::EXTENSION) ?: []), ...(glob($target . '/accounts/*' . BackupEnvelope::EXTENSION) ?: [])]
+    ? [...$listWithExt($target, BackupEnvelope::EXTENSION), ...$listWithExt($target . DIRECTORY_SEPARATOR . 'accounts', BackupEnvelope::EXTENSION)]
     : [$target];
 if ($sealed === []) {
+    if (function_exists('sodium_memzero')) {
+        if (isset($with['secretKey']) && is_string($with['secretKey'])) sodium_memzero($with['secretKey']);
+        if (isset($with['passphrase']) && is_string($with['passphrase'])) sodium_memzero($with['passphrase']);
+    }
     fwrite(STDERR, "No sealed files there.\n");
     exit(2);
 }
 
 $failed = 0;
-foreach ($sealed as $path) {
-    $opened = str_ends_with($path, BackupEnvelope::EXTENSION) ? substr($path, 0, -strlen(BackupEnvelope::EXTENSION)) : $path . '.opened';
-    try {
-        BackupEnvelope::open($path, $opened, $with);
-        echo "Opened {$opened}\n";
-    } catch (DataEncryptionException $e) {
-        $failed++;
-        fwrite(STDERR, basename($path) . ': ' . $e->getMessage() . "\n");
+try {
+    foreach ($sealed as $path) {
+        $opened = str_ends_with($path, BackupEnvelope::EXTENSION) ? substr($path, 0, -strlen(BackupEnvelope::EXTENSION)) : $path . '.opened';
+        try {
+            BackupEnvelope::open($path, $opened, $with);
+            echo "Opened {$opened}\n";
+        } catch (DataEncryptionException $e) {
+            $failed++;
+            fwrite(STDERR, basename($path) . ': ' . $e->getMessage() . "\n");
+        }
+    }
+} finally {
+    if (function_exists('sodium_memzero')) {
+        if (isset($with['secretKey']) && is_string($with['secretKey'])) sodium_memzero($with['secretKey']);
+        if (isset($with['passphrase']) && is_string($with['passphrase'])) sodium_memzero($with['passphrase']);
     }
 }
 exit($failed > 0 ? 1 : 0);

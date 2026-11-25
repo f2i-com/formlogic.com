@@ -569,7 +569,13 @@ export function nativeAppStorage(slug: string, inputScope: NativeStorageScope | 
     seen = new Map(Object.entries(saved));
     return saved;
   }
-  async function mutate(input: Record<string, unknown>) {
+  let mutationTail: Promise<unknown> = Promise.resolve();
+  function mutate(input: Record<string, unknown>): Promise<{ saved: true }> {
+    const run = mutationTail.then(() => mutateOnce(input), () => mutateOnce(input));
+    mutationTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+  async function mutateOnce(input: Record<string, unknown>) {
     limits = (await mapStore()).limits;
     await assertScope();
     let serialized: string | undefined;

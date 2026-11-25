@@ -12,7 +12,7 @@ class MySQLConnection
     /** Where the stamp is kept. See ensureSchemaCurrent(). */
     public const SCHEMA_STAMP_KEY = 'schema_stamp';
     /** md5 of this file with this value blanked. SchemaStampTest says what it should be. */
-    public const SCHEMA_STAMP = '60e17b5c2f91596a85bb0f490d46c7a8';
+    public const SCHEMA_STAMP = '74e77ae8add32f38f590c54297f8877d';
 
     private static ?PDO $instance = null;
     private array $config;
@@ -2520,6 +2520,7 @@ class MySQLConnection
             'mfa_secret' => "ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(255) DEFAULT NULL",
             'mfa_enabled' => "ALTER TABLE users ADD COLUMN mfa_enabled TINYINT(1) NOT NULL DEFAULT 0",
             'mfa_recovery_codes' => "ALTER TABLE users ADD COLUMN mfa_recovery_codes TEXT DEFAULT NULL",
+            'mfa_last_totp_step' => "ALTER TABLE users ADD COLUMN mfa_last_totp_step BIGINT DEFAULT NULL",
         ] as $col => $ddl) {
             $result = $pdo->query("SHOW COLUMNS FROM users LIKE '{$col}'");
             if ($result->rowCount() === 0) {

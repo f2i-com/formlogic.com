@@ -48,6 +48,57 @@ const ACCEPT_GAP: Duration = Duration::from_secs(15);
 
 const NOT_NOW: &str = "Nothing was changed.";
 
+/// Serialises Argon2id recovery (64 MiB per derivation) so concurrent requests cannot amplify memory usage.
+static KEY_RECOVERY_LOCK: Mutex<()> = Mutex::new(());
+
+/// RAII guard so `App::signing_in` is always cleared on early return or panic.
+struct SigningInGuard<'a>(&'a AtomicBool);
+
+impl Drop for SigningInGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// Sanitise untrusted metadata (backup names, timestamps, remote emails/URLs) before placing it
+/// inside a native confirmation dialog so control chars, newlines, or BiDi overrides cannot spoof
+/// the prompt text.
+fn safe_dialog_text(raw: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut prev_space = false;
+    for ch in raw.chars() {
+        if ch.is_control()
+            || matches!(
+                ch,
+                '\u{061c}'
+                    | '\u{200b}'..='\u{200f}'
+                    | '\u{202a}'..='\u{202e}'
+                    | '\u{2060}'..='\u{206f}'
+                    | '\u{feff}'
+            )
+        {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+            continue;
+        }
+        out.push(ch);
+        prev_space = false;
+        if out.chars().count() >= max_chars {
+            break;
+        }
+    }
+    out.trim().to_string()
+}
+
 /// How this computer stands with FormLogic, as last heard.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Standing {
@@ -118,6 +169,15 @@ impl App {
         } else {
             client::self_node(account)
         };
+        // Ignore stale answers if the account was unlinked or swapped while the HTTP check ran.
+        if link::load(&self.data)
+            .ok()
+            .flatten()
+            .as_ref()
+            .is_none_or(|cur| cur.api_key_id != account.api_key_id || cur.base_url != account.base_url)
+        {
+            return;
+        }
         match asked {
             Ok(node) => self.note(|standing| *standing = Standing { node, ..Standing::default() }),
             Err(Refusal::Relink) => self.note(|standing| standing.relink = true),
@@ -217,7 +277,10 @@ impl App {
         };
         let (app, running) = (self.clone(), id.clone());
         std::thread::spawn(move || {
-            let outcome = work(&app, &running);
+            let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(&app, &running))) {
+                Ok(result) => result,
+                Err(_) => Err("The job stopped unexpectedly.".to_string()),
+            };
             app.jobs.finish(&running, outcome);
         });
         Ok(json!({"jobId": id}))
@@ -227,17 +290,17 @@ impl App {
         if self.signing_in.swap(true, Ordering::AcqRel) {
             return Err("A sign-in is already waiting in your browser.".to_string());
         }
-        let result = self.sign_in(job, server);
-        self.signing_in.store(false, Ordering::Release);
-        result
+        let _guard = SigningInGuard(&self.signing_in);
+        self.sign_in(job, server)
     }
 
     fn sign_in(&self, job: &str, server: &str) -> Result<Value, String> {
         if self.linked_for_good() {
             return Err("This computer is linked already. Forget that link first.".to_string());
         }
+        let safe_server = safe_dialog_text(server, 200);
         let asked = format!(
-            "Connect FormLogic Backups to this server?\n\n{server}\n\nYour browser will open so you can sign in. Only go on if you know this server: restoring a backup sends everything in it there."
+            "Connect FormLogic Backups to this server?\n\n{safe_server}\n\nYour browser will open so you can sign in. Only go on if you know this server: restoring a backup sends everything in it there."
         );
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
@@ -278,14 +341,18 @@ impl App {
         if self.signing_in.swap(true, Ordering::AcqRel) {
             return Err("That computer is already waiting for you. Answer its window first.".to_string());
         }
-        let result = self.accept_code(server, code, owner);
-        self.signing_in.store(false, Ordering::Release);
-        result
+        let _guard = SigningInGuard(&self.signing_in);
+        if self.linked_for_good() {
+            return Err("This computer's backups are connected already.".to_string());
+        }
+        self.accept_code(server, code, owner)
     }
 
     fn accept_code(&self, server: &str, code: &str, owner: &str) -> Result<Value, String> {
+        let safe_owner = safe_dialog_text(owner, 200);
+        let safe_server = safe_dialog_text(server, 200);
         let asked = format!(
-            "Keep FormLogic backups on this computer?\n\n{owner}\n{server}\n\nOnly go on if you just asked for this in FormLogic, and that is your account and your server: restoring a backup sends everything in it there."
+            "Keep FormLogic backups on this computer?\n\n{safe_owner}\n{safe_server}\n\nOnly go on if you just asked for this in FormLogic, and that is your account and your server: restoring a backup sends everything in it there."
         );
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
@@ -312,7 +379,8 @@ impl App {
         let account = link::load(&self.data)?.ok_or("This computer isn't linked to FormLogic.")?;
         let asked = format!(
             "Forget the link to {} ({})?\n\nThis computer stops taking backups from that account. The backups already here stay.",
-            account.base_url, account.account_email
+            safe_dialog_text(&account.base_url, 200),
+            safe_dialog_text(&account.account_email, 200)
         );
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
@@ -331,7 +399,13 @@ impl App {
         if !native::show_words(words.expose())? {
             return Err(NOT_NOW.to_string());
         }
-        let key = keys::recover(&folder, words.expose(), &[])?;
+        let Ok(_recovery_guard) = KEY_RECOVERY_LOCK.try_lock() else {
+            return Err("FormLogic Backups is already checking recovery words. Wait for that to finish.".to_string());
+        };
+        let key = run::alone(|| {
+            let current_folder = self.store().key_folder();
+            keys::recover(&current_folder, words.expose(), &[])
+        })?;
         Ok(json!({"keyId": keys::key_id(&key)}))
     }
 
@@ -342,7 +416,16 @@ impl App {
         if store.folder_missing() {
             return Err("The backup folder isn't there, so these words can't be checked. Connect its drive, or choose another folder, and try again.".to_string());
         }
-        let new = keys::id_of_words(words)?;
+        // Derive once under the serialisation lock (Argon2id takes 64 MiB), then release the lock
+        // before blocking on the native confirmation dialog so an unanswered dialog cannot stall
+        // subsequent key operations.
+        let key = {
+            let Ok(_recovery_guard) = KEY_RECOVERY_LOCK.try_lock() else {
+                return Err("FormLogic Backups is already checking recovery words. Wait for that to finish.".to_string());
+            };
+            keys::derive_from_words(words)?
+        };
+        let new = keys::key_id(&key);
         let asked = match keys::saved_id(&store.key_folder()) {
             Some(now) if now != new => format!(
                 "Replace the key on this computer with the one these twelve words make?\n\nNow: {now}\nNew: {new}\n\nNew backups will be sealed to the new key, so anyone who has those words can open them. Backups already here stay as they are."
@@ -352,8 +435,16 @@ impl App {
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
         }
-        let key = keys::recover(&store.key_folder(), words, &store.files())?;
-        Ok(json!({"keyId": keys::key_id(&key)}))
+        // Re-open the store under `run::alone` after the dialog so a concurrent `backups.move`
+        // cannot redirect key recovery to a stale/empty folder and bypass verification.
+        run::alone(|| {
+            let current_store = self.store();
+            if current_store.folder_missing() {
+                return Err("The backup folder isn't there, so these words can't be checked. Connect its drive, or choose another folder, and try again.".to_string());
+            }
+            keys::save_recovered(&current_store.key_folder(), &key, &current_store.files())
+        })?;
+        Ok(json!({"keyId": new}))
     }
 
     fn set_settings(&self, wanted: Settings) -> Result<Value, String> {
@@ -379,46 +470,60 @@ impl App {
     fn save_plain(&self, id: &str) -> Result<Value, String> {
         let store = self.store();
         let backup = store.find(id).ok_or("That backup is not on this computer.")?;
-        let key = keys::load(&store.key_folder())?.ok_or("Enter your twelve words first.")?;
+        let _ = keys::load(&store.key_folder())?.ok_or("Enter your twelve words first.")?;
         let prompt = "Save a plain copy. Anyone who gets this file can read everything in it.";
         let Some(destination) = native::save_as(prompt, &plain_name(&backup))? else { return Err(NOT_NOW.to_string()) };
-        run::open_to(&store, &store.path_of(id)?, &destination, &key)?;
+        run::alone(|| {
+            let current_store = self.store();
+            let key = keys::load(&current_store.key_folder())?.ok_or("Enter your twelve words first.")?;
+            run::open_to(&current_store, &current_store.path_of(id)?, &destination, &key)
+        })?;
         Ok(json!({"saved": true}))
     }
 
     fn restore(&self, job: &str, id: &str) -> Result<Value, String> {
         let backup = self.store().find(id).ok_or("That backup is not on this computer.")?;
         let account = link::load(&self.data)?.ok_or("Connect to FormLogic first.")?;
+        let safe_name = safe_dialog_text(&backup.name, 120);
+        let safe_created = safe_dialog_text(&backup.created_at, 64);
+        let safe_account_url = safe_dialog_text(&account.base_url, 200);
+        let safe_account_email = safe_dialog_text(&account.account_email, 200);
         let asked = format!(
             "Restore \"{}\" from {}?\n\nEverything in this backup goes to {} ({}) as new copies. Nothing there is overwritten.",
-            backup.name, backup.created_at, account.base_url, account.account_email
+            safe_name, safe_created, safe_account_url, safe_account_email
         );
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
         }
         if backup.scope != store::scope_of(&account.base_url, &account.account_id) {
+            let safe_src_server = safe_dialog_text(backup.server.as_deref().unwrap_or("unknown"), 200);
+            let safe_src_email = safe_dialog_text(backup.account_email.as_deref().unwrap_or("unknown"), 200);
             let asked = format!(
                 "This backup is from another account: {} ({}).\n\nSend everything in it to {} ({})?",
-                backup.server.as_deref().unwrap_or("unknown"),
-                backup.account_email.as_deref().unwrap_or("unknown"),
-                account.base_url,
-                account.account_email
+                safe_src_server,
+                safe_src_email,
+                safe_account_url,
+                safe_account_email
             );
             if !native::confirm(&asked)? {
                 return Err(NOT_NOW.to_string());
             }
         }
         self.jobs.step(job, "Restoring");
-        run::restore(&self.data, id)
+        run::restore(&self.data, &account, id)
     }
 
     fn delete(&self, id: &str) -> Result<Value, String> {
         let store = self.store();
         let backup = store.find(id).ok_or("That backup is not on this computer.")?;
-        if !native::confirm(&format!("Delete the backup of \"{}\" from {}?\n\nThis can't be undone.", backup.name, backup.created_at))? {
+        if !native::confirm(&format!(
+            "Delete the backup of \"{}\" from {}?\n\nThis can't be undone.",
+            safe_dialog_text(&backup.name, 120),
+            safe_dialog_text(&backup.created_at, 64)
+        ))? {
             return Err(NOT_NOW.to_string());
         }
-        store.remove(id)?;
+        run::alone(|| self.store().remove(id))?;
         Ok(json!({"deleted": true}))
     }
 
@@ -437,7 +542,13 @@ impl App {
             None
         };
         self.jobs.step(job, "Moving your backups");
-        let moved = run::alone(|| store.move_backups(to.as_deref()))?;
+        let moved = run::alone(|| {
+            let current_store = self.store();
+            if to.is_none() && current_store.chosen_folder().is_none() {
+                return Err(NOT_NOW.to_string());
+            }
+            current_store.move_backups(to.as_deref())
+        })?;
         Ok(json!({"moved": moved}))
     }
 
@@ -498,6 +609,15 @@ fn sources_to_back_up(payload: &Value) -> Result<Option<Vec<Source>>, String> {
         return Err("only must list apps and forms.".to_string());
     }
     for source in &mut sources {
+        if !matches!(source.kind.as_str(), "app" | "form") {
+            return Err("Each source kind must be \"app\" or \"form\".".to_string());
+        }
+        if source.id.is_empty()
+            || source.id.len() > 100
+            || !source.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return Err("Each source id must be an alphanumeric identifier.".to_string());
+        }
         source.name = run::short(&source.name);
     }
     Ok(Some(sources))
@@ -693,7 +813,7 @@ mod tests {
         let status = App::new(dir.clone()).status();
         assert_eq!(status["state"], "needs-link");
         assert_eq!(status["hasKey"], false);
-        assert!(status.to_string().find(dir.to_string_lossy().as_ref()).is_none(), "no path in an answer the relay can read");
+        assert!(!status.to_string().contains(dir.to_string_lossy().as_ref()), "no path in an answer the relay can read");
         let _ = std::fs::remove_dir_all(dir);
     }
 

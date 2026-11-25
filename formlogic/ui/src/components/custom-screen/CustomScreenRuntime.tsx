@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { isDemoLocalId } from '../../lib/demoLocal';
 import { toast } from '../../stores/toastStore';
@@ -44,30 +44,38 @@ import { resolveScreenAssets } from '../../lib/screenCompile';
 /** Same-origin sandbox host document (see DELIVERY above). */
 const SCREEN_HOST_URL = '/screen-host.html';
 
-// Injected into the iframe — exposes window.FormLogic as a postMessage RPC bridge to the parent.
+// Injected into the iframe — exposes window.FormLogic over a private MessagePort claimed once from screen-host.html.
 const SDK_SHIM = `
 (function(){
   var pending = {}, seq = 0, pushSubs = {};
+  var port = typeof window.__flClaimPort === 'function' ? window.__flClaimPort() : null;
   function call(action, payload){
     return new Promise(function(resolve, reject){
+      if (!port) { reject(new Error('Screen bridge unavailable.')); return; }
       var id = ++seq; pending[id] = { resolve: resolve, reject: reject };
       // gen identifies THIS document instance (stamped by the host into the
       // srcDoc) — a reloaded screen's stale predecessor must not act.
-      parent.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} }, '*');
+      port.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} });
     });
   }
-  window.addEventListener('message', function(e){
-    if (e.source !== parent) return; // only the host answers: a sibling frame could forge a reply
-    var m = e.data;
-    if (m && m.__flPush) {
-      var h = pushSubs[m.subId];
-      if (h) { try { h({ kind: m.kind, seq: m.seq, data: m.data }); } catch (err) {} }
-      return;
-    }
-    if (!m || !m.__flReply || !pending[m.id]) return;
-    var p = pending[m.id]; delete pending[m.id];
-    if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
-  });
+  if (port) {
+    port.onmessage = function(e){
+      var m = e.data;
+      if (m && m.__flTheme) {
+        document.documentElement.classList.toggle('fl-dark', m.__flTheme === 'dark');
+        return;
+      }
+      if (m && m.__flPush) {
+        var h = pushSubs[m.subId];
+        if (h) { try { h({ kind: m.kind, seq: m.seq, data: m.data }); } catch (err) {} }
+        return;
+      }
+      if (!m || !m.__flReply || !pending[m.id]) return;
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
+    };
+    port.start();
+  }
   window.FormLogic = {
     /** Save a response to this form (runs the form's onSubmit script + validation). */
     submit: function(answers){ return call('submit', { answers: answers }); },
@@ -246,11 +254,24 @@ export function CustomScreenRuntime({
   // Live subscription relay (events/captions): host-owned feeds pushed into
   // the iframe as __flPush frames. A ref so re-renders never drop active
   // subscriptions; cleared when the iframe reloads and on unmount.
+  const docSentRef = useRef(false);
+  const loadCountRef = useRef(0);
+  const escapedRef = useRef(false);
+  const portRef = useRef<MessagePort | null>(null);
+  const rpcHandlerRef = useRef<((e: MessageEvent, requestPort: MessagePort) => Promise<void>) | null>(null);
+  const closeActivePort = useCallback(() => {
+    if (portRef.current) {
+      portRef.current.onmessage = null;
+      try { portRef.current.close(); } catch { /* ignore */ }
+      portRef.current = null;
+    }
+  }, []);
   const subsRef = useRef<ScreenSubscriptions | null>(null);
   const subscriptions = () => {
     if (!subsRef.current) {
       subsRef.current = createScreenSubscriptions((frame) => {
-        iframeRef.current?.contentWindow?.postMessage(frame, '*');
+        if (escapedRef.current || !portRef.current) return;
+        portRef.current.postMessage(frame);
       });
     }
     return subsRef.current;
@@ -283,8 +304,8 @@ export function CustomScreenRuntime({
   const srcDoc = useMemo(() => {
     const css = assets.css || '';
     const html = assets.html || '';
-    // Neutralize an early </script> in user code so it can't break out of its <script> block.
-    const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
+    // Neutralize any HTML5 </script> closing variant (including </script >, </script\n>) in user code.
+    const js = (assets.js || '').replace(/<\/script(?=[\s/>])/gi, '<\\/script');
     // The document keeps its initial palette; later theme changes use postMessage.
     const dark = initialScheme === 'dark';
     const accent = accentColor || '#6366f1';
@@ -308,54 +329,88 @@ export function CustomScreenRuntime({
   // Hand the composed document to the sandbox host exactly once per generation.
   // A second load on the same iframe indicates an unexpected in-frame navigation escape:
   // lock out the SDK bridge immediately and never re-send __flScreenDoc.
-  const docSentRef = useRef(false);
-  const loadCountRef = useRef(0);
-  const escapedRef = useRef(false);
-  useEffect(() => {
-    docSentRef.current = false;
-    loadCountRef.current = 0;
-    escapedRef.current = false;
-  }, [generation]);
+  const frameGenRef = useRef(generation);
+  const ensureCurrentFrameRefs = useCallback(() => {
+    if (frameGenRef.current !== generation) {
+      frameGenRef.current = generation;
+      docSentRef.current = false;
+      loadCountRef.current = 0;
+      escapedRef.current = false;
+      closeActivePort();
+    }
+  }, [generation, closeActivePort]);
+  useLayoutEffect(() => {
+    ensureCurrentFrameRefs();
+  }, [ensureCurrentFrameRefs]);
 
   const sendDocOnce = useCallback(() => {
+    ensureCurrentFrameRefs();
     if (docSentRef.current || escapedRef.current) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     docSentRef.current = true;
-    win.postMessage({ __flScreenDoc: srcDoc }, '*');
-  }, [srcDoc]);
+    closeActivePort();
+    const channel = new MessageChannel();
+    const hostPort = channel.port1;
+    portRef.current = hostPort;
+    hostPort.onmessage = (e: MessageEvent) => {
+      if (e.data && (e.data as { __flScreenClosed?: boolean }).__flScreenClosed) {
+        escapedRef.current = true;
+        closeActivePort();
+        subsRef.current?.clear();
+        return;
+      }
+      void rpcHandlerRef.current?.(e, hostPort);
+    };
+    hostPort.start();
+    win.postMessage({ __flScreenDoc: srcDoc }, '*', [channel.port2]);
+    if (schemeRef.current !== initialScheme) {
+      hostPort.postMessage({ __flTheme: schemeRef.current });
+    }
+  }, [ensureCurrentFrameRefs, closeActivePort, srcDoc, initialScheme]);
 
   const handleIframeLoad = useCallback(() => {
+    ensureCurrentFrameRefs();
     loadCountRef.current += 1;
     if (loadCountRef.current === 1) {
       sendDocOnce();
     } else {
-      // Unexpected navigation away from the initialized sandbox document: revoke all SDK access.
+      // screen-host.html hydrates in place without document.open()/close(), so any second load
+      // unconditionally indicates an unexpected navigation away from the initialized sandbox document.
       escapedRef.current = true;
+      closeActivePort();
       subsRef.current?.clear();
     }
-  }, [sendDocOnce]);
+  }, [ensureCurrentFrameRefs, sendDocOnce, closeActivePort]);
 
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
       if (e.origin !== 'null') return;
-      sendDocOnce();
+      // Never send __flScreenDoc before screen-host.html's initial iframe load completes;
+      // otherwise untrusted code could synchronously navigate before load #1 is recorded.
+      if (loadCountRef.current === 1) {
+        sendDocOnce();
+      }
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
   }, [sendDocOnce]);
 
-  // Push theme changes into the already-loaded iframe (instant, no reload).
+  // Push theme changes into the already-loaded iframe over its private MessagePort (instant, no reload).
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage({ __flTheme: colorScheme }, '*');
+    if (escapedRef.current || !portRef.current) return;
+    portRef.current.postMessage({ __flTheme: colorScheme });
   }, [colorScheme]);
 
   // A reloaded iframe (srcDoc change) boots a fresh shim with no known
-  // subIds — stop the old feeds rather than pushing frames nobody hears.
+  // subIds — close the old port and stop old feeds rather than pushing frames nobody hears.
   // The same cleanup covers unmount.
-  useEffect(() => () => subsRef.current?.clear(), [srcDoc]);
+  useEffect(() => () => {
+    closeActivePort();
+    subsRef.current?.clear();
+  }, [srcDoc, closeActivePort]);
 
   // Keep desktop detection warm for a bridge screen's lifetime. Detection is
   // demand-driven (subscribeDesktopStatus starts it), and the bridge's
@@ -368,26 +423,19 @@ export function CustomScreenRuntime({
   }, [bridge]);
 
   useEffect(() => {
-    const handler = async (e: MessageEvent) => {
+    const handler = async (e: MessageEvent, requestPort: MessagePort) => {
       const m = e.data;
-      // Only accept SDK messages from OUR opaque-origin sandboxed iframe before any escape.
-      if (!m || !m.__fl || escapedRef.current || !iframeRef.current || e.source !== iframeRef.current.contentWindow || e.origin !== 'null') return;
-      const requestWindow = iframeRef.current.contentWindow;
-      // …and only from the CURRENT document generation: the WindowProxy
-      // survives a srcdoc reload, so the dying predecessor can still post —
-      // acting on it could start an ownerless subscription after the reload
-      // cleanup already ran. Refuse with an honest error instead.
+      // Only accept SDK messages from OUR per-generation MessagePort before any escape.
+      if (!m || !m.__fl || escapedRef.current || portRef.current !== requestPort) return;
+      // …and only from the CURRENT document generation: refuse stale stamps loudly.
       if (m.gen !== generation) {
-        iframeRef.current.contentWindow?.postMessage(
-          { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
-          '*'
-        );
+        requestPort.postMessage({ __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' });
         return;
       }
       let result: unknown;
       let error: string | undefined;
       if (!rateRef.current(String(m.action))) {
-        iframeRef.current.contentWindow?.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' }, '*');
+        requestPort.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' });
         return;
       }
       // Demo-local forms exist ONLY in this browser (formStore demolocal_ ids): their
@@ -569,9 +617,8 @@ export function CustomScreenRuntime({
             }
             // Grants are the app's own word; what these carry is the viewer's (a call, a text).
             await assertAppMayUseThisComputer();
-            // The prompt can outlive the document that asked. Its feeds were stopped when it went,
-            // and nothing would ever stop one started now.
-            if (iframeRef.current?.contentWindow !== requestWindow) return;
+            // The prompt can outlive the document that asked, or the frame may have navigated away.
+            if (escapedRef.current || portRef.current !== requestPort) return;
             const subId = subscriptions().add(
               'events',
               (emit) => ({
@@ -591,8 +638,8 @@ export function CustomScreenRuntime({
               throw new Error('Live subscriptions are not available in the shared demo.');
             }
             await assertAppMayUseThisComputer();
-            // As for events: the document that asked may be gone by the time the person answers.
-            if (iframeRef.current?.contentWindow !== requestWindow) return;
+            // As for events: the document that asked may be gone or escaped by the time the person answers.
+            if (escapedRef.current || portRef.current !== requestPort) return;
             // Enforce the documented LOCAL-only contract at subscribe time:
             // the captions reader retries its loopback fetch forever, so
             // starting it with no local bridge would just burn a failing
@@ -641,12 +688,14 @@ export function CustomScreenRuntime({
       } catch (err) {
         error = err instanceof Error ? err.message : 'Request failed';
       }
-      // An awaited API request belongs to its original document, even after reload.
-      if (iframeRef.current?.contentWindow !== requestWindow) return;
-      requestWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
+      // An awaited API request belongs to its original document; never deliver to a replacement or escaped navigation.
+      if (escapedRef.current || portRef.current !== requestPort) return;
+      requestPort.postMessage({ __flReply: true, id: m.id, result, error });
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    rpcHandlerRef.current = handler;
+    return () => {
+      if (rpcHandlerRef.current === handler) rpcHandlerRef.current = null;
+    };
   }, [formId, formTitle, fields, user, publicMode, hideViewer, appSlug, onOpenForm, onOpenRecords, record, fetchRelated, bridge, onOpenScreen, onOpenRecord, onCeremony, screen._trust, generation]);
 
   return (

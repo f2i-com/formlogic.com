@@ -208,9 +208,8 @@ class AppWalletService
                 return ['chargeId' => $chargeId, 'item' => $item, 'amountCents' => (int) $row['amount_cents'], 'status' => 'paid', 'balanceCents' => $balance, 'alreadyPaid' => true];
             }
             if ($wallet['status'] !== 'active') { $pdo->commit(); return $declined('wallet_blocked', $balance); }
-            $today = $pdo->prepare("SELECT COALESCE(-SUM(amount_cents), 0) FROM app_wallet_ledger WHERE wallet_id = ? AND kind IN ('charge', 'refund') AND created_at >= ?");
-            $today->execute([$wallet['id'], gmdate('Y-m-d') . ' 00:00:00']);
-            if ((int) $today->fetchColumn() + $price > $site['dailyLimitCents']) { $pdo->commit(); return $declined('limit_reached', $balance); }
+            $dayStart = gmdate('Y-m-d') . ' 00:00:00';
+            if ($this->spentSince((string) $wallet['id'], $dayStart) + $price > $site['dailyLimitCents']) { $pdo->commit(); return $declined('limit_reached', $balance); }
             if ($balance < $price) { $pdo->commit(); return $declined('insufficient_funds', $balance); }
             // A charge given back is a new charge when bought again: the next ref.
             $ref = $earlier === [] ? $chargeId : $chargeId . '#' . (count($earlier) + 1);
@@ -761,12 +760,21 @@ class AppWalletService
         if ($from['status'] !== 'active') throw new WalletRefusal('This balance is held while a payment is checked. It can be saved or moved once that is settled.', 'wallet_held', 409);
         $pdo = $this->pdo();
         $moved = (int) $from['balance_cents'];
-        if ($moved !== 0) {
+        if ($moved < 0) throw new WalletRefusal('This balance is held while a payment is checked. It can be saved or moved once that is settled.', 'wallet_held', 409);
+        $holdersStmt = $pdo->prepare('SELECT COUNT(*) FROM app_wallet_holders WHERE wallet_id = ?');
+        $holdersStmt->execute([$from['id']]);
+        $soleHolder = (int) $holdersStmt->fetchColumn() <= 1;
+        // Only sweep balance and top-ups when the caller is the sole holder of $from:
+        // leaving other holders on $from while sweeping funds out would orphan PayPal top-ups
+        // on $from and let refunds/chargebacks miss the wallet holding the funds.
+        $swept = 0;
+        if ($soleHolder && $moved > 0) {
+            $swept = $moved;
             $ref = 'move:' . $from['id'] . ':' . bin2hex(random_bytes(4));
-            $this->line($from, 'transfer_out', -$moved, 0, $ref, null, null, $this->actor($holder));
-            $this->line($to, 'transfer_in', $moved, (int) $to['balance_cents'] + $moved, $ref, null, null, $this->actor($holder));
+            $this->line($from, 'transfer_out', -$swept, 0, $ref, null, null, $this->actor($holder));
+            $this->line($to, 'transfer_in', $swept, (int) $to['balance_cents'] + $swept, $ref, null, null, $this->actor($holder));
         }
-        if ($to['status'] === 'blocked' && (int) $to['balance_cents'] + $moved >= 0) $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ? AND status = 'blocked'")->execute([$to['id']]);
+        if ($to['status'] === 'blocked' && (int) $to['balance_cents'] + $swept >= 0) $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ? AND status = 'blocked'")->execute([$to['id']]);
         $pdo->prepare('UPDATE app_wallet_holders SET wallet_id = ? WHERE app_id = ? AND holder_kind = ? AND holder_id = ?')->execute([$to['id'], $appId, $holder['kind'], $holder['id']]);
         // Nobody holds the old wallet now: its top-ups are the new one's, so a refund PayPal gives later
         // takes the money back from where it went.
@@ -774,6 +782,35 @@ class AppWalletService
         $left->execute([$from['id']]);
         if ((int) $left->fetchColumn() === 0) $pdo->prepare('UPDATE app_wallet_topups SET wallet_id = ? WHERE wallet_id = ?')->execute([$to['id'], $from['id']]);
         return true;
+    }
+
+    /**
+     * Net spend (`charge` + `refund`) since `$since` on `$walletId`, including any wallets whose
+     * balances were transferred into `$walletId` since `$since` so `join()` cannot reset daily limits.
+     */
+    private function spentSince(string $walletId, string $since): int
+    {
+        $pdo = $this->pdo();
+        $seen = [$walletId => true];
+        $frontier = [$walletId];
+        for ($depth = 0; $depth < 10 && $frontier !== []; $depth++) {
+            $placeholders = implode(',', array_fill(0, count($frontier), '?'));
+            $stmt = $pdo->prepare("SELECT ref FROM app_wallet_ledger WHERE wallet_id IN ($placeholders) AND kind = 'transfer_in' AND created_at >= ?");
+            $stmt->execute([...$frontier, $since]);
+            $next = [];
+            foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $ref) {
+                if (is_string($ref) && preg_match('/^move:([a-f0-9]{32}):/', $ref, $m) === 1 && !isset($seen[$m[1]])) {
+                    $seen[$m[1]] = true;
+                    $next[] = $m[1];
+                }
+            }
+            $frontier = $next;
+        }
+        $ids = array_keys($seen);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $today = $pdo->prepare("SELECT COALESCE(-SUM(amount_cents), 0) FROM app_wallet_ledger WHERE wallet_id IN ($placeholders) AND kind IN ('charge', 'refund') AND created_at >= ?");
+        $today->execute([...$ids, $since]);
+        return (int) $today->fetchColumn();
     }
 
     // ------------------------------------------------------------------ the owner's and the administrator's view
@@ -823,7 +860,11 @@ class AppWalletService
             $wallet = $this->lockWallet($walletId);
             $balance = (int) $wallet['balance_cents'] + $cents;
             $this->line($wallet, 'adjustment', $cents, $balance, 'adjust:' . bin2hex(random_bytes(8)), null, null, 'admin:' . $adminId, $note);
-            if ($wallet['status'] === 'blocked' && $balance >= 0) $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ?")->execute([$walletId]);
+            if ($wallet['status'] === 'blocked' && $balance >= 0) {
+                $pdo->prepare("UPDATE app_wallets SET status = 'active' WHERE id = ?")->execute([$walletId]);
+            } elseif ($wallet['status'] === 'active' && $balance < 0) {
+                $pdo->prepare("UPDATE app_wallets SET status = 'blocked' WHERE id = ?")->execute([$walletId]);
+            }
             $pdo->commit();
             return ['walletId' => $walletId, 'balanceCents' => $balance];
         } catch (\Throwable $e) {

@@ -58,11 +58,27 @@ export function MarketplaceDemoFrame({
     onSessionReadyRef.current?.(next);
   }, [slug]);
 
+  const [prevSlug, setPrevSlug] = useState(slug);
+  if (prevSlug !== slug) {
+    setPrevSlug(slug);
+    setLoading(false);
+    setResetting(false);
+  }
+  const reqSeqRef = useRef(0);
+  useEffect(() => {
+    reqSeqRef.current += 1;
+    return () => {
+      reqSeqRef.current += 1;
+    };
+  }, [slug]);
+
   const launch = useCallback(async (forceNew = false) => {
+    const seq = ++reqSeqRef.current;
     setLoading(true);
     setError(null);
     try {
       const next = await ensureSandboxSession(slug, forceNew);
+      if (reqSeqRef.current !== seq) return;
       if (!next) {
         setError('Could not start the live sandbox demo.');
         return;
@@ -70,9 +86,12 @@ export function MarketplaceDemoFrame({
       commitSession(next);
       setFrameKey((k) => k + 1);
     } catch (err) {
+      if (reqSeqRef.current !== seq) return;
       setError(err instanceof Error ? err.message : 'Could not start the live sandbox demo.');
     } finally {
-      setLoading(false);
+      if (reqSeqRef.current === seq) {
+        setLoading(false);
+      }
     }
   }, [slug, commitSession]);
 
@@ -84,22 +103,29 @@ export function MarketplaceDemoFrame({
 
   const reset = useCallback(async () => {
     if (!session || resetting) return;
+    const seq = ++reqSeqRef.current;
     setResetting(true);
     setError(null);
     try {
       const next = await resetSandboxSession(slug);
+      if (reqSeqRef.current !== seq) return;
       if (next) {
         commitSession(next);
         setFrameKey((k) => k + 1);
       } else {
         await launch(true);
+        if (reqSeqRef.current !== seq) return;
       }
       onSessionResetRef.current?.();
     } catch {
+      if (reqSeqRef.current !== seq) return;
       await launch(true);
+      if (reqSeqRef.current !== seq) return;
       onSessionResetRef.current?.();
     } finally {
-      setResetting(false);
+      if (reqSeqRef.current === seq) {
+        setResetting(false);
+      }
     }
   }, [slug, session, resetting, commitSession, launch]);
 

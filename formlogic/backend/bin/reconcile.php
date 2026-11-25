@@ -35,12 +35,31 @@ use FormLogic\Services\FileStorageService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\ReconcileService;
 
+if (PHP_SAPI !== 'cli') {
+    return;
+}
+
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 
+$lockHandle = null;
+if (in_array('--fix', is_array($argv ?? null) ? $argv : [], true)) {
+    $lockHandle = \FormLogic\Support\CronLock::take('reconcile-fix');
+    if ($lockHandle === null) {
+        fwrite(STDERR, "Another reconcile --fix is already running; exiting.\n");
+        exit(0);
+    }
+}
+
 $mysql = new MySQLConnection($config['settings']['mysql']);
+try {
+    $mysql->ensureSchemaCurrent();
+} catch (\Throwable $e) {
+    fwrite(STDERR, "Schema init warning: " . $e->getMessage() . "\n");
+}
 $formsPath = $config['settings']['sqlite']['storage_path'];
 $sqlite = new SQLiteConnection($formsPath);
 $uploadsPath = $config['settings']['uploads']['storagePath'] ?? (__DIR__ . '/../storage/uploads');

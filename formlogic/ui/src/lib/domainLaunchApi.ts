@@ -163,6 +163,16 @@ export function rememberedHost(host: string): RememberedHost | null {
   }
 }
 
+/** True when `platformUrl` resolves to the exact same host (case-insensitive) as `host`. */
+export function isPlatformHostUrl(platformUrl: string | null | undefined, host: string): boolean {
+  if (!platformUrl) return false;
+  try {
+    return new URL(platformUrl).host.toLowerCase() === host.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Keep what the server said about a host. A customer's domain is kept only with its `softnAccess`,
  * which decides what its pages are: kept without it, a SoftN app's domain would show the platform's.
@@ -172,7 +182,7 @@ export function rememberHost(host: string, config: LaunchConfig | null, softnAcc
   const key = host.toLowerCase();
   // FormLogic's own address can still have an app connected from an older version. It isn't a
   // customer's domain: its pages must not wait, and its sign-in is its own.
-  const domain = config !== null && !config.platformUrl?.endsWith(`//${key}`);
+  const domain = config !== null && !isPlatformHostUrl(config.platformUrl, key);
   try {
     localStorage.setItem(`${REMEMBERED_PREFIX}${key}`, domain ? JSON.stringify({ config, softnAccess }) : platform ? 'platform' : 'not-domain');
   } catch {

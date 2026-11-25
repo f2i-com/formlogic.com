@@ -82,9 +82,9 @@ final class PluginNetwork
      * `{request: {method, url, headers?, form? | json?, auth?: {basic: {user, password}}}, continue: route, state?}`,
      * and is called at `continue` with $input, `response: {status, body}` and its `state`.
      */
-    public function call(array $plugin, array $granted, string $route, array $input, array $secrets = []): array
+    public function call(array $plugin, array $granted, string $route, array $input, array $secrets = [], ?string $rateKey = null): array
     {
-        $answer = $this->callPlugin($plugin, $route, $input);
+        $answer = $this->callPlugin($plugin, $route, $input, $rateKey);
         $made = 0;
         while (array_key_exists('request', $answer)) {
             if (++$made > self::MAX_REQUESTS) {
@@ -99,17 +99,19 @@ final class PluginNetwork
                 throw new RuntimeException('The plugin\'s state is larger than the site carries for it.', 502);
             }
             $response = $this->fetch($granted, $answer['request'], $secrets);
-            $answer = $this->callPlugin($plugin, $next, array_merge($input, ['response' => $response], $state !== null ? ['state' => $state] : []));
+            $answer = $this->callPlugin($plugin, $next, array_merge($input, ['response' => $response], $state !== null ? ['state' => $state] : []), $rateKey);
         }
         return $answer;
     }
 
     /** One of the plugin's site routes, in its sandbox: its answer's body, when it is a 2xx with an object. */
-    private function callPlugin(array $plugin, string $route, array $input): array
+    private function callPlugin(array $plugin, string $route, array $input, ?string $rateKey = null): array
     {
+        $bucket = ($rateKey !== null && $rateKey !== '') ? $rateKey : ('plugin:' . (string) $plugin['appId'] . ':' . $route);
         $result = $this->native->request((string) $plugin['appId'], [
             'method' => 'POST', 'path' => $route, 'query' => (object) [], 'body' => $input,
-            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1', 'photos' => false,
+            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1',
+            'rate_key' => $bucket, 'photos' => false,
         ], ['formlogic' => ['appId' => (string) $plugin['appId']]]);
         if (!is_int($result['status'] ?? null) || $result['status'] < 200 || $result['status'] > 299 || !is_array($result['body'] ?? null)) {
             throw new RuntimeException('The plugin answered ' . (is_int($result['status'] ?? null) ? $result['status'] : '?') . ' at ' . $route . '.', 502);

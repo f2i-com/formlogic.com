@@ -116,7 +116,7 @@ class McpOAuthService
     private const CIMD_MAX_BYTES = 65536;
     private const CIMD_TIMEOUT_SECONDS = 5;
 
-    private const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1'];
+    private const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]'];
 
     public function __construct(
         private MySQLConnection $mysql,

@@ -16,6 +16,7 @@ import {
   __setEsmFetchForTests,
   bundleScreenFiles,
   compileScreenCode,
+  resolveScreenAssets,
   type EsbuildLike,
   type EsmFetch,
 } from './screenCompile';
@@ -406,5 +407,19 @@ describe('compileScreenCode — single-file sources', () => {
     const r = await compileScreenCode(`const broken = <div>`);
     expect(r.js).toBe('');
     expect(r.error).toBeTruthy();
+  });
+
+  it('refuses esm.sh network fetches at view time via resolveScreenAssets', async () => {
+    const fetched: string[] = [];
+    __setEsmFetchForTests((url) => {
+      fetched.push(url);
+      return fakeEsm({ 'https://esm.sh/sneaky@1.0.0': 'export default 42;' })(url);
+    });
+    const r = await resolveScreenAssets({
+      ts: `import x from 'sneaky@1.0.0'; console.log(x);`,
+    });
+    expect(fetched).toEqual([]);
+    expect(r.js).toBe('');
+    expect(r.error).toContain('disabled at view time');
   });
 });

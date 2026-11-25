@@ -681,10 +681,11 @@ class NativeAppService
      *
      * @return array{version:int, database:string, cryptoMaterial:string}
      */
-    public function restore(string $appId, array $project, ?string $databaseSnapshot, ?array $hostConfig): array
+    public function restore(string $appId, array $project, ?string $databaseSnapshot, ?array $hostConfig, bool $trustedSnapshot = true): array
     {
         $project = self::portableProject($project);
         [$files, $decoded, $manifest, $capabilities] = self::validateProject($project);
+        $isContainerBackend = is_array($manifest['backend'] ?? null) && !array_is_list($manifest['backend']);
         // An app with no backend runs nothing on this server: it needs no runner to be restored.
         if (array_key_exists('server', $manifest) && !$this->available()) throw new RuntimeException('Prepare the native app runtime before restoring native apps');
         // Restored under a new app id: an app that declares no id keeps the identity its keys were
@@ -699,6 +700,9 @@ class NativeAppService
         if ($databaseSnapshot !== null) {
             if (!is_file($databaseSnapshot)) throw new RuntimeException('The native database snapshot is missing');
             $this->assertSnapshotHealthy($databaseSnapshot);
+            if (!$trustedSnapshot) {
+                self::assertImportableDatabase($databaseSnapshot, $manifest, $files, array_key_exists('server', $manifest) && !$isContainerBackend);
+            }
         }
         if ($hostConfig !== null) {
             if (!is_string($hostConfig['keyHex'] ?? null) || !preg_match('/^[0-9a-f]{64}$/', $hostConfig['keyHex']) || ($hostConfig['appId'] ?? null) !== $identity) {
@@ -721,21 +725,37 @@ class NativeAppService
                 throw new RuntimeException('A native installation already exists for this app; remove it before restoring');
             }
             $writing = true;
-            $config = $hostConfig ?? ['appId' => $identity, 'development' => false, 'keyHex' => bin2hex(random_bytes(32)), 'cryptoDomains' => ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1']];
-            $config['capabilities'] = $capabilities;
-            $config['enableHostContext'] = true;
-            $config['containerPrimaryDatabase'] = 'application.sqlite';
+            // Construct host config strictly from an explicit allowlist: never carry over
+            // `development: true` or arbitrary properties from backup payloads.
+            $cryptoDomains = ['hmac' => $identity . ':hmac:v1', 'seal' => $identity . ':seal:v1'];
+            if (is_array($hostConfig['cryptoDomains'] ?? null)
+                && is_string($hostConfig['cryptoDomains']['hmac'] ?? null) && preg_match('/^[!-~]{1,128}$/', $hostConfig['cryptoDomains']['hmac'])
+                && is_string($hostConfig['cryptoDomains']['seal'] ?? null) && preg_match('/^[!-~]{1,128}$/', $hostConfig['cryptoDomains']['seal'])
+                && $hostConfig['cryptoDomains']['hmac'] !== $hostConfig['cryptoDomains']['seal']) {
+                $cryptoDomains = ['hmac' => $hostConfig['cryptoDomains']['hmac'], 'seal' => $hostConfig['cryptoDomains']['seal']];
+            }
+            $config = [
+                'appId' => $identity,
+                'development' => false,
+                'keyHex' => $hostConfig !== null ? (string) $hostConfig['keyHex'] : bin2hex(random_bytes(32)),
+                'cryptoDomains' => $cryptoDomains,
+                'capabilities' => $capabilities,
+                'enableHostContext' => true,
+                'containerPrimaryDatabase' => 'application.sqlite',
+            ];
             $this->writeHostConfig($root . '/private/config.json', json_encode($config, JSON_THROW_ON_ERROR));
             $database = 'none';
             if ($databaseSnapshot !== null) {
                 $target = $root . '/private/data/application.sqlite';
                 if (!copy($databaseSnapshot, $target) || !$this->sameSize($target, $databaseSnapshot)) throw new RuntimeException('Could not place the restored app database');
+                if (!$trustedSnapshot) {
+                    self::scrubUntrustedHostTables($target);
+                }
                 $database = 'restored';
             }
             $this->stageProject($staging, array_merge(self::runnerFiles($files, $manifest, $identity), $decoded));
             if (!rename($staging, $root . '/app')) throw new RuntimeException('Could not activate restored app source');
             // A client-only app has no backend to start, so there is nothing for the runner to check.
-            $isContainerBackend = is_array($manifest['backend'] ?? null) && !array_is_list($manifest['backend']);
             if (array_key_exists('server', $manifest) || $isContainerBackend) {
                 $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend);
                 if (($health['status'] ?? 500) !== 200) throw new RuntimeException('Restored native app failed validation: ' . ($health['body']['diagnostic'] ?? 'runtime unavailable'), 422);
@@ -797,6 +817,7 @@ class NativeAppService
             try {
                 $db->enableExceptions(true);
                 $db->busyTimeout($busyMs);
+                $db->exec('PRAGMA trusted_schema = OFF');
                 $pages = (int) $db->querySingle('PRAGMA page_count');
                 $check = (string) $db->querySingle('PRAGMA quick_check');
             } catch (\Throwable $e) {
@@ -809,6 +830,7 @@ class NativeAppService
             $pdo = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
             try {
                 $pdo->exec('PRAGMA busy_timeout=' . $busyMs);
+                $pdo->exec('PRAGMA trusted_schema = OFF');
                 $pages = (int) $pdo->query('PRAGMA page_count')->fetchColumn();
                 $check = (string) $pdo->query('PRAGMA quick_check')->fetchColumn();
             } catch (\Throwable $e) {
@@ -3309,7 +3331,7 @@ JS;
      * migration may make one), with no host table but the runner's, and having run only migrations
      * this version of the app lists, each the same file. The runner checks the last again as it starts.
      */
-    private static function assertImportableDatabase(string $path, array $manifest, array $files): void
+    private static function assertImportableDatabase(string $path, array $manifest, array $files, bool $requireMigrations = true): void
     {
         $head = @file_get_contents($path, false, null, 0, 100);
         if (!is_string($head) || strlen($head) < 100 || substr($head, 0, 16) !== "SQLite format 3\0") throw new InvalidArgumentException('That file is not a SQLite database.');
@@ -3351,17 +3373,36 @@ JS;
         }
         if ($problem !== null) throw new InvalidArgumentException($problem);
         if ($failure !== null || $check !== ['ok']) throw new InvalidArgumentException('That database could not be read, or is damaged (SQLite\'s check failed). Copy it again from the old site, with the old site stopped.');
-        $wanted = [];
-        foreach (is_array($manifest['server']['database']['migrations'] ?? null) ? $manifest['server']['database']['migrations'] : [] as $migration) {
-            if (is_string($migration) && is_string($files[$migration] ?? null)) $wanted[$migration] = hash('sha256', $files[$migration]);
+        if ($requireMigrations) {
+            $wanted = [];
+            foreach (is_array($manifest['server']['database']['migrations'] ?? null) ? $manifest['server']['database']['migrations'] : [] as $migration) {
+                if (is_string($migration) && is_string($files[$migration] ?? null)) $wanted[$migration] = hash('sha256', $files[$migration]);
+            }
+            if ($ledger === [] && array_diff(array_keys($tables), ['_migrations', '_request_limits', self::RECORD_OUTBOX]) !== []) {
+                throw new InvalidArgumentException('That database has tables but no record of the migrations that made them (_migrations), so it was not created by a compatible app host.');
+            }
+            foreach ($ledger as $row) {
+                $name = (string) $row['name'];
+                if (!isset($wanted[$name])) throw new InvalidArgumentException("That database has run a migration this version of the app does not list ({$name}). Upload the version of the app it came from, or a later one.");
+                if ($wanted[$name] !== (string) $row['sha256']) throw new InvalidArgumentException("The migration {$name} that made that database is not this version's file of that name.");
+            }
         }
-        if ($ledger === [] && array_diff(array_keys($tables), ['_migrations', '_request_limits', self::RECORD_OUTBOX]) !== []) {
-            throw new InvalidArgumentException('That database has tables but no record of the migrations that made them (_migrations), so it was not created by a compatible app host.');
-        }
-        foreach ($ledger as $row) {
-            $name = (string) $row['name'];
-            if (!isset($wanted[$name])) throw new InvalidArgumentException("That database has run a migration this version of the app does not list ({$name}). Upload the version of the app it came from, or a later one.");
-            if ($wanted[$name] !== (string) $row['sha256']) throw new InvalidArgumentException("The migration {$name} that made that database is not this version's file of that name.");
+    }
+
+    /** Clear host-managed outbox and rate-limit tables in an untrusted restored SQLite file. */
+    private static function scrubUntrustedHostTables(string $path): void
+    {
+        $db = new PDO('sqlite:' . $path, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        try {
+            $db->exec('PRAGMA busy_timeout=1500; PRAGMA trusted_schema=OFF;');
+            $existing = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('_request_limits', '" . self::RECORD_OUTBOX . "')")->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($existing as $tbl) {
+                if ($tbl === '_request_limits' || $tbl === self::RECORD_OUTBOX) {
+                    $db->exec('DELETE FROM "' . $tbl . '"');
+                }
+            }
+        } finally {
+            $db = null;
         }
     }
 
@@ -3668,6 +3709,12 @@ JS;
     public static function sandboxRootOverride(string $appId): ?string
     {
         return self::$sandboxRootOverrides[$appId] ?? null;
+    }
+
+    /** True while any request-scoped Demo sandbox override is active. */
+    public static function hasSandboxRootOverrides(): bool
+    {
+        return self::$sandboxRootOverrides !== [];
     }
 
     /**
@@ -4239,7 +4286,8 @@ JS;
                 if ($table !== null) throw new RuntimeException('Demo sandbox database not found', 404);
                 return ['installed' => true, 'tables' => [], 'backend' => true];
             }
-            $answer = $this->readRecords($sandboxRoot, $table, $offset, $options ?? []);
+            $sandboxDb = $sandboxRoot . '/private/data/application.sqlite';
+            $answer = $this->readRecords($sandboxRoot, $table, $offset, $options ?? [], hash('sha256', 'demo-sandbox-rev|' . $sandboxDb));
             return $options === null ? array_diff_key($answer, ['total' => 0, 'matching' => 0, 'stamps' => 0, 'cut' => 0, 'sort' => 0, 'hiddenColumns' => 0]) : $answer;
         }
         if ($dbAppId === $appId) {
@@ -4708,12 +4756,12 @@ JS;
      * Caller holds the shared lock from openShared(), which has already required the project.
      * Read-only, in one transaction, so a page's rows, counts and keys are of one moment.
      */
-    private function readRecords(string $root, ?string $table, int $offset, array $options): array
+    private function readRecords(string $root, ?string $table, int $offset, array $options, ?string $revisionKey = null): array
     {
         $path = $root . '/private/data/application.sqlite';
         if (!is_file($path)) throw new RuntimeException('App database not found', 404);
         self::assertOwnDatabase($path);
-        $store = NativeRecordStore::open($path, readSnapshot: true);
+        $store = NativeRecordStore::open($path, $revisionKey ?? self::revisionKey($root . '/private/config.json'), readSnapshot: true);
         try {
             if ($table === null) {
                 $answer = ['installed' => true, 'tables' => $store->tables()];

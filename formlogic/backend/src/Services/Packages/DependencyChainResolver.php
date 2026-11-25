@@ -90,7 +90,7 @@ class DependencyChainResolver
     /**
      * @param array{installed:array<string,string>,chosen:array<string,string>,visiting:array<string,bool>,chain:list<array<string,mixed>>,problems:list<array<string,mixed>>} $state
      */
-    private function walk(array $aggregate, array &$state, int $depth): void
+    private function walk(array $aggregate, array &$state, int $depth, ?string $declaringCatalogPublisherId = null): void
     {
         $meta = is_array($aggregate['package'] ?? null) ? $aggregate['package'] : [];
         $selfId = (string) ($meta['id'] ?? '');
@@ -184,7 +184,7 @@ class DependencyChainResolver
                 continue; // absent optional dependencies are the owner's choice
             }
 
-            $candidate = $this->findInCatalog($id, $range, $selfPublisher);
+            $candidate = $this->findInCatalog($id, $range, $selfPublisher, $declaringCatalogPublisherId);
             if ($candidate === null) {
                 $state['problems'][] = [
                     'code' => 'dependency_unavailable',
@@ -208,7 +208,7 @@ class DependencyChainResolver
             // visiting so a ring through it is detected rather than followed.
             $state['chosen'][$id] = $version;
             $state['visiting'][$id] = true;
-            $this->walk($candidate['aggregate'], $state, $depth + 1);
+            $this->walk($candidate['aggregate'], $state, $depth + 1, $candidate['catalogPublisherId']);
             $state['visiting'][$id] = false;
 
             $nodes = is_array($candidate['aggregate']['contributions']['flowNodes'] ?? null)
@@ -251,21 +251,35 @@ class DependencyChainResolver
      * The SQL narrows by publisher/trust rather than scanning the whole catalog, so a large
      * marketplace cannot push the real match past a row limit.
      *
-     * @return array{aggregate:array<string,mixed>,trust:string}|null
+     * @return array{aggregate:array<string,mixed>,trust:string,catalogPublisherId:string}|null
      */
-    private function findInCatalog(string $packageId, string $range, string $declaringPublisher): ?array
-    {
+    private function findInCatalog(
+        string $packageId,
+        string $range,
+        string $declaringPublisher,
+        ?string $declaringCatalogPublisherId = null
+    ): ?array {
+        $requireVerified = filter_var(
+            $_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES') ?: 'false',
+            FILTER_VALIDATE_BOOLEAN
+        );
         $stmt = $this->mysql->prepare("
-            SELECT pv.pack_data, pc.trust_level
+            SELECT pv.pack_data, pc.trust_level, pc.publisher_id AS catalog_publisher_id
             FROM pack_versions pv
             JOIN pack_catalog pc ON pc.id = pv.catalog_id
             WHERE pv.format_version = 2
               AND pc.status = 'published'
               AND pc.visibility = 'public'
               AND pc.trust_level IN ('official', 'verified', 'community')
-            ORDER BY pv.created_at DESC, pv.id DESC
+            ORDER BY CASE pc.trust_level WHEN 'official' THEN 0 WHEN 'verified' THEN 1 ELSE 2 END ASC,
+                     pv.created_at DESC, pv.id DESC
             LIMIT " . self::MAX_CANDIDATES);
         $stmt->execute();
+
+        $trustedCandidates = [];
+        $communityCandidates = [];
+        $trustedPackageOwners = false;
+        $communityAccountsForNamespace = [];
 
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $aggregate = json_decode((string) $row['pack_data'], true);
@@ -278,11 +292,21 @@ class DependencyChainResolver
             }
             $trust = (string) $row['trust_level'];
             $publisher = (string) ($meta['publisherId'] ?? '');
+            $catalogPublisherId = (string) ($row['catalog_publisher_id'] ?? '');
+
+            if ($trust === 'official' || $trust === 'verified') {
+                $trustedPackageOwners = true;
+            } elseif ($declaringPublisher !== '' && $publisher === $declaringPublisher && $catalogPublisherId !== '') {
+                $communityAccountsForNamespace[$catalogPublisherId] = true;
+            }
 
             // THE provenance gate. Official listings are the deployment's own; otherwise the
             // dependency must live in the declaring package's namespace.
             $sameNamespace = $declaringPublisher !== '' && $publisher === $declaringPublisher;
             if ($trust !== 'official' && !$sameNamespace) {
+                continue;
+            }
+            if ($requireVerified && $trust !== 'official') {
                 continue;
             }
             if (!DependencyResolver::satisfies((string) ($meta['version'] ?? ''), $range)) {
@@ -293,8 +317,38 @@ class DependencyChainResolver
             if (ApplicationPackageV2Validator::validatePackage($aggregate) !== []) {
                 continue;
             }
-            return ['aggregate' => $aggregate, 'trust' => $trust];
+
+            $entry = ['aggregate' => $aggregate, 'trust' => $trust, 'catalogPublisherId' => $catalogPublisherId];
+            if ($trust === 'official' || $trust === 'verified') {
+                $trustedCandidates[] = $entry;
+            } else {
+                $communityCandidates[] = $entry;
+            }
         }
-        return null;
+
+        // Official / verified listings strictly take precedence over community listings.
+        if ($trustedCandidates !== []) {
+            return $trustedCandidates[0];
+        }
+        // Never allow a community listing to shadow a packageId owned by an official/verified listing.
+        if ($trustedPackageOwners) {
+            return null;
+        }
+        // For transitive catalog dependencies, pin community resolution to the SAME authenticated
+        // catalog uploader account so a third party cannot hijack the publisher's namespace.
+        if ($declaringCatalogPublisherId !== null && $declaringCatalogPublisherId !== '') {
+            foreach ($communityCandidates as $cand) {
+                if ($cand['catalogPublisherId'] === $declaringCatalogPublisherId) {
+                    return $cand;
+                }
+            }
+            return null;
+        }
+        // Refuse ambiguous community namespaces claimed by multiple distinct user accounts
+        // (prevents dependency confusion via a newer squatting upload claiming the same publisherId).
+        if (count($communityAccountsForNamespace) > 1) {
+            return null;
+        }
+        return $communityCandidates[0] ?? null;
     }
 }

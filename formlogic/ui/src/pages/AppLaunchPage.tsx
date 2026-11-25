@@ -4,7 +4,7 @@
 // and accent take over the whole page; the primary action is opening the app. It
 // renders from PUBLIC-SAFE launch metadata only (no form/field/report internals)
 // and works logged-out.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { readableForegroundColor } from '../lib/color';
 import type { LaunchConfig } from '../lib/domainLaunchApi';
 
@@ -92,6 +92,12 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
     setInstallPrompt(null);
   }
 
+  const handoffCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    handoffCleanupRef.current?.();
+    handoffCleanupRef.current = null;
+  }, []);
+
   // Hand off to the installed FormLogic Native Runtime via a deep link, so the user
   // never types a URL. `formlogic://open?url=…` is claimed by the runtime's intent
   // filter (Android) / scheme registration (desktop) — the guaranteed handoff that
@@ -99,6 +105,8 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
   // isn't installed — the tab stays visible and we reveal a "Get the app" fallback
   // (rather than silently dropping to the web app).
   function openInNativeRuntime() {
+    handoffCleanupRef.current?.();
+    handoffCleanupRef.current = null;
     setNativeMissing(false);
     const target = window.location.origin + openUrl;
     const deepLink = `formlogic://open?url=${encodeURIComponent(target)}`;
@@ -107,12 +115,18 @@ export function AppLaunchPage({ config }: { config: LaunchConfig }) {
       handedOff = true;
     };
     document.addEventListener('visibilitychange', markHandedOff, { once: true });
-    window.setTimeout(() => {
-      document.removeEventListener('visibilitychange', markHandedOff);
+    const timer = window.setTimeout(() => {
+      cleanup();
       if (!handedOff && document.visibilityState === 'visible') {
         setNativeMissing(true);
       }
     }, 1400);
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', markHandedOff);
+      if (handoffCleanupRef.current === cleanup) handoffCleanupRef.current = null;
+    };
+    handoffCleanupRef.current = cleanup;
     window.location.href = deepLink;
   }
 

@@ -11,10 +11,15 @@ let sodiumPromise: Promise<Sodium> | null = null;
 export function getSodium(): Promise<Sodium> {
   if (!sodiumPromise) {
     sodiumPromise = (async () => {
-      const mod = await import('libsodium-wrappers-sumo');
-      const sodium = (mod as unknown as { default?: Sodium }).default ?? (mod as unknown as Sodium);
-      await sodium.ready;
-      return sodium;
+      try {
+        const mod = await import('libsodium-wrappers-sumo');
+        const sodium = (mod as unknown as { default?: Sodium }).default ?? (mod as unknown as Sodium);
+        await sodium.ready;
+        return sodium;
+      } catch (e) {
+        sodiumPromise = null;
+        throw e;
+      }
     })();
   }
   return sodiumPromise;

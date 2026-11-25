@@ -77,6 +77,24 @@ const FOR_FORMLOGIC = [
     '- **Test the backend by reading it**, and by calling the page\'s functions with run_app_function: a preview shows the page, and a call to the backend may not answer there.',
     '- **Test the backend by reading it, and by publishing it**: FormLogic starts the backend as a version is installed and refuses one that does not start, saying which part to fix. The page itself is checked by opening the app at its address.',
   ],
+  [
+    `## Embedded SQLite Database Harness Tools
+Both Web App Containers and \`.ui\` apps can bundle real SQLite 3 (\`.db\`) databases via \`manifest.databases\`. You can inspect and modify them directly with dedicated tools:
+- \`sqlite_list_databases\` — list all bundled/declared SQLite databases, their tables, and row counts.
+- \`sqlite_schema\` — inspect full columns, primary keys, indexes, foreign keys, and CREATE DDL.
+- \`sqlite_query\` — run read-only \`SELECT\` / \`PRAGMA\` / \`EXPLAIN\` queries to check live data.
+- \`sqlite_execute\` — run DDL or DML (\`CREATE TABLE\`, \`ALTER TABLE\`, \`DROP TABLE\`, \`CREATE INDEX\`, \`INSERT\`, \`UPDATE\`, \`DELETE\`) directly against the bundled \`.db\` file (creating \`app.db\` and registering \`manifest.databases\` automatically if missing). Pass \`sync_seed_sql: true\` when you also want to mirror the updated schema and rows into the project's \`.sql\` seed file (e.g. \`backend/schema.sql\`).`,
+    `## Embedded SQLite Databases
+Both Web App Containers and \`.ui\` apps can bundle SQLite 3 databases via \`manifest.databases\` and seed SQL files (e.g. \`backend/schema.sql\`) via \`update_native_app_files\`. On FormLogic, inspect and update live database records with \`list_native_app_records\`, \`get_native_app_record\`, and \`change_native_app_record\`.`,
+  ],
+  [
+    '## Optional Sandboxed Backend & SQLite',
+    '### Optional container runtime & SQLite',
+  ],
+  [
+    'and manage its SQLite database with the `sqlite_*` tools.',
+    'and inspect or update live records with `list_native_app_records`, `get_native_app_record`, and `change_native_app_record`.',
+  ],
 ];
 
 class GuideError extends Error {}
@@ -107,8 +125,9 @@ export async function buildSoftnGuide({ repo = softnRepo(), root = ROOT } = {}) 
   const stdlib = /export const SOFTN_PY_STDLIB_IMPORTS[^=]*=\s*(\[[^\]]*\])/.exec(composer)?.[1];
   if (!stdlib) throw new GuideError('SOFTN_PY_STDLIB_IMPORTS was not found in @softn/core: the guide\'s one import cannot be given.');
   let source = readFileSync(join(repo, GUIDE_SOURCE), 'utf8');
-  source = source.replace(/import\s*\{\s*SOFTN_PY_STDLIB_IMPORTS\s*\}\s*from\s*'@softn\/core';/, `const SOFTN_PY_STDLIB_IMPORTS = ${stdlib};`);
-  if (/^\s*import\s[^\n]*from\s+'/m.test(source)) throw new GuideError(`${GUIDE_SOURCE} imports something this script does not know how to give it.`);
+  source = source.replace(/import\s*\{\s*SOFTN_PY_STDLIB_IMPORTS\s*\}\s*from\s*'@softn\/core(?:\/authoring)?';/, `const SOFTN_PY_STDLIB_IMPORTS = ${stdlib};`);
+  const sf = ts.createSourceFile(GUIDE_SOURCE, source, ts.ScriptTarget.ES2022, false);
+  if (sf.statements.some((stmt) => ts.isImportDeclaration(stmt))) throw new GuideError(`${GUIDE_SOURCE} imports something this script does not know how to give it.`);
   const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
   const guide = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
   if (typeof guide.buildGuide !== 'function') throw new GuideError(`${GUIDE_SOURCE} no longer exports buildGuide.`);

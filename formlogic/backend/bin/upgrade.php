@@ -452,6 +452,11 @@ foreach ($args as $arg) {
     formlogicUpgradeUsage(STDERR);
     exit(2);
 }
+if ($check && $rollbackId !== null) {
+    fwrite(STDERR, "--check and --rollback=<id> cannot be combined.\n\n");
+    formlogicUpgradeUsage(STDERR);
+    exit(2);
+}
 
 // Load environment + settings exactly the way the web app does (mirrors public/index.php).
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {

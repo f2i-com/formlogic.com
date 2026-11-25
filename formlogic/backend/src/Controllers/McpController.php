@@ -523,6 +523,34 @@ class McpController
                 $this->publicFormMcp !== null
                 && in_array($name, ['get_public_form', 'validate_form_answers', 'save_form_draft', 'get_form_draft', 'submit_public_form'], true)
             ) {
+                if (in_array($name, ['save_form_draft', 'submit_public_form'], true)) {
+                    if ($scopedApp !== null) {
+                        throw new McpDeniedException('App-scoped MCP tokens cannot submit or save drafts for standalone public forms.', 'scope_denied');
+                    }
+                    $this->requireScope($session, 'responses:write');
+                    $publicWrites = (int) ($connectorBudget['publicWrites'] ?? 0);
+                    if ($publicWrites >= 1) {
+                        throw new \RuntimeException('At most one mutating public-form tool call is allowed per MCP request.');
+                    }
+                    $connectorBudget['publicWrites'] = $publicWrites + 1;
+                    if ($this->rateLimiter !== null) {
+                        $ipHash = hash('sha256', $this->ip($request));
+                        $limit = $name === 'save_form_draft' ? 20 : 10;
+                        if ($this->rateLimiter->hit("mcp_pub:{$name}:{$ipHash}", 60) > $limit) {
+                            throw new \RuntimeException('Too many requests — please wait a minute before trying again.');
+                        }
+                    }
+                    if ($name === 'submit_public_form' && $this->planService !== null && $this->planService->isEnforced()) {
+                        $targetFormId = is_string($args['formId'] ?? null) ? trim($args['formId']) : '';
+                        if ($targetFormId !== '') {
+                            $f = $this->formService->getForm($targetFormId);
+                            $ownerId = is_array($f) && is_string($f['userId'] ?? null) ? $f['userId'] : '';
+                            if ($ownerId !== '' && !$this->planService->isCloudActive($ownerId)) {
+                                throw new McpDeniedException('This form is temporarily not accepting submissions.', 'cloud_lapsed');
+                            }
+                        }
+                    }
+                }
                 return $this->publicFormMcp->callTool($name, $args, $request, null, false);
             }
             // The MCP-TRANSPORT tools (relay/session concerns) stay in this controller; every
@@ -795,7 +823,11 @@ class McpController
             $out[] = $t;
         }
         if ($this->publicFormMcp !== null) {
+            $canWritePublicForms = $scopedApp === null && in_array('responses:write', $scopes, true);
             foreach (\FormLogic\Services\PublicFormMcpService::toolDefinitions(null, false) as $pt) {
+                if (!$canWritePublicForms && in_array($pt['name'], ['save_form_draft', 'submit_public_form'], true)) {
+                    continue;
+                }
                 $out[] = $pt;
             }
         }

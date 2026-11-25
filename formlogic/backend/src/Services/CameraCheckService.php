@@ -544,7 +544,9 @@ final class CameraCheckService
     {
         $result = $this->native->request($plugin['appId'], [
             'method' => 'POST', 'path' => $path, 'query' => (object) [], 'body' => $body,
-            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1', 'photos' => false,
+            'headers' => (object) ['authorization' => '', 'idempotency-key' => ''], 'client_ip' => '127.0.0.1',
+            'rate_key' => 'camera:' . (string) $plugin['appId'] . ':' . $userId,
+            'photos' => false,
         ], ['formlogic' => ['appId' => $plugin['appId'], 'userId' => $userId, 'roleId' => 'member']]);
         if (!is_int($result['status'] ?? null) || $result['status'] < 200 || $result['status'] > 299 || !is_array($result['body'] ?? null)) {
             $said = is_array($result['body'] ?? null) && is_string($result['body']['error'] ?? null) ? ': ' . mb_substr($result['body']['error'], 0, 200) : '';
@@ -630,6 +632,12 @@ final class CameraCheckService
             $bytes = base64_decode(substr($frame, 23), true);
             if ($bytes === false || strlen($bytes) > self::MAX_FRAME_BYTES || !str_starts_with($bytes, "\xFF\xD8\xFF")) {
                 throw new \InvalidArgumentException('A picture is too large or not a JPEG.');
+            }
+            $info = @getimagesizefromstring($bytes);
+            if ($info === false || ($info[2] ?? 0) !== IMAGETYPE_JPEG
+                || ($info[0] ?? 0) < 1 || ($info[1] ?? 0) < 1
+                || ($info[0] ?? 0) > 2048 || ($info[1] ?? 0) > 2048) {
+                throw new \InvalidArgumentException('A picture is not a valid JPEG within the allowed dimensions.');
             }
             $out[] = $bytes;
         }

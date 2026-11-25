@@ -72,7 +72,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   // Bumped by Try again, and by the connection coming back after a failed opening: asks again.
   const [attempt, setAttempt] = useState(0);
   // `updates`: the server shows this person a newer version as it is published (the app's owner).
-  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; updates?: boolean; updatesEvery?: number; error?: string; retry?: boolean; pass?: { verifyPath: string | null; action: string } } | null>(null);
+  const [result, setResult] = useState<{ slug: string; userId?: string; generation: number; name?: string; project?: NativeRuntimeProject; engine?: { id: string; revision: string }; isOwner?: boolean; updates?: boolean; updatesEvery?: number; error?: string; retry?: boolean; pass?: { verifyPath: string | null; action: string } } | null>(null);
   useEffect(() => {
     let cancelled = false;
     const stillCurrent = () => !cancelled && isSessionGenerationCurrent(generation);
@@ -103,7 +103,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       // What asking again may cure: no answer, the app updated while it opened, a busy server.
       const status = response.status ?? 0;
       const retry = !!response.error && (!!response.transportFailure || status === 408 || status === 409 || status === 429 || status >= 500);
-      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, updates: response.data?.updates === 'live', updatesEvery: response.data?.updatesEvery, error, retry, pass });
+      setResult({ slug, userId, generation, name: response.data?.name, project: error ? undefined : project, engine: response.data?.engine, isOwner: response.data?.isOwner === true, updates: response.data?.updates === 'live', updatesEvery: response.data?.updatesEvery, error, retry, pass });
     }).catch(() => {
       if (stillCurrent()) setResult({ slug, userId, generation, error: 'This app could not be opened. Check your connection and try again.', retry: true });
     });
@@ -120,8 +120,9 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const [answered, setAnswered] = useState<{ appId: string; answer: 'allow' | 'deny' } | null>(null);
   const answer = filesAppId ? (answered?.appId === filesAppId ? answered.answer : filesAnswer(filesAppId)) : null;
   const filesGranted = project?.files === 'allow' || (project?.files === 'ask' && answer === 'allow');
+  const isOwner = current?.isOwner === true;
   // Storage identity comes only from the admitted runtime GET, never app files or iframe input.
-  const native = useMemo(() => project ? { assets: project.assets, media: project.media?.sha256, origins: project.origins, access: project.access, storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null), visitor: !plugin && !!project.formlogic?.visitors, wallet: !plugin && !!project.formlogic?.payments, containerBackend: plugin ? undefined : project.containerBackend } : undefined, [project, filesGranted, look, plugin]);
+  const native = useMemo(() => project ? { assets: project.assets, media: project.media?.sha256, origins: project.origins, access: project.access, allowCredentialedUploads: Boolean(userId && (project.access === 'members' || isOwner)), storageScope: project.storageScope, files: filesGranted, look: plugin ? undefined : (look ?? null), visitor: !plugin && !!project.formlogic?.visitors, wallet: !plugin && !!project.formlogic?.payments, containerBackend: plugin ? undefined : project.containerBackend } : undefined, [project, userId, isOwner, filesGranted, look, plugin]);
   const answerFiles = (choice: 'allow' | 'deny') => {
     if (!filesAppId) return;
     rememberFilesAnswer(filesAppId, choice);
@@ -275,6 +276,18 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const initialPlaceSyncedRef = useRef<boolean>(false);
   const navSeqRef = useRef<number>(0);
   const [navigateTo, setNavigateTo] = useState<{ place: string; seq: number } | null>(null);
+  const initialCanonicalRef = useRef<string | null>(null);
+  useEffect(() => {
+    const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    initialCanonicalRef.current = canonical?.getAttribute('href') ?? null;
+    return () => {
+      const currentCanonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+      if (currentCanonical && initialCanonicalRef.current !== null) {
+        currentCanonical.setAttribute('href', initialCanonicalRef.current);
+      }
+    };
+  }, [slug, onDomain]);
+
   // An app that changes its place many times a second (a slider that writes it) is followed a few
   // times a second, to the last place it said: browsers refuse an address rewritten without end.
   const routing = useRef<{ timer: number; path: string | null }>({ timer: 0, path: null });
@@ -366,6 +379,14 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     walletWaiting.current = [];
     for (const resolve of waiting) resolve({ closed: true, balanceCents });
   }, []);
+  useEffect(() => {
+    return () => {
+      setWalletOpen(false);
+      const waiting = walletWaiting.current;
+      walletWaiting.current = [];
+      for (const resolve of waiting) resolve({ closed: true, balanceCents: 0 });
+    };
+  }, [slug, userId, generation]);
   // What else this page does for the app when it asks (HostedAppFrame's `host`), each only where
   // its owner chose it (the admitted runtime GET's `listen` and `offers`) and never for a plugin's
   // page: listening for it, where this page opens the microphone, shows that it has and gives the
@@ -408,7 +429,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     // A JavaScript app: the server's own pages in a frame, admitted by everything above as any app
     // is. Who is using it is said only to an app its members open; anyone's app is told nobody, and
     // what it keeps in the browser is kept for the app alone, as `storageScope` has it.
-    ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} look={look} onProblem={onSiteProblem} onConsole={onConsole} onLost={siteLost} initialRoute={startAt} navigateTo={fullScreen ? navigateTo : undefined} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
+    ? <SiteAppFrame slug={slug} appId={project.storageScope?.appId ?? slug} name={name ?? ''} version={project.version} site={project.site} backendOrigins={project.origins} userId={project.access === 'members' ? userId ?? null : null} allowCredentialedUploads={Boolean(userId && (project.access === 'members' || current?.isOwner))} look={look} onProblem={onSiteProblem} onConsole={onConsole} onLost={siteLost} initialRoute={startAt} navigateTo={fullScreen ? navigateTo : undefined} onRoute={fullScreen ? followRoute : undefined} className={fullScreen ? undefined : 'min-h-[420px] rounded-2xl border border-slate-200 dark:border-slate-700'} />
     : <HostedAppFrame initialPlace={startAt} navigateTo={fullScreen && !plugin ? navigateTo : undefined} onPlace={fullScreen && !plugin ? followRoute : undefined} onProblem={onSiteProblem} onConsole={onConsole} slug={slug} client={project.client} version={project.version} native={native} engine={current?.engine} bare={fullScreen} domain={ownDomain} plugin={plugin} onWallet={native?.wallet ? onWallet : undefined} host={plugin ? undefined : host} update={update} onUpdate={live ? onUpdate : undefined} />}
     {walletOpen && <WalletSheet slug={slug} appName={name || 'this app'} visitor={!!native?.visitor} onClose={closeWallet} />}
     {/* Listening: FormLogic's own question the first time, then its own sign for as long as the microphone is asked for or open. */}

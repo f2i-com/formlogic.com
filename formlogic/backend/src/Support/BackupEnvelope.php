@@ -305,7 +305,11 @@ final class BackupEnvelope
                 }
             }
             if ($kind === 'server' && isset($with['server']) && DataEncryption::isSealed((string) ($recipient['wrapped'] ?? ''))) {
-                return $with['server']->open((string) $recipient['wrapped'], self::serverContext($id));
+                try {
+                    return $with['server']->open((string) $recipient['wrapped'], self::serverContext($id));
+                } catch (DataEncryptionException) {
+                    // Key rotation or another server's key — continue trying remaining recipients.
+                }
             }
         }
         throw new DataEncryptionException('That does not open this backup');

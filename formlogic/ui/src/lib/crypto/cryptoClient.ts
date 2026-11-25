@@ -10,6 +10,7 @@
 // protocol against an in-process adapter (see createInlineWorker below).
 
 import type { InnerPayload, ResponseEnvelope } from './envelope';
+import { currentSessionGeneration } from '../sessionGeneration';
 import type {
   CryptoOp,
   CryptoWorkerRequest,
@@ -27,7 +28,11 @@ import type {
 export interface CryptoWorkerLike {
   postMessage(message: CryptoWorkerRequest): void;
   addEventListener(type: 'message', listener: (event: MessageEvent<CryptoWorkerResponse>) => void): void;
+  addEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
+  addEventListener(type: 'messageerror', listener: (event: MessageEvent) => void): void;
   removeEventListener(type: 'message', listener: (event: MessageEvent<CryptoWorkerResponse>) => void): void;
+  removeEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
+  removeEventListener(type: 'messageerror', listener: (event: MessageEvent) => void): void;
   terminate(): void;
 }
 
@@ -50,12 +55,16 @@ export function createInlineWorker(): CryptoWorkerLike {
         for (const l of listeners) l({ data: response } as MessageEvent<CryptoWorkerResponse>);
       });
     },
-    addEventListener(_type, listener) {
-      listeners.add(listener);
-    },
-    removeEventListener(_type, listener) {
-      listeners.delete(listener);
-    },
+    addEventListener: ((type: string, listener: unknown) => {
+      if (type === 'message' && typeof listener === 'function') {
+        listeners.add(listener as (e: MessageEvent<CryptoWorkerResponse>) => void);
+      }
+    }) as CryptoWorkerLike['addEventListener'],
+    removeEventListener: ((type: string, listener: unknown) => {
+      if (type === 'message' && typeof listener === 'function') {
+        listeners.delete(listener as (e: MessageEvent<CryptoWorkerResponse>) => void);
+      }
+    }) as CryptoWorkerLike['removeEventListener'],
     terminate() {
       terminated = true;
       listeners.clear();
@@ -83,9 +92,12 @@ export class CryptoClient {
 
   private factory: CryptoWorkerFactory;
   private worker: CryptoWorkerLike | null = null;
+  private workerSessionGen: number | null = null;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private listener: ((event: MessageEvent<CryptoWorkerResponse>) => void) | null = null;
+  private errorListener: ((event: ErrorEvent) => void) | null = null;
+  private messageErrorListener: ((event: MessageEvent) => void) | null = null;
 
   constructor(factory: CryptoWorkerFactory = defaultFactory) {
     this.factory = factory;
@@ -94,6 +106,31 @@ export class CryptoClient {
   /** Whether a live worker exists (false before first use and after lock/terminate). */
   get isRunning(): boolean {
     return this.worker !== null;
+  }
+
+  private detachAndFailWorker(worker: CryptoWorkerLike, code: string, message: string): void {
+    if (this.worker !== worker) return;
+    const listener = this.listener;
+    const errorListener = this.errorListener;
+    const messageErrorListener = this.messageErrorListener;
+    const oldPending = new Map(this.pending);
+    this.worker = null;
+    this.workerSessionGen = null;
+    this.listener = null;
+    this.errorListener = null;
+    this.messageErrorListener = null;
+    this.pending.clear();
+    if (listener) worker.removeEventListener('message', listener);
+    if (errorListener) worker.removeEventListener('error', errorListener);
+    if (messageErrorListener) worker.removeEventListener('messageerror', messageErrorListener);
+    try {
+      worker.terminate();
+    } catch {
+      // Ignore termination errors on an already-failed worker.
+    }
+    for (const slot of oldPending.values()) {
+      slot.reject(new CryptoClientError(code, message));
+    }
   }
 
   private ensureWorker(): CryptoWorkerLike {
@@ -107,8 +144,18 @@ export class CryptoClient {
         if (response.ok) slot.resolve(response.result);
         else slot.reject(new CryptoClientError(response.error?.code ?? 'crypto_error', response.error?.message ?? 'Crypto operation failed'));
       };
+      this.errorListener = (event) => {
+        const msg = event?.message ? `Crypto worker failed: ${event.message}` : 'Crypto worker failed to start or crashed';
+        this.detachAndFailWorker(worker, 'worker_error', msg);
+      };
+      this.messageErrorListener = () => {
+        this.detachAndFailWorker(worker, 'worker_message_error', 'Crypto worker message could not be deserialized');
+      };
       worker.addEventListener('message', this.listener);
+      worker.addEventListener('error', this.errorListener);
+      worker.addEventListener('messageerror', this.messageErrorListener);
       this.worker = worker;
+      this.workerSessionGen = currentSessionGeneration();
     }
     return this.worker;
   }
@@ -134,27 +181,53 @@ export class CryptoClient {
   async lockAndTerminate(): Promise<void> {
     const worker = this.worker;
     if (!worker) return;
+    const listener = this.listener;
+    const errorListener = this.errorListener;
+    const messageErrorListener = this.messageErrorListener;
+    const oldPending = new Map(this.pending);
+    // Detach immediately so any subsequent unlock/call spawns a fresh isolated worker
+    // and can never collide with or be killed by this dying worker's teardown.
+    this.worker = null;
+    this.workerSessionGen = null;
+    this.listener = null;
+    this.errorListener = null;
+    this.messageErrorListener = null;
+    this.pending.clear();
+    if (errorListener) worker.removeEventListener('error', errorListener);
+    if (messageErrorListener) worker.removeEventListener('messageerror', messageErrorListener);
+    for (const slot of oldPending.values()) {
+      slot.reject(new CryptoClientError('vault_locked', 'The vault was locked'));
+    }
+    const lockId = ++this.nextId;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     try {
       await Promise.race([
-        this.call('lock').then(
-          () => undefined,
-          () => undefined, // lock must succeed even if the op fails — terminate regardless
-        ),
         new Promise<void>((resolve) => {
-          setTimeout(resolve, CryptoClient.LOCK_OP_TIMEOUT_MS);
+          const onLockReply = (event: MessageEvent<{ id?: number }>) => {
+            if (event.data?.id === lockId) {
+              worker.removeEventListener('message', onLockReply);
+              resolve();
+            }
+          };
+          worker.addEventListener('message', onLockReply);
+          try {
+            worker.postMessage({ id: lockId, op: 'lock', payload: {} });
+          } catch {
+            worker.removeEventListener('message', onLockReply);
+            resolve();
+          }
+        }),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, CryptoClient.LOCK_OP_TIMEOUT_MS);
         }),
       ]);
     } catch {
       // Terminate regardless.
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+      if (listener) worker.removeEventListener('message', listener);
+      worker.terminate();
     }
-    if (this.listener) worker.removeEventListener('message', this.listener);
-    worker.terminate();
-    this.worker = null;
-    this.listener = null;
-    for (const slot of this.pending.values()) {
-      slot.reject(new CryptoClientError('vault_locked', 'The vault was locked'));
-    }
-    this.pending.clear();
   }
 
   /** Hard terminate without a lock round-trip (logout / tab-lock propagation path). */
@@ -162,13 +235,32 @@ export class CryptoClient {
     const worker = this.worker;
     if (!worker) return;
     if (this.listener) worker.removeEventListener('message', this.listener);
+    if (this.errorListener) worker.removeEventListener('error', this.errorListener);
+    if (this.messageErrorListener) worker.removeEventListener('messageerror', this.messageErrorListener);
     worker.terminate();
     this.worker = null;
+    this.workerSessionGen = null;
     this.listener = null;
+    this.errorListener = null;
+    this.messageErrorListener = null;
     for (const slot of this.pending.values()) {
       slot.reject(new CryptoClientError('vault_locked', 'The vault was locked'));
     }
     this.pending.clear();
+  }
+
+  /** Terminate only if the currently running worker was spawned in `sessionGen` (never kill a newer session's worker). */
+  terminateForSession(sessionGen: number): void {
+    if (this.worker !== null && this.workerSessionGen === sessionGen) {
+      this.terminate();
+    }
+  }
+
+  /** Gracefully lock and terminate only if the current worker belongs to `sessionGen`. */
+  async lockAndTerminateForSession(sessionGen: number): Promise<void> {
+    if (this.worker !== null && this.workerSessionGen === sessionGen) {
+      await this.lockAndTerminate();
+    }
   }
 
   // --- Vault ops ---

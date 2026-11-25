@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronRight, Copy, Terminal, Trash2 } from 'lucide-react';
 import type { SiteProblem, SoftnConsoleEntry } from '../studio/SiteAppFrame';
 import { cn, copyToClipboard } from '../../lib/utils';
@@ -22,11 +22,30 @@ export function SoftnDebugConsole({
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'errors' | 'console'>('errors');
-  const [expanded, setExpanded] = useState<Set<number>>(new Set([0]));
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [autoFirstCollapsed, setAutoFirstCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+  const prevErrorCountRef = useRef(0);
 
   const errorCount = problems.length;
-  const isExpanded = open || errorCount > 0;
+
+  useEffect(() => {
+    if (errorCount > prevErrorCountRef.current) {
+      setOpen(true);
+    }
+    if (errorCount === 0 && prevErrorCountRef.current > 0) {
+      setExpanded(new Set());
+      setAutoFirstCollapsed(false);
+    }
+    prevErrorCountRef.current = errorCount;
+  }, [errorCount]);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+  }, []);
+
+  const isExpanded = open;
 
   const copyAll = async () => {
     const lines: string[] = [];
@@ -48,7 +67,8 @@ export function SoftnDebugConsole({
     }
     await copyToClipboard(lines.join('\n').trim() || 'No errors or console output recorded.');
     setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopied(false), 1600);
   };
 
   return (
@@ -56,6 +76,7 @@ export function SoftnDebugConsole({
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
         <button
           type="button"
+          aria-expanded={isExpanded}
           onClick={() => setOpen(v => !v)}
           className="inline-flex items-center gap-2 text-xs font-semibold text-slate-200 hover:text-white"
         >
@@ -82,9 +103,11 @@ export function SoftnDebugConsole({
         <div className="flex items-center gap-1.5">
           {isExpanded && (
             <>
-              <div className="inline-flex rounded-lg bg-slate-900 p-0.5 text-[11px]">
+              <div role="tablist" aria-label="Debug console views" className="inline-flex rounded-lg bg-slate-900 p-0.5 text-[11px]">
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={tab === 'errors'}
                   onClick={() => setTab('errors')}
                   className={cn('rounded-md px-2 py-0.5 font-medium', tab === 'errors' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200')}
                 >
@@ -92,6 +115,8 @@ export function SoftnDebugConsole({
                 </button>
                 <button
                   type="button"
+                  role="tab"
+                  aria-selected={tab === 'console'}
                   onClick={() => setTab('console')}
                   className={cn('rounded-md px-2 py-0.5 font-medium', tab === 'console' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200')}
                 >
@@ -134,11 +159,12 @@ export function SoftnDebugConsole({
               <div className="space-y-2">
                 {problems.map((problem, idx) => {
                   const loc = formatLocation(problem);
+                  const entryKey = `${problem.kind}:${loc ?? ''}:${problem.text}:${idx}`;
                   const hasDetails = Boolean(problem.snippet || problem.stack);
-                  const isOpen = expanded.has(idx);
+                  const isOpen = expanded.has(entryKey) || (idx === 0 && !autoFirstCollapsed);
                   return (
                     <div
-                      key={`${problem.kind}:${loc ?? ''}:${problem.text}:${idx}`}
+                      key={entryKey}
                       className={cn(
                         'rounded-lg border p-2.5',
                         problem.kind === 'error'
@@ -173,11 +199,24 @@ export function SoftnDebugConsole({
                         {hasDetails && (
                           <button
                             type="button"
-                            onClick={() => setExpanded(prev => {
-                              const next = new Set(prev);
-                              if (next.has(idx)) next.delete(idx); else next.add(idx);
-                              return next;
-                            })}
+                            onClick={() => {
+                              if (isOpen) {
+                                if (idx === 0) setAutoFirstCollapsed(true);
+                                setExpanded(prev => {
+                                  if (!prev.has(entryKey)) return prev;
+                                  const next = new Set(prev);
+                                  next.delete(entryKey);
+                                  return next;
+                                });
+                              } else {
+                                if (idx === 0) setAutoFirstCollapsed(false);
+                                setExpanded(prev => {
+                                  const next = new Set(prev);
+                                  next.add(entryKey);
+                                  return next;
+                                });
+                              }
+                            }}
                             className="shrink-0 text-[11px] text-sky-300 hover:underline"
                           >
                             {isOpen ? 'Hide frame' : 'Show frame'}

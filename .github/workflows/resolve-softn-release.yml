@@ -24,6 +24,9 @@ on:
         description: The frozen Softn release record (JSON) every job of the calling run installs
         value: ${{ jobs.resolve.outputs.frozen }}
 
+permissions:
+  contents: read
+
 jobs:
   resolve:
     name: Resolve and freeze
@@ -32,6 +35,8 @@ jobs:
       frozen: ${{ steps.resolve.outputs.frozen }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -45,5 +50,6 @@ jobs:
           SOFTN_RELEASE: ${{ inputs.softn-release }}
         run: |
           node scripts/fetch-softn-release.mjs --resolve-only --frozen softn-frozen.json
-          { echo 'frozen<<FROZEN_RECORD'; cat softn-frozen.json; echo 'FROZEN_RECORD'; } >> "$GITHUB_OUTPUT"
+          DELIM="FROZEN_$(node -e 'console.log(require("node:crypto").randomBytes(12).toString("hex"))')"
+          { echo "frozen<<$DELIM"; cat softn-frozen.json; echo ""; echo "$DELIM"; } >> "$GITHUB_OUTPUT"
           node -e "const f=require('./softn-frozen.json'); console.log('Softn release frozen for this run: '+f.tag+' @ '+f.tagCommit.slice(0,12)+' - '+f.assetName+' sha256 '+f.archiveSha256)" >> "$GITHUB_STEP_SUMMARY"

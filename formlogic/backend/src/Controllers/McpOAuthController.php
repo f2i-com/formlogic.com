@@ -466,7 +466,12 @@ class McpOAuthController
         $scopes = is_array($scopes) ? array_values(array_filter($scopes, static fn ($s) => is_string($s) && $s !== '')) : null;
         $appId = is_string($p['app_id'] ?? null) && trim($p['app_id']) !== '' ? trim($p['app_id']) : null;
 
-        $started = $this->deviceAuth->startLogin($clientName, $scopes, $appId, McpOAuthService::publicOrigin($request));
+        try {
+            $frontend = $this->trustedFrontendOrigin($request);
+        } catch (\Throwable) {
+            $frontend = McpOAuthService::publicOrigin($request);
+        }
+        $started = $this->deviceAuth->startLogin($clientName, $scopes, $appId, $frontend);
         return $this->jsonResponse($response, [
             'device_code' => $started['deviceCode'],
             'user_code' => $started['userCode'],
@@ -476,6 +481,35 @@ class McpOAuthController
             'interval' => $started['interval'],
             'scopes' => $started['scopes'],
         ])->withHeader('Cache-Control', 'no-store');
+    }
+
+    /** GET /oauth/device — redirect API-host device verification URLs to the trusted SPA origin on split deployments. */
+    public function devicePage(Request $request, Response $response): Response
+    {
+        try {
+            $frontend = $this->trustedFrontendOrigin($request);
+        } catch (\Throwable) {
+            return $this->oauthError(
+                $response,
+                'server_error',
+                'The trusted FormLogic consent-page origin is not configured',
+                503,
+            );
+        }
+        if (hash_equals($frontend, McpOAuthService::publicOrigin($request))) {
+            return $this->oauthError(
+                $response,
+                'server_error',
+                'The OAuth consent SPA must serve /oauth/device on this origin',
+                503,
+            );
+        }
+        $query = $request->getUri()->getQuery();
+        $location = $frontend . '/oauth/device' . ($query !== '' && strlen($query) <= 1024 && preg_match('/[\x00-\x1F\x7F]/', $query) !== 1 ? '?' . $query : '');
+        return $response
+            ->withStatus(302)
+            ->withHeader('Location', $location)
+            ->withHeader('Cache-Control', 'no-store');
     }
 
     /** GET /api/oauth/device/info?code=XXXX-XXXX — inspect a pending device code for the approval SPA. */

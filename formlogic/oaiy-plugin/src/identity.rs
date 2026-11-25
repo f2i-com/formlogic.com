@@ -6,13 +6,16 @@
 //! out and shown exactly as FormLogic does (`DataCanonicalJson::fingerprint`, `DataNodesPanel`).
 
 use std::path::Path;
+use std::sync::Mutex;
 
 use base64::Engine as _;
 use ed25519_dalek::{Signer as _, SigningKey};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 const FILE: &str = "node.key";
 const B64: base64::engine::general_purpose::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+static NODE_KEY_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct NodeIdentity {
     signing: SigningKey,
@@ -36,21 +39,35 @@ impl NodeIdentity {
     }
 
     /// This computer's identity, made on first use. A file that can't be read is an error, not a
-    /// new key: a new key takes the node back to needing the owner's approval.
+    /// new key: a new key takes the node back to needing the owner's approval. Serialised and
+    /// created non-destructively so concurrent startup/poll threads never overwrite `node.key`.
     pub fn load_or_create(dir: &Path) -> Result<Self, String> {
+        let _guard = NODE_KEY_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
         let path = dir.join(FILE);
-        match std::fs::read_to_string(&path) {
-            Ok(text) => {
-                let bytes = B64.decode(text.trim()).ok().and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
-                return bytes.map(Self::from_secret_bytes).ok_or_else(|| "This computer's node key is damaged. Forget the link and connect again.".to_string());
+        let read_existing = || -> Result<Option<Self>, String> {
+            match std::fs::read_to_string(&path) {
+                Ok(text) => {
+                    let bytes = B64.decode(text.trim()).ok().and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok());
+                    bytes
+                        .map(|b| Some(Self::from_secret_bytes(b)))
+                        .ok_or_else(|| "This computer's node key is damaged. Forget the link and connect again.".to_string())
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(format!("Could not read this computer's node key: {e}")),
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("Could not read this computer's node key: {e}")),
+        };
+        if let Some(existing) = read_existing()? {
+            return Ok(existing);
         }
-        let mut secret = [0u8; 32];
-        getrandom::fill(&mut secret).map_err(|e| format!("Could not make a node key: {e}"))?;
-        crate::secret_file::write(&path, B64.encode(secret)).map_err(|e| format!("Could not save this computer's node key: {e}"))?;
-        Ok(Self::from_secret_bytes(secret))
+        let mut secret = Zeroizing::new([0u8; 32]);
+        getrandom::fill(&mut *secret).map_err(|e| format!("Could not make a node key: {e}"))?;
+        let encoded = Zeroizing::new(B64.encode(*secret));
+        let created = crate::secret_file::write_if_absent(&path, encoded.as_bytes())
+            .map_err(|e| format!("Could not save this computer's node key: {e}"))?;
+        if !created {
+            return read_existing()?.ok_or_else(|| "Could not read this computer's node key after creation.".to_string());
+        }
+        Ok(Self::from_secret_bytes(*secret))
     }
 }
 

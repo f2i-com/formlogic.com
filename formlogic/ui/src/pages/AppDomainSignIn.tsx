@@ -42,12 +42,25 @@ export function AppDomainSignIn() {
   const state = searchParams.get('state') ?? '';
   const page = searchParams.get('page') === 'signup' ? '/signup' : '/login';
   const host = hostOf(origin);
+  const [activeOrigin, setActiveOrigin] = useState(origin);
   const [config, setConfig] = useState<LaunchConfig | null | undefined>(undefined);
   const [noAnswer, setNoAnswer] = useState(false);
   const [askedFor, setAskedFor] = useState(0);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
-  const [armed, setArmed] = useState(false);
+  const [armedKey, setArmedKey] = useState<string | null>(null);
+
+  if (activeOrigin !== origin) {
+    setActiveOrigin(origin);
+    setConfig(undefined);
+    setNoAnswer(false);
+    setError('');
+    setWorking(false);
+    setArmedKey(null);
+  }
+
+  const currentArmKey = config ? `${origin}:${config.app.slug}` : null;
+  const armed = currentArmKey !== null && armedKey === currentArmKey;
 
   useEffect(() => {
     if (user) return;
@@ -69,10 +82,10 @@ export function AppDomainSignIn() {
   // A site can swap this page in under the second click of a double-click. Nobody reads and
   // decides in a second.
   useEffect(() => {
-    if (!config) return;
-    const timer = window.setTimeout(() => setArmed(true), 1000);
+    if (!currentArmKey) return;
+    const timer = window.setTimeout(() => setArmedKey(currentArmKey), 1000);
     return () => window.clearTimeout(timer);
-  }, [config]);
+  }, [currentArmKey]);
 
   if (!user) return null;
   if (host && config === undefined && noAnswer) {

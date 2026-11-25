@@ -94,9 +94,13 @@ class SigningService
         return rtrim(strtr(base64_encode($bin), '+/', '-_'), '=');
     }
 
-    private function b64urlDecode(string $s): string
+    private function b64urlDecode(string $s): ?string
     {
-        return (string) base64_decode(strtr($s, '-_', '+/'));
+        if ($s === '' || preg_match('/^[A-Za-z0-9_-]+={0,2}$/', $s) !== 1) {
+            return null;
+        }
+        $decoded = base64_decode(strtr($s, '-_', '+/'), true);
+        return $decoded === false ? null : $decoded;
     }
 
     /**
@@ -135,7 +139,7 @@ class SigningService
     /** Verify a signed envelope produced by sign(). */
     public function verify(array $signed): bool
     {
-        if (!isset($signed['payload'], $signed['signature'], $signed['alg']) || !is_array($signed['payload'])) {
+        if (!isset($signed['payload'], $signed['signature'], $signed['alg']) || !is_array($signed['payload']) || !is_string($signed['signature'])) {
             return false;
         }
         $kp = $this->keypair();
@@ -143,11 +147,22 @@ class SigningService
             return false;
         }
         $msg = $this->canonical($signed['payload']);
-        $sig = $this->b64urlDecode((string) $signed['signature']);
-        if ($kp['alg'] === 'Ed25519') {
-            return sodium_crypto_sign_verify_detached($sig, $msg, base64_decode($kp['public']));
+        $sig = $this->b64urlDecode($signed['signature']);
+        if ($sig === null) {
+            return false;
         }
-        return hash_equals(hash_hmac('sha256', $msg, base64_decode($kp['secret']), true), $sig);
+        if ($kp['alg'] === 'Ed25519') {
+            $pub = base64_decode((string) ($kp['public'] ?? ''), true);
+            if ($pub === false || strlen($sig) !== SODIUM_CRYPTO_SIGN_BYTES || strlen($pub) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES) {
+                return false;
+            }
+            return sodium_crypto_sign_verify_detached($sig, $msg, $pub);
+        }
+        $secret = base64_decode((string) ($kp['secret'] ?? ''), true);
+        if ($secret === false || $secret === '') {
+            return false;
+        }
+        return hash_equals(hash_hmac('sha256', $msg, $secret, true), $sig);
     }
 
     /** Public verification material (safe to expose). Ed25519 public key, or null for HMAC. */

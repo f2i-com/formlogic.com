@@ -24,9 +24,9 @@ function authHeaders(): Record<string, string> {
  * so the caller falls back to FormLogic Desktop. Never throws.
  */
 export async function listOaiySources(): Promise<DesktopAiSource[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const resp = await fetch(`${getOaiyBaseUrl()}/api/ai/sources`, {
       method: 'GET',
       credentials: 'omit',
@@ -34,12 +34,13 @@ export async function listOaiySources(): Promise<DesktopAiSource[] | null> {
       signal: controller.signal,
       headers: { Accept: 'application/json', ...authHeaders() },
     });
-    clearTimeout(timer);
     if (!resp.ok) return null;
     const body = (await resp.json().catch(() => null)) as { sources?: DesktopAiSource[] } | null;
     return Array.isArray(body?.sources) ? body!.sources : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -64,6 +65,7 @@ export async function oaiyAiChat(
     else opts.signal.addEventListener('abort', onAbort, { once: true });
   }
   let resp: Response;
+  let text: string;
   try {
     resp = await fetch(
       `${getOaiyBaseUrl()}/api/ai/providers/${encodeURIComponent(providerId)}/v1/chat/completions`,
@@ -76,6 +78,7 @@ export async function oaiyAiChat(
         body: JSON.stringify(body),
       },
     );
+    text = await resp.text();
   } catch {
     return {
       ok: false,
@@ -87,7 +90,6 @@ export async function oaiyAiChat(
     opts?.signal?.removeEventListener('abort', onAbort);
   }
 
-  const text = await resp.text().catch(() => '');
   const json = text ? safeParse(text) : undefined;
   if (resp.ok) {
     return { ok: true, data: (json ?? {}) as Record<string, unknown> };
@@ -131,6 +133,7 @@ export async function oaiyEngineImage(
     else opts.signal.addEventListener('abort', onAbort, { once: true });
   }
   let resp: Response;
+  let text: string;
   try {
     resp = await fetch(`${getOaiyBaseUrl()}/api/ai/engine/gateway/v1/images/generations`, {
       method: 'POST',
@@ -140,6 +143,7 @@ export async function oaiyEngineImage(
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
     });
+    text = await resp.text();
   } catch {
     return {
       ok: false,
@@ -151,7 +155,6 @@ export async function oaiyEngineImage(
     opts?.signal?.removeEventListener('abort', onAbort);
   }
 
-  const text = await resp.text().catch(() => '');
   const json = text ? safeParse(text) : undefined;
   if (resp.ok) {
     return { ok: true, data: (json ?? {}) as Record<string, unknown> };

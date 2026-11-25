@@ -103,7 +103,18 @@ class PublicFormDraftService
                 'h' => $hash,
                 'fid' => $formId,
             ]);
-            if ($upd->rowCount() > 0) {
+            $matched = $upd->rowCount() > 0;
+            if (!$matched) {
+                // Under MySQL changed-rows rowCount(), saving identical data within the same second
+                // updates 0 changed rows even though the active draft exists.
+                $check = $this->db()->prepare("
+                    SELECT 1 FROM public_form_drafts
+                    WHERE token_hash = :h AND form_id = :fid AND expires_at > NOW()
+                ");
+                $check->execute(['h' => $hash, 'fid' => $formId]);
+                $matched = $check->fetchColumn() !== false;
+            }
+            if ($matched) {
                 return [
                     'draftToken' => $existingToken,
                     'formId' => $formId,

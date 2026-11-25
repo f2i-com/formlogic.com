@@ -154,8 +154,8 @@ class DocumentConverter
         $images = [];
         $outputPattern = $this->randomTempBase('pdf_') . '_%d.png';
 
-        // Check if ImageMagick is available
-        $hasImageMagick = $this->commandExists('convert');
+        // Check available converters. Never invoke `convert` on Windows (resolves to System32\convert.exe).
+        $hasImageMagick = PHP_OS_FAMILY !== 'Windows' && $this->commandExists('convert');
         $hasGhostscript = $this->commandExists('gs');
         $hasPdftoppm = $this->commandExists('pdftoppm');
 
@@ -163,8 +163,9 @@ class DocumentConverter
             // Use pdftoppm (from poppler-utils) - most reliable
             $outputBase = $this->randomTempBase('pdf_');
             $command = sprintf(
-                'pdftoppm -png -r %d -l %d %s %s 2>&1',
+                'pdftoppm -png -r %d -scale-to %d -l %d %s %s 2>&1',
                 $this->imageDpi,
+                $this->maxImageWidth,
                 $this->maxPages,
                 escapeshellarg($pdfPath),
                 escapeshellarg($outputBase)
@@ -173,34 +174,50 @@ class DocumentConverter
             $returnCode = $result['returnCode'];
 
             // Find generated files
-            $files = glob($outputBase . '-*.png');
+            $files = glob($outputBase . '-*.png') ?: [];
             sort($files);
 
-            foreach ($files as $file) {
-                if (is_link($file)) {
-                    continue; // never follow a symlink we didn't create
+            try {
+                foreach ($files as $file) {
+                    if (is_link($file)) {
+                        continue; // never follow a symlink we didn't create
+                    }
+                    $images[] = $this->processImage($file);
                 }
-                $images[] = $this->processImage($file);
-                unlink($file);
+            } finally {
+                foreach ($files as $file) {
+                    if (file_exists($file) && !is_link($file)) {
+                        @unlink($file);
+                    }
+                }
             }
         } elseif ($hasImageMagick) {
-            // Use ImageMagick
+            // Use ImageMagick with explicit pdf: coder prefix, resource limits, and quoted page range
+            $pdfRangeArg = sprintf('pdf:%s[0-%d]', $pdfPath, $this->maxPages - 1);
             $command = sprintf(
-                'convert -density %d -quality 90 %s[0-%d] %s 2>&1',
+                'convert -limit memory 256MiB -limit disk 512MiB -density %d -quality 90 %s %s 2>&1',
                 $this->imageDpi,
-                escapeshellarg($pdfPath),
-                $this->maxPages - 1,
+                escapeshellarg($pdfRangeArg),
                 escapeshellarg(str_replace('%d', '%03d', $outputPattern))
             );
             $result = $this->executeWithTimeout($command);
             $returnCode = $result['returnCode'];
 
             // Find generated files
+            $generated = [];
             for ($i = 0; $i < $this->maxPages; $i++) {
                 $file = sprintf(str_replace('%d', '%03d', $outputPattern), $i);
                 if (file_exists($file) && !is_link($file)) {
+                    $generated[] = $file;
+                }
+            }
+            try {
+                foreach ($generated as $file) {
                     $images[] = $this->processImage($file);
-                    unlink($file);
+                }
+            } finally {
+                foreach ($generated as $file) {
+                    @unlink($file);
                 }
             }
         } elseif ($hasGhostscript) {
@@ -221,11 +238,20 @@ class DocumentConverter
             $returnCode = $result['returnCode'];
 
             // Find generated files
+            $generated = [];
             for ($i = 1; $i <= $this->maxPages; $i++) {
                 $file = sprintf($outputPattern, $i);
                 if (file_exists($file) && !is_link($file)) {
+                    $generated[] = $file;
+                }
+            }
+            try {
+                foreach ($generated as $file) {
                     $images[] = $this->processImage($file);
-                    unlink($file);
+                }
+            } finally {
+                foreach ($generated as $file) {
+                    @unlink($file);
                 }
             }
         } else {
@@ -245,17 +271,20 @@ class DocumentConverter
      */
     private function convertWordToImages(string $wordPath): array
     {
-        // Check if LibreOffice is available
-        $hasLibreOffice = $this->commandExists('libreoffice') || $this->commandExists('soffice');
+        // Check if LibreOffice is available and execute the binary that was actually detected.
+        $officeBin = $this->commandExists('libreoffice')
+            ? 'libreoffice'
+            : ($this->commandExists('soffice') ? 'soffice' : null);
 
-        if (!$hasLibreOffice) {
+        if ($officeBin === null) {
             throw new \Exception('LibreOffice is required for Word document conversion. Please install libreoffice.');
         }
 
         // Convert to PDF using LibreOffice
         $pdfDir = $this->tempDir;
         $command = sprintf(
-            'libreoffice --headless --convert-to pdf --outdir %s %s 2>&1',
+            '%s --headless --convert-to pdf --outdir %s %s 2>&1',
+            $officeBin,
             escapeshellarg($pdfDir),
             escapeshellarg($wordPath)
         );

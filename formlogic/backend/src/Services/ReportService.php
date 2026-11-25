@@ -203,19 +203,27 @@ class ReportService
                     ? "{$jd['alias']}.id IN (SELECT value FROM json_each(r.answers, '$.\"{$jd['via']}\"'))"
                     : "{$jd['alias']}.id = json_extract(r.answers, '$.\"{$jd['via']}\"')";
                 $on = "$link AND {$jd['alias']}.status NOT IN " . self::HIDDEN_STATUSES;
-                if ($jd['scope'] === 'own' && $userId) {
-                    $jp = ':juid' . $ji++;
-                    $on .= " AND json_extract({$jd['alias']}.metadata, '$.submittedByUserId') = $jp";
-                    $params[$jp] = $userId;
+                if ($jd['scope'] === 'own') {
+                    if ($userId !== null && $userId !== '') {
+                        $jp = ':juid' . $ji++;
+                        $on .= " AND json_extract({$jd['alias']}.metadata, '$.submittedByUserId') = $jp";
+                        $params[$jp] = $userId;
+                    } else {
+                        $on .= ' AND 1=0';
+                    }
                 }
                 $from .= " {$jd['type']} JOIN {$jd['alias']}.responses {$jd['alias']} ON $on";
             }
 
             // ── WHERE (base status + scope + validated filters) ──
             $where = ['r.status NOT IN ' . self::HIDDEN_STATUSES];
-            if ($scope === 'own' && $userId) {
-                $where[] = "json_extract(r.metadata, '$.submittedByUserId') = :uid";
-                $params[':uid'] = $userId;
+            if ($scope === 'own') {
+                if ($userId !== null && $userId !== '') {
+                    $where[] = "json_extract(r.metadata, '$.submittedByUserId') = :uid";
+                    $params[':uid'] = $userId;
+                } else {
+                    $where[] = '1=0';
+                }
             }
             $pi = 0;
             $filterConds = []; // conditions from the validated user filters (combined below per filterMode)
@@ -424,15 +432,22 @@ class ReportService
                     foreach ($params as $k => $v) { $stmt->bindValue($k, $v); }
                     $stmt->bindValue(':lim', self::MAX_PIVOT_CELLS, PDO::PARAM_INT);
                     $stmt->execute();
+                    $pivotRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    $gfield = $refField($gref);
+                    $sfield = $refField($sbRef);
+                    $gLinkedMap = $this->linkedDimensionLabelMap($gfield, array_column($pivotRows, 'k'), $resolvableFormIds, $ownOnlyFormIds, $userId);
+                    $sLinkedMap = $this->linkedDimensionLabelMap($sfield, array_column($pivotRows, 's'), $resolvableFormIds, $ownOnlyFormIds, $userId);
                     return ['viz' => $viz, 'series' => $this->pivotSeries(
-                        $stmt->fetchAll(PDO::FETCH_ASSOC),
-                        $refField($gref),
-                        $refField($sbRef),
+                        $pivotRows,
+                        $gfield,
+                        $sfield,
                         (int) ($spec['seriesBy']['limit'] ?? 5),
                         min($limit, 50),
                         $isDateBucket || (($spec['seriesSort'] ?? '') === 'label'),
                         ($spec['sort'] ?? 'desc') === 'asc',
-                        $isDateBucket
+                        $isDateBucket,
+                        $gLinkedMap,
+                        $sLinkedMap
                     )];
                 }
 
@@ -463,10 +478,31 @@ class ReportService
                 $stmt->bindValue(':lim', min($limit, 50), PDO::PARAM_INT);
                 $stmt->execute();
                 $gfield = $refField($gref);
+                $rawSeries = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                $gLinkedMap = $this->linkedDimensionLabelMap($gfield, array_column($rawSeries, 'k'), $resolvableFormIds, $ownOnlyFormIds, $userId);
+                $isLinkedGroup = ($gfield['type'] ?? '') === 'linked_record';
                 $series = [];
-                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $rrow) {
-                    $label = ($rrow['k'] === null || $rrow['k'] === '') ? '—' : $this->optLabel($gfield, (string) $rrow['k']);
-                    $series[] = ['label' => $label, 'value' => (float) $rrow['v']];
+                $maskedIdx = null;
+                foreach ($rawSeries as $rrow) {
+                    $rawKey = ($rrow['k'] === null || $rrow['k'] === '') ? '' : (string) $rrow['k'];
+                    if ($rawKey === '') {
+                        $label = '—';
+                    } elseif ($isLinkedGroup) {
+                        $label = $gLinkedMap[$rawKey] ?? 'Linked record';
+                    } else {
+                        $label = $this->optLabel($gfield, $rawKey);
+                    }
+                    $val = (float) $rrow['v'];
+                    if ($isLinkedGroup && $label === 'Linked record') {
+                        if ($maskedIdx === null) {
+                            $maskedIdx = count($series);
+                            $series[] = ['label' => 'Linked record', 'value' => $val];
+                        } else {
+                            $series[$maskedIdx]['value'] += $val;
+                        }
+                        continue;
+                    }
+                    $series[] = ['label' => $label, 'value' => $val];
                 }
                 return ['viz' => $viz, 'series' => $series];
             }
@@ -598,7 +634,7 @@ class ReportService
                 }
                 $colMap = [];
                 foreach ($binding['columns'] as $fid => $colName) {
-                    if (isset($actualCols[$colName])) {
+                    if (isset($baseFieldById[$fid]) && isset($actualCols[$colName])) {
                         $colMap[$fid] = $colName;
                     }
                 }
@@ -844,15 +880,38 @@ class ReportService
      *   the (ascending) list, not the head — unlike plain label-sort (e.g. alphabetical), which has no
      *   "recency" and keeps the existing head-slice behaviour.
      */
-    private function pivotSeries(array $rows, ?array $gfield, ?array $sfield, int $seriesLimit, int $labelLimit, bool $byLabel, bool $asc, bool $chronological = false): array
-    {
+    private function pivotSeries(
+        array $rows,
+        ?array $gfield,
+        ?array $sfield,
+        int $seriesLimit,
+        int $labelLimit,
+        bool $byLabel,
+        bool $asc,
+        bool $chronological = false,
+        ?array $gLinkedMap = null,
+        ?array $sLinkedMap = null,
+    ): array {
         $seriesLimit = max(2, min($seriesLimit, 8));
-        $cells = [];         // raw label key => raw series key => summed value
-        $labelTotals = [];   // raw label key => total
-        $seriesTotals = [];  // raw series key => total
+        $gIsLinked = ($gfield['type'] ?? '') === 'linked_record';
+        $sIsLinked = ($sfield['type'] ?? '') === 'linked_record';
+        $formatDim = function (string $raw, ?array $field, bool $isLinked, ?array $linkedMap): string {
+            if ($raw === '') {
+                return '—';
+            }
+            if ($isLinked) {
+                return $linkedMap[$raw] ?? 'Linked record';
+            }
+            return $this->optLabel($field, $raw);
+        };
+        $cells = [];         // display label => display series => summed value
+        $labelTotals = [];   // display label => total
+        $seriesTotals = [];  // display series => total
         foreach ($rows as $r) {
-            $k = $r['k'] === null ? '' : (string) $r['k'];
-            $s = $r['s'] === null ? '' : (string) $r['s'];
+            $kRaw = $r['k'] === null ? '' : (string) $r['k'];
+            $sRaw = $r['s'] === null ? '' : (string) $r['s'];
+            $k = $formatDim($kRaw, $gfield, $gIsLinked, $gLinkedMap);
+            $s = $formatDim($sRaw, $sfield, $sIsLinked, $sLinkedMap);
             $v = (float) $r['v'];
             $cells[$k][$s] = ($cells[$k][$s] ?? 0.0) + $v;
             $labelTotals[$k] = ($labelTotals[$k] ?? 0.0) + $v;
@@ -868,23 +927,56 @@ class ReportService
         $kept = array_slice(array_keys($seriesTotals), 0, $seriesLimit);
 
         $out = [];
-        foreach ($labels as $k) {
-            $label = (string) $k === '' ? '—' : $this->optLabel($gfield, (string) $k);
-            foreach ($kept as $s) {
-                if (!isset($cells[$k][$s])) { continue; }
+        foreach ($labels as $label) {
+            foreach ($kept as $seriesLabel) {
+                if (!isset($cells[$label][$seriesLabel])) { continue; }
                 $out[] = [
                     'label' => $label,
-                    'value' => (float) $cells[$k][$s],
-                    'series' => (string) $s === '' ? '—' : $this->optLabel($sfield, (string) $s),
+                    'value' => (float) $cells[$label][$seriesLabel],
+                    'series' => $seriesLabel,
                 ];
             }
             $other = null;
-            foreach ($cells[$k] as $s => $v) {
-                if (!in_array($s, $kept, true)) { $other = ($other ?? 0.0) + $v; }
+            foreach ($cells[$label] as $seriesLabel => $v) {
+                if (!in_array($seriesLabel, $kept, true)) { $other = ($other ?? 0.0) + $v; }
             }
             if ($other !== null) { $out[] = ['label' => $label, 'value' => $other, 'series' => 'Other']; }
         }
         return $out;
+    }
+
+    /**
+     * Resolve permission-gated display labels for a linked_record chart dimension (`groupBy` / `seriesBy`).
+     * Returns an empty map when the target form cannot be revealed (caller renders 'Linked record').
+     *
+     * @param list<mixed> $rawKeys
+     * @param ?array<int, string> $resolvableFormIds
+     * @param ?array<int, string> $ownOnlyFormIds
+     * @return array<string, string>
+     */
+    private function linkedDimensionLabelMap(?array $field, array $rawKeys, ?array $resolvableFormIds, ?array $ownOnlyFormIds, ?string $userId): array
+    {
+        if (($field['type'] ?? '') !== 'linked_record' || empty($field['properties']['targetFormId'])) {
+            return [];
+        }
+        $targetFormId = (string) $field['properties']['targetFormId'];
+        if (!$this->canResolveForm($targetFormId, $resolvableFormIds)) {
+            return [];
+        }
+        $ids = [];
+        foreach ($rawKeys as $raw) {
+            if ($raw === null || $raw === '') continue;
+            $s = (string) $raw;
+            $ids[$s] = $s;
+        }
+        if ($ids === []) {
+            return [];
+        }
+        $isOwnOnly = in_array($targetFormId, $ownOnlyFormIds ?? [], true);
+        if ($isOwnOnly && ($userId === null || $userId === '')) {
+            return [];
+        }
+        return $this->resolveLinkedLabelMap($field, array_values($ids), $ownOnlyFormIds !== null, $isOwnOnly ? $userId : null);
     }
 
     /**
@@ -989,36 +1081,47 @@ class ReportService
         if ($targetFormId === '' || empty($ids) || !$this->formService || !$this->sqlite->formDatabaseExists($targetFormId)) {
             return [];
         }
+        if ($this->mysql !== null) {
+            $this->formEncryption ??= new FormEncryptionService($this->mysql);
+            if ($this->formEncryption->isPrivate($targetFormId)) {
+                return [];
+            }
+        }
         $targetForm = $this->formService->getForm($targetFormId);
+        if (!$targetForm) {
+            return [];
+        }
         $targetFields = is_array($targetForm['fields'] ?? null) ? $targetForm['fields'] : [];
         $displayFieldIds = is_array($field['properties']['displayFieldIds'] ?? null) ? $field['properties']['displayFieldIds'] : null;
 
         $db = $this->sqlite->getFormDatabase($targetFormId);
-        $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $visible = ($forAMember ? ' AND status NOT IN ' . self::HIDDEN_STATUSES : '')
             . ($onlyOwnedBy !== null ? " AND json_extract(metadata, '$.submittedByUserId') = ?" : '');
-        $stmt = $db->prepare("SELECT id, answers FROM responses WHERE id IN ($placeholders)$visible");
-        $stmt->execute($onlyOwnedBy !== null ? [...array_values($ids), $onlyOwnedBy] : array_values($ids));
 
         $map = [];
-        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
-            $answers = json_decode((string) ($tr['answers'] ?? '{}'), true);
-            if (!is_array($answers)) { $answers = []; }
-            $label = '';
-            if ($displayFieldIds) {
-                $parts = [];
-                foreach ($displayFieldIds as $fid) {
-                    $tf = null;
-                    foreach ($targetFields as $cand) { if (($cand['id'] ?? null) === $fid) { $tf = $cand; break; } }
-                    $v = $this->displayValue($tf, $answers[$fid] ?? null);
-                    if (trim($v) !== '') { $parts[] = trim($v); }
+        foreach (array_chunk(array_values(array_unique($ids)), 500) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            $stmt = $db->prepare("SELECT id, answers FROM responses WHERE id IN ($placeholders)$visible");
+            $stmt->execute($onlyOwnedBy !== null ? [...$chunk, $onlyOwnedBy] : $chunk);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $tr) {
+                $answers = json_decode((string) ($tr['answers'] ?? '{}'), true);
+                if (!is_array($answers)) { $answers = []; }
+                $label = '';
+                if ($displayFieldIds) {
+                    $parts = [];
+                    foreach ($displayFieldIds as $fid) {
+                        $tf = null;
+                        foreach ($targetFields as $cand) { if (($cand['id'] ?? null) === $fid) { $tf = $cand; break; } }
+                        $v = $this->displayValue($tf, $answers[$fid] ?? null);
+                        if (trim($v) !== '') { $parts[] = trim($v); }
+                    }
+                    $label = implode(' · ', $parts);
                 }
-                $label = implode(' · ', $parts);
+                if ($label === '') {
+                    $label = RecordLabel::guess($targetFields, $answers) ?? '';
+                }
+                if ($label !== '') { $map[(string) $tr['id']] = $label; }
             }
-            if ($label === '') {
-                $label = RecordLabel::guess($targetFields, $answers) ?? '';
-            }
-            if ($label !== '') { $map[(string) $tr['id']] = $label; }
         }
         return $map;
     }

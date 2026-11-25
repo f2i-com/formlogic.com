@@ -39,6 +39,7 @@ function Invoke-Gate {
     Write-Host "`n=== $Name ===" -ForegroundColor Cyan
     Push-Location $WorkDir
     try {
+        $global:LASTEXITCODE = 0
         & $Body
         if ($LASTEXITCODE -ne 0) { throw "$Name exited $LASTEXITCODE" }
         Write-Host "=== $Name OK ===" -ForegroundColor Green
@@ -117,11 +118,23 @@ if ($Fmt) {
     Invoke-Gate 'native-runtime: cargo fmt --check' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
         cargo fmt --check
     }
+    Invoke-Gate 'oaiy-plugin: cargo fmt --check' (Join-Path $repo 'formlogic/oaiy-plugin') {
+        cargo fmt --check
+    }
+    Invoke-Gate 'sandbox host: cargo fmt --check' (Join-Path $repo 'formlogic/runtime/host') {
+        cargo fmt --check
+    }
+    Invoke-Gate 'sandbox guest: cargo fmt --check' (Join-Path $repo 'formlogic/runtime/guest') {
+        cargo fmt --check
+    }
 } else {
     Write-Host "(skipped: cargo fmt --check — pass -Fmt to include; NOTE the tree carries pre-audit fmt drift)" -ForegroundColor Yellow
 }
 if ($RustAudit) {
     Invoke-Gate 'native-runtime: cargo audit (RustSec)' (Join-Path $repo 'formlogic/native-runtime/src-tauri') {
+        cargo audit
+    }
+    Invoke-Gate 'oaiy-plugin: cargo audit (RustSec)' (Join-Path $repo 'formlogic/oaiy-plugin') {
         cargo audit
     }
     Invoke-Gate 'sandbox host: cargo audit (RustSec)' (Join-Path $repo 'formlogic/runtime/host') {

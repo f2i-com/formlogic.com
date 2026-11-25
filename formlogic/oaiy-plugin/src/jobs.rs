@@ -13,6 +13,8 @@ use serde_json::Value;
 
 /// Finished jobs kept for a page to read. The oldest goes first.
 const KEEP: usize = 64;
+/// Maximum concurrently running jobs so a burst of requests cannot spawn unbounded threads.
+const MAX_RUNNING: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +55,10 @@ impl Jobs {
         let mut table = self.0.lock().map_err(|_| "The plugin stopped unexpectedly.")?;
         if let Some(found) = request_id.and_then(|request| table.by_request.get(request)) {
             return Ok(Started::Again(found.clone()));
+        }
+        let running = table.jobs.values().filter(|job| job.state == "running").count();
+        if running >= MAX_RUNNING {
+            return Err("Too many tasks are running right now. Wait for one to finish.".to_string());
         }
         let id = random_id()?;
         table.jobs.insert(id.clone(), Job { id: id.clone(), command: command.to_string(), state: "running".to_string(), message: None, result: None });

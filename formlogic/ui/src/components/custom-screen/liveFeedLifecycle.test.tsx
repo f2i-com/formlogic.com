@@ -32,20 +32,28 @@ let answer: (allowed: boolean) => void;
 
 const bridge = { liveFeedsAllowed: () => true, canObserveConnector: () => true, localBridgeAvailable: () => true } as unknown as ScreenBridge;
 
+let openPorts: MessagePort[] = [];
+
 async function render(html: string) {
   const screen = { html, css: '', js: '', _trust: 'owner' as const };
   await act(async () => {
     root.render(<CustomScreenRuntime screen={screen} appSlug="demo" formId="notes" formTitle="Notes" bridge={bridge} />);
   });
-  return container.querySelector('iframe')!;
+  const frame = container.querySelector('iframe')!;
+  const sent = vi.spyOn(frame.contentWindow!, 'postMessage');
+  await act(async () => frame.dispatchEvent(new Event('load')));
+  const docCall = sent.mock.calls.find(([m]) => m.__flScreenDoc) as unknown[] | undefined;
+  const port = (docCall?.[2] as Transferable[] | undefined)?.[0] as MessagePort;
+  port.start();
+  openPorts.push(port);
+  return { frame, port };
 }
 
-async function ask(frame: HTMLIFrameElement, action: string) {
-  await act(async () => window.dispatchEvent(new MessageEvent('message', {
-    origin: 'null',
-    source: frame.contentWindow,
-    data: { __fl: true, action, id: 'subscribe', gen: 0, payload: { filter: { connectorId: 'aokie' } } },
-  })));
+async function ask(port: MessagePort, action: string) {
+  await act(async () => {
+    port.postMessage({ __fl: true, action, id: 'subscribe', gen: 0, payload: { filter: { connectorId: 'aokie' } } });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  });
 }
 
 async function allow() {
@@ -67,6 +75,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  for (const p of openPorts) {
+    try { p.close(); } catch { /* ignore */ }
+  }
+  openPorts = [];
   if (mounted) await act(async () => root.unmount());
   container.remove();
 });
@@ -78,8 +90,8 @@ const feeds = [
 
 describe.each(feeds)('%s while the access prompt is open', (action, feed) => {
   it('starts the feed when the screen is still there', async () => {
-    const frame = await render('<main>Calls</main>');
-    await ask(frame, action);
+    const { port } = await render('<main>Calls</main>');
+    await ask(port, action);
     expect(feed()).not.toHaveBeenCalled();
 
     await allow();
@@ -88,8 +100,8 @@ describe.each(feeds)('%s while the access prompt is open', (action, feed) => {
   });
 
   it('starts nothing once the person has gone Back', async () => {
-    const frame = await render('<main>Calls</main>');
-    await ask(frame, action);
+    const { port } = await render('<main>Calls</main>');
+    await ask(port, action);
 
     await act(async () => root.unmount());
     mounted = false;
@@ -99,8 +111,8 @@ describe.each(feeds)('%s while the access prompt is open', (action, feed) => {
   });
 
   it('starts nothing for a document that has been replaced', async () => {
-    const frame = await render('<main>First document</main>');
-    await ask(frame, action);
+    const { port } = await render('<main>First document</main>');
+    await ask(port, action);
 
     await render('<main>Second document</main>');
     await allow();

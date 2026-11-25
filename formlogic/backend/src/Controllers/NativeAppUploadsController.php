@@ -100,7 +100,8 @@ final class NativeAppUploadsController
         }
         $body = $request->getParsedBody();
         if (!is_array($body)) {
-            $body = json_decode((string) $request->getBody(), true) ?: [];
+            $decoded = json_decode((string) $request->getBody(), true);
+            $body = is_array($decoded) ? $decoded : [];
         }
         try {
             $nextPolicy = $this->uploads->normalizePolicyPatch($app, $body);
@@ -122,7 +123,8 @@ final class NativeAppUploadsController
         }
         $body = $request->getParsedBody();
         if (!is_array($body)) {
-            $body = json_decode((string) $request->getBody(), true) ?: [];
+            $decoded = json_decode((string) $request->getBody(), true);
+            $body = is_array($decoded) ? $decoded : [];
         }
         try {
             $updated = $this->uploads->updateUpload((string) $app['id'], (string) $app['slug'], (string) ($args['uploadId'] ?? ''), $body);
@@ -173,7 +175,8 @@ final class NativeAppUploadsController
         }
         $body = $request->getParsedBody();
         if (!is_array($body)) {
-            $body = json_decode((string) $request->getBody(), true) ?: [];
+            $decoded = json_decode((string) $request->getBody(), true);
+            $body = is_array($decoded) ? $decoded : [];
         }
         $ids = is_array($body['ids'] ?? null) ? array_values(array_filter($body['ids'], 'is_string')) : [];
         if ($ids === []) {
@@ -428,7 +431,16 @@ final class NativeAppUploadsController
             if ($stream->isSeekable()) {
                 $stream->rewind();
             }
-            $bytes = $stream->read($maxBytes + 1);
+            $bytes = '';
+            $remaining = $maxBytes + 1;
+            while (!$stream->eof() && $remaining > 0) {
+                $chunk = $stream->read(min(65536, $remaining));
+                if ($chunk === '') {
+                    break;
+                }
+                $bytes .= $chunk;
+                $remaining -= strlen($chunk);
+            }
             if (strlen($bytes) > $maxBytes) {
                 throw new InvalidArgumentException(sprintf('File exceeds this app\'s %d MB per-file upload limit.', (int) ceil($maxBytes / (1024 * 1024))));
             }
@@ -439,7 +451,8 @@ final class NativeAppUploadsController
 
         $body = $request->getParsedBody();
         if (!is_array($body)) {
-            $body = json_decode((string) $request->getBody(), true) ?: [];
+            $decoded = json_decode((string) $request->getBody(), true);
+            $body = is_array($decoded) ? $decoded : [];
         }
         $filename = is_string($body['filename'] ?? null) ? $body['filename'] : '';
         $b64 = is_string($body['contentBase64'] ?? null) ? $body['contentBase64'] : '';
@@ -476,7 +489,11 @@ final class NativeAppUploadsController
         $mime = (string) ($row['mime_type'] ?? 'application/octet-stream');
         $inline = !$forceDownload && NativeAppUploadsService::isInlineSafeMime($mime) && ($row['status'] ?? '') === 'approved';
         $disposition = $inline ? 'inline' : 'attachment';
-        $safeHeaderName = str_replace(['"', '\\', "\r", "\n"], '_', (string) $row['original_filename']);
+        $rawName = (string) $row['original_filename'];
+        $cleanName = preg_replace('/[\x00-\x1F\x7F"\\\\;]+/', '_', $rawName) ?? 'download.bin';
+        $asciiFallback = preg_replace('/[^\x20-\x7E]/', '_', $cleanName) ?? 'download.bin';
+        $asciiFallback = trim($asciiFallback) !== '' ? $asciiFallback : 'download.bin';
+        $encodedName = rawurlencode($cleanName !== '' ? $cleanName : $asciiFallback);
         $cacheControl = ($row['status'] ?? '') === 'quarantined' || $isOwner
             ? 'private, no-store'
             : 'private, max-age=3600';
@@ -485,7 +502,7 @@ final class NativeAppUploadsController
             ->withBody(new Stream($stream))
             ->withHeader('Content-Type', $mime)
             ->withHeader('Content-Length', (string) filesize($path))
-            ->withHeader('Content-Disposition', sprintf('%s; filename="%s"', $disposition, $safeHeaderName))
+            ->withHeader('Content-Disposition', sprintf('%s; filename="%s"; filename*=UTF-8\'\'%s', $disposition, $asciiFallback, $encodedName))
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Content-Security-Policy', \FormLogic\Middleware\SecurityHeadersMiddleware::SANDBOXED_IMAGE)
             ->withHeader('X-Frame-Options', 'DENY')

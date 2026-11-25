@@ -38,6 +38,14 @@ class PackageV2InstallService
         $this->connection = $mysql;
     }
 
+    private static function requireVerifiedPackages(): bool
+    {
+        return filter_var(
+            $_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES') ?: 'false',
+            FILTER_VALIDATE_BOOLEAN
+        );
+    }
+
     /**
      * @param array<string,mixed> $aggregate The validated-or-refused v2 aggregate.
      * @param list<string> $approvedConnectorGrants SAFE-001 reviewed grant array (recorded in the receipt).
@@ -48,6 +56,9 @@ class PackageV2InstallService
         // REL-705: the kill switch refuses NEW installs; existing content stays managed.
         if (!PackagesFeature::v2Enabled()) {
             throw new \RuntimeException('feature_disabled: Application Package v2 installs are disabled on this deployment');
+        }
+        if (self::requireVerifiedPackages() && !in_array($trust, ['official', 'local-only'], true)) {
+            throw new \RuntimeException('unverified_package: This workspace only allows verified (signed) application packages.');
         }
         // Shared preflight (PKG-106: the install-plan propose step runs the SAME checks, so a
         // reviewable plan and a committable install can never diverge on what is acceptable).
@@ -309,6 +320,25 @@ class PackageV2InstallService
             'installedAt' => gmdate('c'),
         ];
 
+        if (self::requireVerifiedPackages() && !in_array($trust, ['official', 'local-only'], true)) {
+            throw new \RuntimeException('unverified_package: This workspace only allows verified (signed) application packages.');
+        }
+        // Snapshot all currently bound service definitions and their pre-update authorized actions
+        // so that if the update shrinks actions on a surviving slot, live capability tokens are
+        // revoked immediately instead of retaining removed actions until TTL expiry.
+        $authorization = new ServiceAuthorizationService($this->connection);
+        $preBoundStmt = $this->mysql->prepare('SELECT DISTINCT definition_id FROM package_service_bindings WHERE installation_id = ?');
+        $preBoundStmt->execute([$installationId]);
+        $preBoundDefs = array_values(array_filter(
+            $preBoundStmt->fetchAll(PDO::FETCH_COLUMN),
+            static fn ($d): bool => is_string($d) && $d !== ''
+        ));
+        $preActionsByDef = [];
+        foreach ($preBoundDefs as $defId) {
+            $auth = $authorization->authorize($userId, $defId);
+            $preActionsByDef[$defId] = $auth !== null ? $auth['actions'] : [];
+        }
+
         $this->mysql->beginTransaction();
         try {
             $this->mysql->prepare('
@@ -368,18 +398,35 @@ class PackageV2InstallService
             throw $e;
         }
 
-        // As on uninstall: a capability for a slot that is gone stops working now, not at its TTL.
-        $authorization = new ServiceAuthorizationService($this->connection);
-        foreach ($unbound as $definitionId) {
-            if (is_string($definitionId) && $definitionId !== '') {
+        // Activate the updated components BEFORE computing post-update authorized actions:
+        // ServiceAuthorizationService::authorize() excludes inactive installations, so checking
+        // authorization before activate() would revoke every surviving capability on routine updates.
+        // Wrap in try/finally so that even if activate() throws, committed slot unbinds and action
+        // shrinkages still immediately revoke stale capability tokens.
+        $activation = null;
+        try {
+            $activation = $this->activation()->activate($installationId, $userId);
+        } finally {
+            $toRevoke = [];
+            foreach ($unbound as $definitionId) {
+                if (is_string($definitionId) && $definitionId !== '') {
+                    $toRevoke[$definitionId] = true;
+                }
+            }
+            foreach ($preActionsByDef as $defId => $beforeActions) {
+                if (isset($toRevoke[$defId])) {
+                    continue;
+                }
+                $afterAuth = $authorization->authorize($userId, $defId);
+                $afterActions = $afterAuth !== null ? $afterAuth['actions'] : [];
+                if ($beforeActions !== [] && array_diff($beforeActions, $afterActions) !== []) {
+                    $toRevoke[$defId] = true;
+                }
+            }
+            foreach (array_keys($toRevoke) as $definitionId) {
                 $authorization->revoke($userId, $definitionId);
             }
         }
-
-        // A failed activation leaves the update installed but INACTIVE — the previous version's
-        // rows are already gone, so the honest outcome is "not usable, retry" rather than a
-        // silent claim of success.
-        $activation = $this->activation()->activate($installationId, $userId);
 
         \FormLogic\Support\PackageTelemetry::emit('package.update', [
             'packageId' => $packageId,

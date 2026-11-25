@@ -596,6 +596,8 @@ function clampDeclaredTimeoutMs(data: Record<string, unknown>): number | undefin
 
 /** Race a node-scoped promise against a wall-clock deadline (logic_block's 2s default). */
 async function withNodeTimeout<T>(promise: Promise<T>, timeoutMs: number, node: WorkflowGraphNode): Promise<T> {
+  // Suppress unhandled rejection if the timeout wins and `promise` later rejects.
+  void promise.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

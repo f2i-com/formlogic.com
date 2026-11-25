@@ -200,18 +200,31 @@ class FormVersionService
             return null;
         }
 
-        // Auto-snapshot current state before restoring
-        $this->createVersion($formId, $userId, "Auto-snapshot before restoring to v{$version}");
+        $currentForm = $this->formService->getForm($formId);
+        if (!$currentForm) {
+            return null;
+        }
 
         // Apply the version data via FormService. Older snapshots predate
         // customScreen/customLogic, so omit those keys rather than clearing the
         // current executable surfaces during an unrelated historical restore.
         $data = $versionData['data'];
+        $restoredSettings = is_array($data['settings'] ?? null) ? $data['settings'] : null;
+        if ($restoredSettings !== null) {
+            // Preserve the current form's server-managed nativeTableBinding (never revert it
+            // to a pre-link snapshot or resurrect a removed binding).
+            $currentSettings = is_array($currentForm['settings'] ?? null) ? $currentForm['settings'] : [];
+            if (array_key_exists('nativeTableBinding', $currentSettings)) {
+                $restoredSettings['nativeTableBinding'] = $currentSettings['nativeTableBinding'];
+            } else {
+                unset($restoredSettings['nativeTableBinding']);
+            }
+        }
         $update = [
             'title' => $data['title'] ?? null,
             'description' => $data['description'] ?? null,
             'fields' => $data['fields'] ?? null,
-            'settings' => $data['settings'] ?? null,
+            'settings' => $restoredSettings,
             'theme' => $data['theme'] ?? null,
             'logicScript' => $data['logicScript'] ?? null,
             'icon' => $data['icon'] ?? null,
@@ -223,7 +236,19 @@ class FormVersionService
         if (array_key_exists('customLogic', $data)) {
             $update['customLogic'] = $data['customLogic'];
         }
-        $restored = $this->formService->updateForm($formId, $update);
+
+        // Create the pre-restore snapshot and apply the update; if updateForm rejects (e.g.
+        // E2EE private-form constraints), delete the newly created auto-snapshot so failed
+        // restores do not pollute form_versions.
+        $snapshot = $this->createVersion($formId, $userId, "Auto-snapshot before restoring to v{$version}");
+        try {
+            $restored = $this->formService->updateForm($formId, $update);
+        } catch (\Throwable $e) {
+            if (!empty($snapshot['id'])) {
+                $this->mysql->prepare('DELETE FROM form_versions WHERE id = :id')->execute(['id' => $snapshot['id']]);
+            }
+            throw $e;
+        }
         if ($restored !== null && !empty($data['customScreen'])
             && is_string($data['customScreenTrust'] ?? null)
             && is_array($data['customScreenProvenance'] ?? null)) {

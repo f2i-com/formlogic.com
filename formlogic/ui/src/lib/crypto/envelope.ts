@@ -256,8 +256,12 @@ export async function openEnvelope(
       null, fromB64(env.ct), aad, fromB64(env.nonce), dek,
     );
     const inner: unknown = JSON.parse(utf8String(plaintext));
-    if (typeof inner !== 'object' || inner === null || (inner as { v?: unknown }).v !== 1
-      || typeof (inner as { answers?: unknown }).answers !== 'object') {
+    const parsed = inner as { v?: unknown; answers?: unknown };
+    if (
+      typeof inner !== 'object' || inner === null || Array.isArray(inner)
+      || parsed.v !== 1
+      || typeof parsed.answers !== 'object' || parsed.answers === null || Array.isArray(parsed.answers)
+    ) {
       throw new EnvelopeError('decrypt_failed', 'inner payload malformed');
     }
     return inner as InnerPayload;

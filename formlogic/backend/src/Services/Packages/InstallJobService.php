@@ -110,12 +110,24 @@ class InstallJobService
      */
     public function progress(string $jobId, string $deviceId, string $claimToken, int $percent, string $step): bool
     {
+        $clamped = max(0, min(100, $percent));
+        $trimmedStep = substr($step, 0, 190);
         $stmt = $this->mysql->prepare("
             UPDATE package_install_jobs SET progress = ?, step = ?
             WHERE id = ? AND device_id = ? AND claim_token = ? AND state = '" . self::STATE_RUNNING . "'
         ");
-        $stmt->execute([max(0, min(100, $percent)), substr($step, 0, 190), $jobId, $deviceId, $claimToken]);
-        return $stmt->rowCount() > 0;
+        $stmt->execute([$clamped, $trimmedStep, $jobId, $deviceId, $claimToken]);
+        if ($stmt->rowCount() > 0) {
+            return true;
+        }
+        // Under MySQL changed-rows rowCount(), an idempotent retry with identical (progress, step)
+        // updates 0 changed rows even when the running claim is still valid. Verify existence.
+        $check = $this->mysql->prepare("
+            SELECT 1 FROM package_install_jobs
+            WHERE id = ? AND device_id = ? AND claim_token = ? AND state = '" . self::STATE_RUNNING . "'
+        ");
+        $check->execute([$jobId, $deviceId, $claimToken]);
+        return $check->fetchColumn() !== false;
     }
 
     /**

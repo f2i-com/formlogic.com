@@ -230,15 +230,16 @@ class AppUserService
 
     /**
      * Does this role grant any app-level permission (MANAGE_APP / MANAGE_USERS /
-     * MANAGE_ROLES / VIEW_ANALYTICS)? Used to enforce a privilege ceiling so a
-     * delegated MANAGE_USERS holder cannot assign an app-admin role and escalate.
+     * MANAGE_ROLES / VIEW_ANALYTICS / EXECUTE_FLOWS / connector.*)? Used to enforce
+     * a privilege ceiling so a delegated MANAGE_USERS holder cannot assign an app-admin
+     * or desktop-connector role and escalate.
      */
     private function roleGrantsAppLevel(string $roleId): bool
     {
         $stmt = $this->mysql->prepare(
-            "SELECT 1 FROM app_role_permissions WHERE role_id = ? AND permission IN ("
+            "SELECT 1 FROM app_role_permissions WHERE role_id = ? AND (permission IN ("
             . implode(',', array_fill(0, count(AppPermissions::APP_LEVEL), '?'))
-            . ") LIMIT 1"
+            . ") OR permission LIKE 'connector.%') LIMIT 1"
         );
         $stmt->execute(array_merge([$roleId], AppPermissions::APP_LEVEL));
         return $stmt->fetchColumn() !== false;
@@ -272,6 +273,50 @@ class AppUserService
             }
         }
         return false;
+    }
+
+    /**
+     * Whether open self-registration (no owner approval) would immediately place a stranger into
+     * a role that shows other people's records (AdminActingLimits).
+     *
+     * @param array<string, mixed> $app
+     * @param array<string, mixed>|null $settingsOverride
+     */
+    public function openSelfRegistrationShowsRecords(array $app, ?array $settingsOverride = null): bool
+    {
+        $settings = $settingsOverride ?? (is_array($app['settings'] ?? null) ? $app['settings'] : []);
+        if (empty($settings['allowSelfRegistration']) || !empty($settings['requireApproval'])) {
+            return false;
+        }
+        $appId = (string) ($app['id'] ?? '');
+        if ($appId === '') {
+            return true;
+        }
+        $defaultRoleId = is_string($settings['defaultRoleId'] ?? null) && $settings['defaultRoleId'] !== ''
+            ? $settings['defaultRoleId']
+            : null;
+        $roleId = null;
+        if ($defaultRoleId !== null && $this->roleBelongsToApp($defaultRoleId, $appId)) {
+            $oCheck = $this->mysql->prepare("SELECT name, is_system FROM app_roles WHERE id = :id AND app_id = :app_id");
+            $oCheck->execute(['id' => $defaultRoleId, 'app_id' => $appId]);
+            $oRow = $oCheck->fetch();
+            $isOwnerRole = $oRow && (int) $oRow['is_system'] === 1 && $oRow['name'] === 'Owner';
+            if (!$isOwnerRole) {
+                $roleId = $defaultRoleId;
+            }
+        }
+        if ($roleId === null) {
+            $rStmt = $this->mysql->prepare("
+                SELECT id FROM app_roles
+                WHERE app_id = :app_id AND NOT (is_system = 1 AND name = 'Owner')
+                ORDER BY (is_system = 1 AND name = 'Member') DESC, is_system DESC, sort_order DESC
+                LIMIT 1
+            ");
+            $rStmt->execute(['app_id' => $appId]);
+            $r = $rStmt->fetch();
+            $roleId = is_array($r) && is_string($r['id'] ?? null) ? $r['id'] : null;
+        }
+        return $roleId !== null && $this->roleShowsRecords($roleId);
     }
 
     /**
@@ -1129,18 +1174,22 @@ class AppUserService
         if ($this->isAppOwner($appId, $userId)) {
             return ['*'];
         }
+        if ($this->gate !== null && !$this->gate->admitsMember($appId, $userId)) {
+            return [];
+        }
+        $escapedConnector = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $connectorId);
         $stmt = $this->mysql->prepare("
             SELECT DISTINCT arp.permission
             FROM app_users au
             JOIN app_role_permissions arp ON arp.role_id = au.role_id
             WHERE au.app_id = :a AND au.user_id = :u AND au.status = 'active'
-              AND (arp.permission = :bare OR arp.permission LIKE :prefix)
+              AND (arp.permission = :bare OR arp.permission LIKE :prefix ESCAPE '\\\\')
         ");
         $stmt->execute([
             'a' => $appId,
             'u' => $userId,
             'bare' => 'connector.' . $connectorId,
-            'prefix' => 'connector.' . $connectorId . '.%',
+            'prefix' => 'connector.' . $escapedConnector . '.%',
         ]);
         return array_values(array_map(static fn (array $r) => (string) $r['permission'], $stmt->fetchAll()));
     }

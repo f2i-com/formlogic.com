@@ -132,6 +132,7 @@ if (PHP_SAPI !== 'cli' || (defined('DESKTOP_COMMANDS_CLEANUP_NO_RUN') && DESKTOP
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 $mysqlConfig = $config['settings']['mysql'];
 
@@ -162,6 +163,7 @@ $cutoff = (new \DateTimeImmutable("-{$days} days"))->format('Y-m-d H:i:s');
 // hasn't gotten to) — a still-live pending/claimed row is never touched regardless of how the
 // --days window is set.
 $where = "created_at < :cutoff AND (status IN ('done', 'failed', 'expired') OR expires_at < NOW())";
+$relayWhere = "created_at < :cutoff AND (status IN ('done', 'failed', 'expired', 'cancelled') OR expires_at < NOW())";
 
 try {
     if ($dryRun) {
@@ -184,16 +186,23 @@ try {
             $staleWould['flow']
         ));
 
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM desktop_commands WHERE {$where}");
-        $stmt->execute(['cutoff' => $cutoff]);
-        $would = (int) $stmt->fetchColumn();
-        fwrite(STDOUT, sprintf(
-            "[%s] desktop_commands cleanup DRY RUN: %d row(s) older than %d day(s) (< %s) would be deleted.\n",
-            date('c'),
-            $would,
-            $days,
-            $cutoff
-        ));
+        foreach ([
+            ['desktop_commands', $where],
+            ['desktop_ai_requests', $relayWhere],
+            ['desktop_flow_runs', $relayWhere],
+        ] as [$tbl, $cond]) {
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM {$tbl} WHERE {$cond}");
+            $stmt->execute(['cutoff' => $cutoff]);
+            $would = (int) $stmt->fetchColumn();
+            fwrite(STDOUT, sprintf(
+                "[%s] %s cleanup DRY RUN: %d row(s) older than %d day(s) (< %s) would be deleted.\n",
+                date('c'),
+                $tbl,
+                $would,
+                $days,
+                $cutoff
+            ));
+        }
         exit(0);
     }
 
@@ -215,7 +224,6 @@ try {
         $deleted = $stmt->rowCount();
         $total += $deleted;
     } while ($deleted === $batch);
-
     fwrite(STDOUT, sprintf(
         "[%s] desktop_commands cleanup: deleted %d row(s) older than %d day(s) (< %s).\n",
         date('c'),
@@ -223,6 +231,35 @@ try {
         $days,
         $cutoff
     ));
+
+    // Prune old terminal/expired desktop_ai_requests + desktop_flow_runs (and any leftover frames).
+    foreach ([
+        ['desktop_ai_requests', 'desktop_ai_frames'],
+        ['desktop_flow_runs', 'desktop_flow_run_frames'],
+    ] as [$parentTable, $frameTable]) {
+        $pruned = 0;
+        do {
+            $sel = $pdo->prepare("SELECT id FROM {$parentTable} WHERE {$relayWhere} LIMIT " . $batch);
+            $sel->execute(['cutoff' => $cutoff]);
+            $ids = $sel->fetchAll(\PDO::FETCH_COLUMN);
+            if ($ids === []) {
+                break;
+            }
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $pdo->prepare("DELETE FROM {$frameTable} WHERE request_id IN ({$placeholders})")->execute($ids);
+            $del = $pdo->prepare("DELETE FROM {$parentTable} WHERE id IN ({$placeholders})");
+            $del->execute($ids);
+            $pruned += $del->rowCount();
+        } while (count($ids) === $batch);
+        fwrite(STDOUT, sprintf(
+            "[%s] %s cleanup: deleted %d row(s) older than %d day(s) (< %s).\n",
+            date('c'),
+            $parentTable,
+            $pruned,
+            $days,
+            $cutoff
+        ));
+    }
 } catch (\Throwable $e) {
     fwrite(STDERR, sprintf("[%s] desktop_commands cleanup error: %s\n", date('c'), $e->getMessage()));
     exit(1);

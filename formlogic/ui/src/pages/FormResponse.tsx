@@ -24,11 +24,12 @@ import { getFormThemeTokens } from '../lib/formThemeStyles';
 import { useUIStore } from '../stores/uiStore';
 import { useAuthStore } from '../stores/authStore';
 import { api, type LinkedRecord } from '../lib/api';
+import { isDemoLocalId } from '../lib/demoLocal';
 import { LinkedRecordInput } from '../components/app-runtime/LinkedRecordInput';
 import { CustomScreenRuntime } from '../components/custom-screen/CustomScreenRuntime';
 import { FormWidgetDashboard } from '../components/custom-screen/FormWidgetDashboard';
 import { logger } from '../lib/logger';
-import { servedWithoutItsEncryption } from '../lib/crypto/signerPins';
+import { getPinnedSigner, servedWithoutItsEncryption, signerFingerprint, trustFormSignerKey } from '../lib/crypto/signerPins';
 import { PhoneInput } from '../components/ui/PhoneInput';
 import { CalculatedFieldDisplay } from '../components/ui/CalculatedFieldDisplay';
 import { DynamicIcon } from '../components/ui/DynamicIcon';
@@ -1010,6 +1011,9 @@ function FormResponseContent() {
   // Private forms: the served manifest signer differs from the TOFU-pinned key
   // for this form - submission is refused until the user explicitly re-trusts.
   const [pinConflict, setPinConflict] = useState<{ pinnedFingerprint: string; servedFingerprint: string } | null>(null);
+  // Load-time TOFU signer mismatch: blocks rendering private form fields BEFORE any user input.
+  const [loadPinConflict, setLoadPinConflict] = useState<{ pinnedFingerprint: string; servedFingerprint: string; signerPk: string; formId: string } | null>(null);
+  const [loadPinError, setLoadPinError] = useState<string | null>(null);
   // Private forms (blocker 2): the rendered field list comes ONLY from the
   // manifest's verified, signed schemaJson - never the ordinary fields payload.
   // null while verification is in flight; privateSchemaError => fail closed.
@@ -1024,6 +1028,10 @@ function FormResponseContent() {
   // One idempotency key per fill, reused across manual retries so a retry after a
   // dropped ack can never create a duplicate record.
   const submitIdemKeyRef = useRef<string | null>(null);
+  const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
+  }, []);
   const [isRedirecting, setIsRedirecting] = useState(false);
   const [publicForm, setPublicForm] = useState<ReturnType<typeof getForm> | null>(null);
   // publicForm came from the owner API, which answers the form's owner alone: signed in is not
@@ -1054,14 +1062,28 @@ function FormResponseContent() {
     setAnswer(fId, val);
   }, [setAnswer]);
 
+  const storageMode = useFormStore((s) => s.storageMode);
   const storeForm = formId ? getForm(formId) : undefined;
+  const isServerBackedForm = !!formId
+    && !isDemoLocalId(formId)
+    && !api.isDemoMode()
+    && (
+      storageMode === 'api'
+      || api.isAdminActing()
+      || !storeForm
+      || storeForm.fields.length === 0
+      || storeForm.encryption?.mode === 'private'
+      || getPinnedSigner(formId) !== null
+    );
 
   // Load form: try authenticated API (owner), then public API (visitor)
   useEffect(() => {
     if (!formId) return;
 
-    // If store already has the form with fields loaded, no fetch needed
-    if (storeForm && storeForm.fields.length > 0) {
+    // For local/demo-only forms already loaded in store, no fetch needed.
+    // For server-backed forms, ALWAYS fetch fresh metadata from the API because the forms
+    // list endpoint omits E2EE `encryption` (and manifests can rotate on publish).
+    if (storeForm && storeForm.fields.length > 0 && !isServerBackedForm) {
       return;
     }
 
@@ -1110,16 +1132,21 @@ function FormResponseContent() {
     })();
 
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally narrow deps: only re-fetch when the form id or whether fields are loaded changes; depending on the whole storeForm object would re-run on every unrelated store mutation and cause redundant fetches
-  }, [formId, storeForm?.id, storeForm?.fields.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally narrow deps: only re-fetch when the form id, server-backed status, or local field loading changes
+  }, [formId, isServerBackedForm, storeForm?.id, storeForm?.fields.length]);
 
-  // Use store form (with fields) if available, otherwise fetched form
-  const rawForm = (storeForm && storeForm.fields.length > 0) ? storeForm : publicForm?.id === formId ? publicForm : storeForm;
+  // For server-backed forms, wait for the freshly fetched server form (which carries authoritative
+  // E2EE encryption metadata) instead of falling back to an unencrypted storeForm snapshot.
+  const rawForm = publicForm?.id === formId
+    ? publicForm
+    : !isServerBackedForm
+      ? storeForm
+      : undefined;
   const currentEncryption = rawForm?.encryption;
-  // E2EE downgrade by omission: the form as the server served it to a visitor, with no
-  // encryption block, though this browser has sealed answers for it before (private mode
-  // cannot be turned off). Rendering it would collect the answers and send them in the clear.
-  const strippedOfEncryption = !!rawForm && rawForm === publicForm && servedWithoutItsEncryption(rawForm);
+  // E2EE downgrade by omission: the form as the server served it, with no encryption block,
+  // though this browser has sealed answers for it before (private mode cannot be turned off).
+  // Rendering it would collect the answers and send them in the clear.
+  const strippedOfEncryption = !!rawForm && (rawForm === publicForm || isServerBackedForm) && servedWithoutItsEncryption(rawForm);
   const [schemaEncryption, setSchemaEncryption] = useState(currentEncryption);
   if (schemaEncryption !== currentEncryption) {
     setSchemaEncryption(currentEncryption);
@@ -1155,8 +1182,8 @@ function FormResponseContent() {
   useDocumentTitle(form?.title || (formLoadError ? 'Form unavailable' : 'Open form'));
 
   // E2EE (blocker 2): verify the served manifest (structure, signature, schema
-  // hash, signer-key binding) and parse the SIGNED schema snapshot. Until this
-  // completes the form is not rendered; on failure it fails closed.
+  // hash, signer-key binding), check TOFU signer pin BEFORE rendering fields,
+  // refuse unsigned custom screens, and parse the SIGNED schema snapshot.
   useEffect(() => {
     if (!rawForm || rawForm.encryption?.mode !== 'private') {
       return;
@@ -1166,17 +1193,41 @@ function FormResponseContent() {
     let cancelled = false;
     void (async () => {
       try {
-        const { verifyManifest } = await import('../lib/crypto/manifest');
+        if (rawForm.customScreen?.enabled) {
+          throw new Error('Private end-to-end encrypted forms cannot render unsigned custom screens.');
+        }
+        const [{ verifyManifest }, { fromB64 }] = await Promise.all([
+          import('../lib/crypto/manifest'),
+          import('../lib/crypto/encoding'),
+        ]);
         await verifyManifest(fid, encryption);
         const parsed: unknown = JSON.parse(encryption.schemaJson);
         if (!Array.isArray(parsed)) throw new Error('The signed schema snapshot is not a field list.');
+        const pinned = getPinnedSigner(fid);
+        if (pinned !== null && pinned !== encryption.signerPk) {
+          if (!cancelled) {
+            setPrivateSchema({ formId: fid, fields: parsed as FormField[] });
+            setPrivateSchemaError(null);
+            setLoadPinError(null);
+            setLoadPinConflict({
+              formId: fid,
+              signerPk: encryption.signerPk,
+              pinnedFingerprint: signerFingerprint(fromB64(pinned)),
+              servedFingerprint: signerFingerprint(fromB64(encryption.signerPk)),
+            });
+          }
+          return;
+        }
         if (!cancelled) {
+          setLoadPinConflict(null);
+          setLoadPinError(null);
           setPrivateSchema({ formId: fid, fields: parsed as FormField[] });
           setPrivateSchemaError(null);
         }
       } catch (e) {
         if (!cancelled) {
           setPrivateSchema(null);
+          setLoadPinConflict(null);
           setPrivateSchemaError(e instanceof Error ? e.message : 'The encryption manifest could not be verified.');
         }
       }
@@ -1374,6 +1425,10 @@ function FormResponseContent() {
       params.delete('draft');
       const nextSearch = params.toString();
       window.history.replaceState({}, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`);
+      // Private E2EE forms never hydrate plaintext answers from server-side drafts.
+      if (isPrivateForm) {
+        return;
+      }
       api.getPublicFormDraft(formId, draftToken).then((res) => {
         if (res.data?.draft) {
           const d = res.data.draft;
@@ -1575,14 +1630,58 @@ function FormResponseContent() {
     );
   }
 
+  // Load-time TOFU signer key change warning: block rendering form inputs until the user explicitly re-trusts.
+  if (form.encryption?.mode === 'private' && loadPinConflict?.formId === form.id) {
+    const trustNewKeyOnLoad = () => {
+      try {
+        trustFormSignerKey(loadPinConflict.formId, loadPinConflict.signerPk);
+        setLoadPinConflict(null);
+        setLoadPinError(null);
+      } catch (e) {
+        setLoadPinError(e instanceof Error ? e.message : 'Could not save the trust decision — browser storage is unavailable.');
+      }
+    };
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-950 p-4">
+        <div className="text-left max-w-md rounded-2xl border-2 border-red-400/70 bg-white dark:bg-slate-900 p-6 shadow-sm" role="alert">
+          <div className="w-12 h-12 bg-red-100 dark:bg-red-500/15 rounded-xl flex items-center justify-center mb-4">
+            <ShieldAlert className="h-6 w-6 text-red-500 dark:text-red-400" />
+          </div>
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">This form's security key has changed</h1>
+          <p className="text-sm text-gray-600 dark:text-slate-300 mb-1">
+            Previously trusted: <span className="font-mono">{loadPinConflict.pinnedFingerprint}</span>
+          </p>
+          <p className="text-sm text-gray-600 dark:text-slate-300 mb-4">
+            Now served: <span className="font-mono">{loadPinConflict.servedFingerprint}</span>
+          </p>
+          <p className="text-sm text-gray-500 dark:text-slate-400 mb-5">
+            This browser previously submitted encrypted answers to this form under a different key.
+            Only continue if the form owner told you they reset their encryption keys — otherwise do not enter any data.
+          </p>
+          {loadPinError && (
+            <p className="text-xs text-red-600 dark:text-red-400 mb-3">{loadPinError}</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={trustNewKeyOnLoad}>
+              Trust the new key and open form
+            </Button>
+            <Button variant="ghost" onClick={() => window.location.reload()} leftIcon={<RefreshCw className="h-4 w-4" />}>
+              Reload
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // The store holds the viewer's own forms, and readAsOwner says the rest. Anyone else reads a
   // screen's records and reports through the public endpoints, signed in or not: the owner API
   // refuses them, and a screen read that as no records at all.
   const viewedAsPublic = !api.isAuthenticated() || !(readAsOwner || rawForm === storeForm);
 
   // A section-screen widget dashboard takes over the public/embed view (host-rendered recharts;
-  // aggregates come from the whitelisted public endpoint).
-  if (form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard && !showFormView) {
+  // aggregates come from the whitelisted public endpoint). Never allowed on E2EE private forms.
+  if (!isPrivateForm && form.customScreen?.enabled && form.customScreen.kind === 'dashboard' && form.customScreen.dashboard && !showFormView) {
     const allowNew = !!form.customScreen?.allowNewResponses;
     return (
       <div className="relative min-h-dvh w-full bg-gray-50 dark:bg-slate-950 p-4 md:p-6">
@@ -1615,8 +1714,8 @@ function FormResponseContent() {
   }
 
   // A custom screen takes over the whole form experience (public link + embed) — unless the owner
-  // enabled "allow new records" and the viewer stepped through to the real form.
-  const screenTakeover = !!(form.customScreen?.enabled
+  // enabled "allow new records" and the viewer stepped through to the real form. Never on E2EE private forms.
+  const screenTakeover = !isPrivateForm && !!(form.customScreen?.enabled
     && (form.customScreen.html || form.customScreen.js || form.customScreen.ts || form.customScreen.files?.length));
   if (screenTakeover && !showFormView) {
     const allowNew = !!form.customScreen?.allowNewResponses;
@@ -1782,7 +1881,8 @@ function FormResponseContent() {
           const url = new URL(privateRedirectUrl);
           if (['http:', 'https:'].includes(url.protocol)) {
             setIsRedirecting(true);
-            setTimeout(() => { window.location.href = url.toString(); }, 2000);
+            if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
+            redirectTimerRef.current = setTimeout(() => { window.location.href = url.toString(); }, 2000);
           }
         } catch {
           // Invalid URL - don't redirect
@@ -1899,7 +1999,8 @@ function FormResponseContent() {
         const url = new URL(redirectUrl);
         if (['http:', 'https:'].includes(url.protocol)) {
           setIsRedirecting(true);
-          setTimeout(() => {
+          if (redirectTimerRef.current !== null) clearTimeout(redirectTimerRef.current);
+          redirectTimerRef.current = setTimeout(() => {
             window.location.href = url.toString();
           }, 2000);
         }
@@ -2350,7 +2451,7 @@ function FormResponseContent() {
             currentStep={safeCurrentStep}
             allowLinkedRecord={Boolean(viewer)}
             isPrivate={isPrivateForm}
-            showPublicMcp={form.status === 'published' && !inIframe}
+            showPublicMcp={form.status === 'published' && !inIframe && !isPrivateForm}
             primaryColor={form.theme.primaryColor}
             darkSurface={isDarkSurface}
             compact

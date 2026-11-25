@@ -56,13 +56,37 @@ class NativeRecordEventRouter
         $count = 0;
         if ($ours !== [] && $this->ai !== null) $count += $this->ai->capture($appId, $eventId, $event, $data, $ours, $readRow);
         if ($flows !== []) {
-            $enqueued = $this->flows->enqueueNativeRecordEvent($appId, $eventId, $event, $data, $flows);
+            $flowData = self::redactHiddenRecordColumns($data);
+            $enqueued = $this->flows->enqueueNativeRecordEvent($appId, $eventId, $event, $flowData, $flows);
             $count += $enqueued;
             if ($enqueued > 0 && $this->cloudRunner !== null && self::$cascadeDepth < self::MAX_EVENT_FLOW_DEPTH) {
                 $this->runQueuedCloudEventFlows($eventId, $flows);
             }
         }
         return $count;
+    }
+
+    /**
+     * Defense-in-depth redaction for record event previews arriving from SoftN's bundled
+     * `record-events.mjs` (which uses a narrower column-name filter than `NativeRecordStore::hidden()`).
+     * Strips any hidden/credential column before event payloads reach flow runs or logs.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    public static function redactHiddenRecordColumns(array $data): array
+    {
+        foreach (['record', 'before', 'after', 'previous'] as $key) {
+            if (!isset($data[$key]) || !is_array($data[$key])) {
+                continue;
+            }
+            foreach (array_keys($data[$key]) as $col) {
+                if (is_string($col) && NativeRecordStore::hidden($col)) {
+                    unset($data[$key][$col]);
+                }
+            }
+        }
+        return $data;
     }
 
     /**

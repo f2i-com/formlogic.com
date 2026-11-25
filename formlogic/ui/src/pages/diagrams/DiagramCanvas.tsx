@@ -15,14 +15,13 @@ import {
   NodeResizer,
   Position,
   ReactFlow,
-  applyEdgeChanges,
-  applyNodeChanges,
   useConnection,
   useReactFlow,
   type Connection,
   type Edge,
+  type EdgeChangeset,
   type Node,
-  type NodeChange,
+  type NodeChangeset,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -570,7 +569,7 @@ export function DiagramCanvas({
   const [rfEdges, setRfEdges] = useState<Edge[]>(initial.edges);
   const [canvasSource, setCanvasSource] = useState<typeof initial | null>(null);
   const onEdgesChange = useCallback(
-    (changes: Parameters<typeof applyEdgeChanges>[0]) => setRfEdges((current) => applyEdgeChanges(changes, current)),
+    (changes: EdgeChangeset) => setRfEdges((current) => changes.applyTo(current)),
     [],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -740,7 +739,7 @@ export function DiagramCanvas({
   );
 
   const onNodesChange = useCallback(
-    (changes: NodeChange[]) => setNodes((current) => applyNodeChanges(changes, current)),
+    (changes: NodeChangeset) => setNodes((current) => changes.applyTo(current)),
     [],
   );
 

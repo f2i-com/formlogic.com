@@ -77,22 +77,32 @@ pub fn new_words(root: &Path) -> Result<SecretString, String> {
     Ok(bip39::encode(&entropy))
 }
 
-/// Which key the words make, without saving it.
-pub fn id_of_words(words: &str) -> Result<String, String> {
+/// Derive the backup key from the twelve recovery words without saving it.
+pub fn derive_from_words(words: &str) -> Result<SecretKey, String> {
     let entropy = bip39::decode(words).map_err(|_| "Those are not the twelve words: check each one.".to_string())?;
-    Ok(key_id(&derive(&entropy)?))
+    derive(&entropy)
+}
+
+/// Which key the words make, without saving it.
+#[allow(dead_code)]
+pub fn id_of_words(words: &str) -> Result<String, String> {
+    Ok(key_id(&derive_from_words(words)?))
+}
+
+/// Verify an already-derived key opens at least one existing backup (when any exist) and save it.
+pub fn save_recovered(root: &Path, key: &SecretKey, backups: &[PathBuf]) -> Result<(), String> {
+    if !backups.is_empty() && !backups.iter().any(|backup| envelope::opens(backup, key)) {
+        return Err("Those words don't open the backups on this computer: check each one. Nothing has changed.".to_string());
+    }
+    save(root, key)
 }
 
 /// The key the words make, saved here. Words that fail their checksum change nothing. Their
 /// checksum is only four bits, so one mistyped word can pass it: when there are backups here the
 /// key must open one of them, or nothing changes.
 pub fn recover(root: &Path, words: &str, backups: &[PathBuf]) -> Result<SecretKey, String> {
-    let entropy = bip39::decode(words).map_err(|_| "Those are not the twelve words: check each one.".to_string())?;
-    let key = derive(&entropy)?;
-    if !backups.is_empty() && !backups.iter().any(|backup| envelope::opens(backup, &key)) {
-        return Err("Those words don't open the backups on this computer: check each one. Nothing has changed.".to_string());
-    }
-    save(root, &key)?;
+    let key = derive_from_words(words)?;
+    save_recovered(root, &key, backups)?;
     Ok(key)
 }
 

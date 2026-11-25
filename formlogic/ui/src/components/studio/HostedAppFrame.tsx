@@ -35,6 +35,14 @@ const BLOCKED_CONTAINER_HEADERS = new Set([
   'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
 ]);
 
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 /** Fast lower-bound walk so gigantic payloads reject immediately before exact JSON.stringify sizing. */
 function exceedsInputLimit(value: unknown, limit: number): boolean {
   let used = 0;
@@ -91,7 +99,7 @@ type FrameEngine = { id: string; revision: string };
 // `visitor`: the app asks for FormLogic's visitors (NativeFormlogic), so its requests carry the marker;
 // `wallet`: it takes payments, so it may open FormLogic's wallet.
 // `media`: the digest that names `assets` (the server's, of the app's media pack), where there is one.
-type NativeFrame = { assets: NativeMediaFiles; media?: string; origins?: string[]; access: 'application' | 'members'; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean; containerBackend?: 'host' };
+type NativeFrame = { assets: NativeMediaFiles; media?: string; origins?: string[]; access: 'application' | 'members'; allowCredentialedUploads?: boolean; storageScope: NativeStorageScope; files?: boolean; look?: NativeLook | null; visitor?: boolean; wallet?: boolean; containerBackend?: 'host' };
 /** A newer version of a running app's files, to hand to its frame (the `update` prop). */
 type FrameUpdate = { version: number; client: Record<string, string>; assets?: NativeMediaFiles; media?: string; engine?: { id: string; revision: string } };
 /**
@@ -440,7 +448,9 @@ export function HostedAppFrame({
       const nextNative = data && "project" in data && data.project ? {
         assets: data.project.assets,
         media: data.project.media?.sha256,
-        origins: data.project.origins, access: data.project.access, storageScope: data.project.storageScope,
+        origins: data.project.origins, access: data.project.access,
+        allowCredentialedUploads: Boolean(data.project.access === 'members' || ("isOwner" in data && data.isOwner === true)),
+        storageScope: data.project.storageScope,
         // Never silently carry `files: true` across a policy tightening from `'allow'` to `'ask'`:
         // only explicit `'allow'` grants files without prompting.
         files: data.project.files === 'allow',
@@ -774,7 +784,8 @@ export function HostedAppFrame({
               || path.length > 2048
               || path.includes("..")
               || path.includes("\\")
-              || /(?:%2e|%2f|%5c|[\x00-\x1f\x7f])/i.test(path)
+              || /(?:%2e|%2f|%5c)/i.test(path)
+              || hasControlChars(path)
             ) {
               throw new Error("Invalid container request path");
             }
@@ -826,17 +837,18 @@ export function HostedAppFrame({
           }
           // Sandboxed per-app file uploads (FormLogic inspects magic bytes, enforces policy & quotas).
           if (mountNative && !plugin && action === "formlogicUpload") {
+            const anonymousUploads = mountNative.access !== "members" && !mountNative.allowCredentialedUploads;
             const op = typeof input.op === "string" ? input.op : "upload";
             if (op === "list") {
               const folder = typeof input.folder === "string" ? input.folder : undefined;
-              const res = await api.listAppRuntimeUploads(slug, folder, controller.signal, !!mountNative.visitor);
+              const res = await api.listAppRuntimeUploads(slug, folder, controller.signal, !!mountNative.visitor, anonymousUploads);
               reply(res.error ? { error: res.error } : { result: res.data });
               return;
             }
             if (op === "delete") {
               const uploadId = typeof input.id === "string" ? input.id.trim() : "";
               if (!UPLOAD_ID_RE.test(uploadId)) throw new Error("Invalid upload id.");
-              const res = await api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, !!mountNative.visitor);
+              const res = await api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, !!mountNative.visitor, anonymousUploads);
               reply(res.error ? { error: res.error } : { result: res.data });
               return;
             }
@@ -850,7 +862,7 @@ export function HostedAppFrame({
               const contentBase64 = typeof input.contentBase64 === "string" ? input.contentBase64 : "";
               const mimeType = typeof input.mimeType === "string" ? input.mimeType : undefined;
               const folder = typeof input.folder === "string" ? input.folder : undefined;
-              const res = await api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, !!mountNative.visitor);
+              const res = await api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, !!mountNative.visitor, anonymousUploads);
               reply(res.error ? { error: res.error } : { result: res.data });
             } finally {
               uploadsInFlight--;

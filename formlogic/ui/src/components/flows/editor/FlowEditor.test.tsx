@@ -4,7 +4,7 @@
 import { act, type ComponentProps } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NodeChange } from '@xyflow/react';
+import { NodeChangeset } from '@xyflow/react';
 import { FlowEditor } from './FlowEditor';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
 import { useToastStore } from '../../../stores/toastStore';
@@ -13,12 +13,12 @@ import type { FlowDefinition } from '../../../types/flows';
 const h = vi.hoisted(() => ({ moves: 0 }));
 
 vi.mock('./FlowCanvas', () => ({
-  FlowCanvas: ({ nodes, onNodesChange }: { nodes: Array<{ position: { x: number } }>; onNodesChange: (changes: NodeChange[]) => void }) => (
+  FlowCanvas: ({ nodes, onNodesChange }: { nodes: Array<{ position: { x: number } }>; onNodesChange: (changes: NodeChangeset) => void }) => (
     <button
       type="button"
       data-testid="edit"
       data-x={nodes[0]?.position.x}
-      onClick={() => onNodesChange([{ id: 'n1', type: 'position', position: { x: 100 + 10 * ++h.moves, y: 40 } }])}
+      onClick={() => onNodesChange(new NodeChangeset([{ id: 'n1', type: 'position', position: { x: 100 + 10 * ++h.moves, y: 40 } }]))}
     >
       Edit
     </button>

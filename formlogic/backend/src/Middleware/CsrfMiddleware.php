@@ -202,9 +202,9 @@ class CsrfMiddleware implements MiddlewareInterface
         )) {
             return true;
         }
-        // Marketplace ephemeral sandbox endpoints (stateless HMAC-signed demo token in body,
+        // Marketplace ephemeral sandbox endpoints (stateless HMAC-signed demo token in body/query,
         // called from opaque-origin sandbox iframes with no session cookies)
-        if ($method === 'POST' && preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset)$#', $path)) {
+        if (in_array($method, ['POST', 'PUT', 'DELETE'], true) && preg_match('#^/api/packs/catalog/[^/]+/demo/(?:ui-event|request|reset|records)$#', $path)) {
             return true;
         }
 

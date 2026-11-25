@@ -32,7 +32,7 @@ Options -Indexes
   # `setifempty` would say it too, but needs Apache 2.4.7, and is a 500 on every request before it.
   SetEnvIf Request_URI "^/api/" IS_API
   SetEnvIfNoCase Request_URI "^/api/" IS_API
-  SetEnvIf Request_URI "^/\.well-known/" IS_API
+  SetEnvIfNoCase Request_URI "^/\.well-known/" IS_API
   SetEnvIfNoCase Request_URI "^/(manifest\.json|robots\.txt|sitemap\.xml)$" IS_API
   Header always set X-Content-Type-Options "nosniff" env=!IS_API
   Header always set Referrer-Policy "strict-origin-when-cross-origin" env=!IS_API
@@ -43,9 +43,9 @@ Options -Indexes
   # so the SPA + zipp WASM worker are unaffected — only framing is restricted.
   Header always set X-Frame-Options "DENY" env=!IS_API
   Header always set Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" env=!IS_API
-  # The public form runtime (/form/...) is intentionally embeddable. SetEnvIf matches
+  # The public form runtime (/form/...) is intentionally embeddable. SetEnvIfNoCase matches
   # the original request path before the SPA rewrite to /index.html.
-  SetEnvIf Request_URI "^/form/" IS_FORM_RUNTIME
+  SetEnvIfNoCase Request_URI "^/form/" IS_FORM_RUNTIME
   Header always unset X-Frame-Options env=IS_FORM_RUNTIME
   Header always set Content-Security-Policy "frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_FORM_RUNTIME
   # Internal SPA rewrites prefix request environment variables with REDIRECT_.
@@ -55,7 +55,7 @@ Options -Indexes
   # frame-ancestors looks at every ancestor, so this can't be 'self': custom screens would be blank
   # in every embed. The document sandboxes itself instead, so nothing that frames it gets this
   # origin, and its boot takes a screen only from a parent of this origin (check-security-invariants).
-  SetEnvIf Request_URI "^/screen-host\.html$" IS_SCREEN_HOST
+  SetEnvIfNoCase Request_URI "^/screen-host\.html$" IS_SCREEN_HOST
   Header always unset X-Frame-Options env=IS_SCREEN_HOST
   Header always set Content-Security-Policy "sandbox allow-scripts; frame-ancestors *; base-uri 'self'; object-src 'none'" env=IS_SCREEN_HOST
   # FormLogic embeds its hosted apps and authoring tools from these entry points.
@@ -64,7 +64,7 @@ Options -Indexes
   # engine, whose shell policy carries 'unsafe-eval'. It must therefore be held to
   # exactly the same framing rule as index.html — the document with the weaker
   # script policy must never also be the one anybody may frame.
-  SetEnvIf Request_URI "^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
+  SetEnvIfNoCase Request_URI "^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$" IS_APP_FRAME
   Header always set X-Frame-Options "SAMEORIGIN" env=IS_APP_FRAME
   Header always set Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_FRAME
   # The runtime documents run other people's code, so the response itself sandboxes them: they
@@ -73,14 +73,14 @@ Options -Indexes
   # After the policy above, which this replaces. The editors are same-origin and stay out of it.
   # allow-downloads: a document's sandbox and its frame's both apply, so FormLogic's frame decides
   # which app may save a file (only one its owner, and if asked its visitor, let open files).
-  SetEnvIf Request_URI "^/hosted-runtime/(index\.html|host\.html)?$" IS_APP_RUNTIME
+  SetEnvIfNoCase Request_URI "^/hosted-runtime/(index\.html|host\.html)?$" IS_APP_RUNTIME
   Header always set Content-Security-Policy "sandbox allow-scripts allow-downloads; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" env=IS_APP_RUNTIME
 </IfModule>
 
 # ---- Never serve secrets or server files over HTTP -------------------------
 # .env and .env.* (the requirement) and .ht* control files, plus (below) SQLite
 # databases, logs, and lock files. These extension/name blocks are rewrite-INDEPENDENT.
-<FilesMatch "^\.(env|ht)">
+<FilesMatch "(?i)^\.(env|ht)">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -89,7 +89,7 @@ Options -Indexes
     Deny from all
   </IfModule>
 </FilesMatch>
-<FilesMatch "\.(env|sqlite|sqlite3|db|log|lock)$">
+<FilesMatch "(?i)\.(env|sqlite|sqlite3|db|log|lock)$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
@@ -109,7 +109,7 @@ Options -Indexes
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
   # Belt-and-suspenders: block any request that targets a .env file, anywhere in the tree.
-  RewriteRule (^|/)\.env(\.|$) - [F,L]
+  RewriteRule (^|/)\.env(\.|$) - [F,L,NC]
 
   # API: send every /api/* request to the backend front controller. Because the
   # whole backend lives under ./api, this funnel is ALSO what keeps api/.env,
@@ -240,6 +240,10 @@ Options -Indexes
   # for what it does, not its content, so it is asked for every time too.
   <FilesMatch "^domain-head\.js$">
     Header set Cache-Control "no-cache"
+  </FilesMatch>
+  # The custom-screen sandbox host is unhashed and must always revalidate without CDN transforms.
+  <FilesMatch "^screen-host\.html$">
+    Header set Cache-Control "no-cache, no-transform"
   </FilesMatch>
   # The app runtime's two documents, no-transform as well: a CDN leaves them as they were sent.
   # Cloudflare's Web Analytics adds its script to every page it proxies, the app's frame included,

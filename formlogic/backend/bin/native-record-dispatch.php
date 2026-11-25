@@ -13,9 +13,23 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
 // a connected OAIY executor or authenticated app runtime executes them.
 if (PHP_SAPI !== 'cli') exit;
 require __DIR__ . '/../vendor/autoload.php';
-\Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
+date_default_timezone_set('UTC');
+if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
+    \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
+}
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
+$lockHandle = \FormLogic\Support\CronLock::take('native-record-dispatch');
+if ($lockHandle === null) {
+    fwrite(STDERR, date('c') . " Another native-record-dispatch instance is already running; exiting\n");
+    exit(0);
+}
 $mysql = new \FormLogic\Database\MySQLConnection($config['settings']['mysql']);
+try {
+    $mysql->ensureSchemaCurrent();
+} catch (Throwable $e) {
+    fwrite(STDERR, date('c') . " Schema init warning: " . $e->getMessage() . "\n");
+}
 $native = new \FormLogic\Services\NativeAppService();
 $watch = in_array('--watch', $argv, true);
 do {

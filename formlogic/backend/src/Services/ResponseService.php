@@ -1385,6 +1385,7 @@ class ResponseService
      */
     public function publicRows(string $formId, int $limit): array
     {
+        $this->assertNotPrivate($formId);
         return array_values(array_filter(
             $this->getFormResponses($formId, ['limit' => $limit]),
             static fn (array $row): bool => !in_array($row['status'] ?? null, self::NOT_PUBLIC_STATUSES, true)
@@ -2264,16 +2265,6 @@ class ResponseService
             throw new \RuntimeException('Form not found');
         }
 
-        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            $created = $this->nativeTableBridge->createResponse($binding, $data);
-            if ($this->flowService !== null) {
-                try {
-                    $this->flowService->enqueueSubmissionBindings($formId, (string) $created['id'], is_array($created['answers'] ?? null) ? $created['answers'] : [], $sourceRunId);
-                } catch (\Throwable) {}
-            }
-            return $created;
-        }
-
         // No record is made with an answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, whichever
         // path led here (the app runtime and the shared validation refuse it earlier, with the
         // field's label): it is not handed to the onSubmit script's job below, nor stored for
@@ -2291,6 +2282,104 @@ class ResponseService
                     422
                 );
             }
+        }
+
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $id = $this->generateUuid();
+            $now = date('Y-m-d H:i:s');
+            $scriptResult = null;
+            $runsScript = $this->runtime !== null && $script !== null && trim($script) !== '';
+            $quotaLock = $runsScript ? $this->holdQuota($formId, $quotaLimit, self::QUOTA_WAIT_FOR_SCRIPT_SECONDS) : null;
+            try {
+                if ($runsScript) {
+                    $scriptResult = $this->runtime->execute($script, [
+                        'answers' => $data['answers'] ?? [],
+                        'ipAddress' => $data['ipAddress'] ?? null,
+                        'userAgent' => $data['userAgent'] ?? null,
+                        'timestamp' => time(),
+                        'responseId' => $id,
+                        'formId' => $formId,
+                    ]);
+                    if ($scriptResult->isRejected()) {
+                        return new ScriptRejection($scriptResult->rejectionMessage ?? 'Submission rejected', scriptActed: $scriptResult->actedOutside);
+                    }
+                    if (!$scriptResult->success) {
+                        $this->logger->error('onSubmit script did not run; submission refused', [
+                            'formId' => $formId,
+                            'error' => $scriptResult->error,
+                        ]);
+                        return $scriptResult->scriptFault
+                            ? ScriptRejection::scriptFailed($scriptResult->error ?? 'script error', $scriptResult->actedOutside)
+                            : ScriptRejection::unavailable($scriptResult->error ?? 'script error', $scriptResult->actedOutside);
+                    }
+                    if (!$scriptResult->store) {
+                        try {
+                            $this->updateAnalytics($formId, 'completion');
+                        } catch (\Throwable) {}
+                        return [
+                            'id' => $id,
+                            'status' => 'submitted',
+                            'submittedAt' => $now,
+                            'updatedAt' => $now,
+                            'answers' => $data['answers'] ?? [],
+                            'stored' => false,
+                        ];
+                    }
+                    if ($scriptResult->fields !== []) {
+                        $mergedAnswers = is_array($data['answers'] ?? null) ? $data['answers'] : [];
+                        foreach ($scriptResult->fields as $fname => $fval) {
+                            $mergedAnswers[$fname] = $fval;
+                        }
+                        $data['answers'] = $mergedAnswers;
+                    }
+                    $allowedStatuses = ['submitted', 'reviewed', 'approved', 'rejected', 'spam', 'archived'];
+                    if ($scriptResult->status !== null && in_array($scriptResult->status, $allowedStatuses, true)) {
+                        $data['status'] = $scriptResult->status;
+                    }
+                }
+                $quotaLock ??= $this->holdQuota($formId, $quotaLimit);
+                $created = $this->nativeTableBridge->createResponse($binding, $data);
+                if ($scriptResult !== null && $scriptResult->success && $scriptResult->tags !== []) {
+                    $created['tags'] = $scriptResult->tags;
+                }
+            } catch (\Throwable $e) {
+                throw $this->withScriptDone($e, $formId, $scriptResult);
+            } finally {
+                $this->releaseFormLock($quotaLock);
+            }
+
+            if ($this->fileStorageService !== null) {
+                try {
+                    $this->fileStorageService->commitResponseFiles($formId, is_array($created['answers'] ?? null) ? $created['answers'] : ($data['answers'] ?? []));
+                } catch (\Throwable $commitErr) {
+                    $this->logger->error('Failed to commit uploaded files after native-table response create', [
+                        'formId' => $formId, 'responseId' => $created['id'] ?? null, 'error' => $commitErr->getMessage(),
+                    ]);
+                }
+            }
+            if ($this->webhookService !== null && !NativeAppService::hasSandboxRootOverrides()) {
+                try {
+                    $webhookPayload = $created;
+                    unset($webhookPayload['metadata']['ipAddress'], $webhookPayload['metadata']['userAgent'], $webhookPayload['metadata']['referrer']);
+                    $webhookPayload = $this->withFileReceiptUrls($formId, $webhookPayload);
+                    $this->webhookService->dispatch($formId, 'response.created', $webhookPayload);
+                } catch (\Throwable $postErr) {
+                    $this->logger->error('Post-persist webhook failed after native-table response create', [
+                        'formId' => $formId,
+                        'responseId' => $created['id'] ?? null,
+                        'error' => $postErr->getMessage(),
+                    ]);
+                }
+            }
+            if ($this->flowService !== null && !NativeAppService::hasSandboxRootOverrides()) {
+                try {
+                    $this->flowService->enqueueSubmissionBindings($formId, (string) $created['id'], is_array($created['answers'] ?? null) ? $created['answers'] : [], $sourceRunId);
+                    if ($scriptResult !== null && $scriptResult->success && $scriptResult->flowRuns !== []) {
+                        $this->flowService->enqueueScriptFlowRuns($formId, (string) $created['id'], $scriptResult->flowRuns, $sourceRunId);
+                    }
+                } catch (\Throwable) {}
+            }
+            return $created;
         }
 
         $db = $this->sqlite->getFormDatabase($formId);
@@ -3557,7 +3646,7 @@ class ResponseService
     public function getResponseCount(string $formId, ?string $submittedByUserId = null): int
     {
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            return $this->nativeTableBridge->countResponses($binding);
+            return $this->nativeTableBridge->countResponses($binding, $submittedByUserId);
         }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;

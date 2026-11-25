@@ -77,6 +77,7 @@ if (PHP_SAPI !== 'cli' || (defined('IDEMPOTENCY_CLEANUP_NO_RUN') && IDEMPOTENCY_
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 $mysqlConfig = $config['settings']['mysql'];
 

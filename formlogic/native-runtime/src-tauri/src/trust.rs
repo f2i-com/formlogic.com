@@ -200,15 +200,32 @@ impl PinnedKeys {
     fn persist(&self, map: &HashMap<String, PinnedKey>) -> Result<(), String> {
         let body = serde_json::to_string_pretty(map)
             .map_err(|e| format!("pin store serialize failed: {e}"))?;
-        let tmp = self.path.with_extension("json.tmp");
+        let mut rand = [0u8; 8];
+        getrandom::fill(&mut rand).map_err(|e| format!("pin store temp name failed: {e}"))?;
+        let suffix: String = rand.iter().map(|b| format!("{b:02x}")).collect();
+        let mut tmp_name = self.path.as_os_str().to_owned();
+        tmp_name.push(format!(".tmp-{suffix}"));
+        let tmp = PathBuf::from(tmp_name);
         {
             use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts
+                .open(&tmp)
                 .map_err(|e| format!("pin store write failed (create): {e}"))?;
-            f.write_all(body.as_bytes())
-                .map_err(|e| format!("pin store write failed: {e}"))?;
-            f.sync_data()
-                .map_err(|e| format!("pin store fsync failed: {e}"))?;
+            if let Err(e) = f.write_all(body.as_bytes()) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("pin store write failed: {e}"));
+            }
+            if let Err(e) = f.sync_data() {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("pin store fsync failed: {e}"));
+            }
         }
         std::fs::rename(&tmp, &self.path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);

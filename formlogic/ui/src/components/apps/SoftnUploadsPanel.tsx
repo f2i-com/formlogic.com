@@ -32,6 +32,7 @@ import { Input } from '../ui/Input';
 import { Switch } from '../ui/Switch';
 import { Panel } from '../ui/Panel';
 import { toast } from '../../stores/toastStore';
+import { API_BASE_URL } from '../../lib/apiBase';
 import { cn, copyToClipboard } from '../../lib/utils';
 
 const ACCESS_OPTIONS: readonly { value: NativeAppUploadAccess; label: string; hint: string }[] = [
@@ -88,27 +89,81 @@ export function SoftnUploadsPanel({
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showSnippet, setShowSnippet] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [maxFileMbInput, setMaxFileMbInput] = useState('');
+  const [quotaMbInput, setQuotaMbInput] = useState('');
+  const [activeAppId, setActiveAppId] = useState(appId);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loadSeqRef = useRef(0);
+  const loadedAppIdRef = useRef(appId);
+  const policyDirtyRef = useRef(false);
+  const copiedTimerRef = useRef<number | null>(null);
+
+  if (activeAppId !== appId) {
+    setActiveAppId(appId);
+    setUploads([]);
+    setStats(null);
+    setPolicy(null);
+    setDraftPolicy(null);
+    setMaxFileMbInput('');
+    setQuotaMbInput('');
+    setSelected(new Set());
+    setStatusFilter('all');
+    setCategoryFilter('all');
+    setSearch('');
+    setError(null);
+    setLoading(true);
+    setSavingPolicy(false);
+    setUploading(false);
+    setDragActive(false);
+    setUploadFolder('');
+    setBusyIds(new Set());
+    setBulkDeleting(false);
+    setCopiedId(null);
+  }
+
+  const policyDirty = Boolean(policy && draftPolicy && JSON.stringify(policy) !== JSON.stringify(draftPolicy));
+  useEffect(() => {
+    policyDirtyRef.current = policyDirty;
+  }, [policyDirty]);
+
+  useEffect(() => {
+    loadedAppIdRef.current = appId;
+    policyDirtyRef.current = false;
+    loadSeqRef.current += 1;
+  }, [appId]);
+
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+  }, []);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    const requestedAppId = appId;
     setLoading(true);
     setError(null);
-    const res = await api.listNativeAppUploads(appId, {
+    const res = await api.listNativeAppUploads(requestedAppId, {
       status: statusFilter,
       category: categoryFilter,
       search: search.trim() || undefined,
       limit: 100,
     });
+    if (seq !== loadSeqRef.current || loadedAppIdRef.current !== requestedAppId) return;
     if (res.error || !res.data) {
       setError(res.error || 'Could not load sandboxed uploads.');
     } else {
+      const nextPolicy = res.data.policy;
       setUploads(res.data.uploads);
       setStats(res.data.stats);
-      setPolicy(res.data.policy);
-      setDraftPolicy(prev => prev ?? res.data!.policy);
+      setPolicy(nextPolicy);
+      if (!policyDirtyRef.current) {
+        setDraftPolicy(nextPolicy);
+        setMaxFileMbInput(String(nextPolicy.maxFileSizeMb));
+        setQuotaMbInput(String(nextPolicy.maxTotalStorageMb));
+      }
       setSelected(new Set());
     }
     setLoading(false);
@@ -119,87 +174,145 @@ export function SoftnUploadsPanel({
     return () => window.clearTimeout(timer);
   }, [load, search]);
 
-  const policyDirty = policy && draftPolicy && JSON.stringify(policy) !== JSON.stringify(draftPolicy);
+  const clampMaxFileMb = (raw: string, fallback: number): number => {
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(1, Math.min(25, parsed)) : fallback;
+  };
+
+  const clampQuotaMb = (raw: string, fallback: number): number => {
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? Math.max(10, Math.min(2048, parsed)) : fallback;
+  };
 
   const savePolicy = async () => {
-    if (!draftPolicy || readOnly) return;
+    if (!draftPolicy || readOnly || savingPolicy) return;
+    const requestedAppId = appId;
+    const clampedPolicy: NativeAppUploadPolicy = {
+      ...draftPolicy,
+      maxFileSizeMb: clampMaxFileMb(maxFileMbInput, draftPolicy.maxFileSizeMb),
+      maxTotalStorageMb: clampQuotaMb(quotaMbInput, draftPolicy.maxTotalStorageMb),
+    };
+    setDraftPolicy(clampedPolicy);
+    setMaxFileMbInput(String(clampedPolicy.maxFileSizeMb));
+    setQuotaMbInput(String(clampedPolicy.maxTotalStorageMb));
     setSavingPolicy(true);
-    const res = await api.updateNativeAppUploadPolicy(appId, draftPolicy);
-    setSavingPolicy(false);
-    if (res.error || !res.data) {
-      toast.error('Could not save upload policy', res.error || 'Please check your settings.');
-      return;
+    try {
+      const res = await api.updateNativeAppUploadPolicy(requestedAppId, clampedPolicy);
+      if (loadedAppIdRef.current !== requestedAppId) return;
+      if (res.error || !res.data) {
+        toast.error('Could not save upload policy', res.error || 'Please check your settings.');
+        return;
+      }
+      policyDirtyRef.current = false;
+      setPolicy(res.data.policy);
+      setDraftPolicy(res.data.policy);
+      setMaxFileMbInput(String(res.data.policy.maxFileSizeMb));
+      setQuotaMbInput(String(res.data.policy.maxTotalStorageMb));
+      toast.success('Upload sandbox policy saved');
+      void load();
+    } finally {
+      if (loadedAppIdRef.current === requestedAppId) setSavingPolicy(false);
     }
-    setPolicy(res.data.policy);
-    setDraftPolicy(res.data.policy);
-    toast.success('Upload sandbox policy saved');
-    void load();
   };
 
   const handleFiles = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0 || readOnly) return;
+    if (!fileList || fileList.length === 0 || readOnly || uploading) return;
+    const requestedAppId = appId;
     setUploading(true);
     let okCount = 0;
-    for (const file of Array.from(fileList)) {
-      const res = await api.uploadNativeAppFile(appId, file, uploadFolder);
-      if (res.error) {
-        toast.error(`Blocked: ${file.name}`, res.error);
-      } else {
-        okCount++;
+    try {
+      for (const file of Array.from(fileList)) {
+        if (loadedAppIdRef.current !== requestedAppId) return;
+        const res = await api.uploadNativeAppFile(requestedAppId, file, uploadFolder);
+        if (loadedAppIdRef.current !== requestedAppId) return;
+        if (res.error) {
+          toast.error(`Blocked: ${file.name}`, res.error);
+        } else {
+          okCount++;
+        }
       }
-    }
-    setUploading(false);
-    if (okCount > 0) {
-      toast.success(okCount === 1 ? 'File uploaded to sandbox' : `${okCount} files uploaded to sandbox`);
-      void load();
+      if (okCount > 0 && loadedAppIdRef.current === requestedAppId) {
+        toast.success(okCount === 1 ? 'File uploaded to sandbox' : `${okCount} files uploaded to sandbox`);
+        void load();
+      }
+    } finally {
+      if (loadedAppIdRef.current === requestedAppId) setUploading(false);
     }
   };
 
   const toggleStatus = async (item: NativeAppUploadRecord) => {
     if (readOnly) return;
+    const requestedAppId = appId;
     const nextStatus = item.status === 'approved' ? 'quarantined' : 'approved';
     setBusyIds(prev => new Set(prev).add(item.id));
-    const res = await api.updateNativeAppUpload(appId, item.id, { status: nextStatus });
-    setBusyIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
-    if (res.error) {
-      toast.error('Could not update file status', res.error);
-      return;
+    try {
+      const res = await api.updateNativeAppUpload(requestedAppId, item.id, { status: nextStatus });
+      if (loadedAppIdRef.current !== requestedAppId) return;
+      if (res.error) {
+        toast.error('Could not update file status', res.error);
+        return;
+      }
+      toast.success(nextStatus === 'approved' ? 'File approved for app access' : 'File moved to quarantine');
+      void load();
+    } finally {
+      if (loadedAppIdRef.current === requestedAppId) {
+        setBusyIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
+      }
     }
-    toast.success(nextStatus === 'approved' ? 'File approved for app access' : 'File moved to quarantine');
-    void load();
   };
 
   const removeOne = async (item: NativeAppUploadRecord) => {
     if (readOnly) return;
+    if (!window.confirm(`Permanently delete "${item.originalFilename}"? This cannot be undone.`)) return;
+    const requestedAppId = appId;
     setBusyIds(prev => new Set(prev).add(item.id));
-    const res = await api.deleteNativeAppUpload(appId, item.id);
-    setBusyIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
-    if (res.error) {
-      toast.error('Could not delete file', res.error);
-      return;
+    try {
+      const res = await api.deleteNativeAppUpload(requestedAppId, item.id);
+      if (loadedAppIdRef.current !== requestedAppId) return;
+      if (res.error) {
+        toast.error('Could not delete file', res.error);
+        return;
+      }
+      toast.success('File permanently deleted');
+      void load();
+    } finally {
+      if (loadedAppIdRef.current === requestedAppId) {
+        setBusyIds(prev => { const next = new Set(prev); next.delete(item.id); return next; });
+      }
     }
-    toast.success('File permanently deleted');
-    void load();
   };
 
   const removeSelected = async () => {
-    if (readOnly || selected.size === 0) return;
+    if (readOnly || bulkDeleting || selected.size === 0) return;
     const ids = [...selected];
-    const res = await api.bulkDeleteNativeAppUploads(appId, ids);
-    if (res.error) {
-      toast.error('Bulk delete failed', res.error);
-      return;
+    if (!window.confirm(`Permanently delete ${ids.length} selected file(s)? This cannot be undone.`)) return;
+    const requestedAppId = appId;
+    setBulkDeleting(true);
+    try {
+      const res = await api.bulkDeleteNativeAppUploads(requestedAppId, ids);
+      if (loadedAppIdRef.current !== requestedAppId) return;
+      if (res.error) {
+        toast.error('Bulk delete failed', res.error);
+        return;
+      }
+      toast.success(`Deleted ${res.data?.deleted ?? ids.length} file(s)`);
+      void load();
+    } finally {
+      if (loadedAppIdRef.current === requestedAppId) setBulkDeleting(false);
     }
-    toast.success(`Deleted ${res.data?.deleted ?? ids.length} file(s)`);
-    void load();
   };
 
   const copyUrl = async (item: NativeAppUploadRecord) => {
-    const full = `${window.location.origin}${item.url}`;
+    const apiOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+    const full = new URL(item.url, apiOrigin).toString();
     await copyToClipboard(full);
     setCopiedId(item.id);
     toast.success('Sandboxed file URL copied');
-    window.setTimeout(() => setCopiedId(curr => curr === item.id ? null : curr), 1800);
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => {
+      copiedTimerRef.current = null;
+      setCopiedId(curr => curr === item.id ? null : curr);
+    }, 1800);
   };
 
   const usagePct = stats && stats.quotaBytes > 0
@@ -255,7 +368,9 @@ export function SoftnUploadsPanel({
           {!readOnly && (
             <div
               onDragOver={e => { e.preventDefault(); setDragActive(true); }}
-              onDragLeave={() => setDragActive(false)}
+              onDragLeave={e => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragActive(false);
+              }}
               onDrop={e => { e.preventDefault(); setDragActive(false); void handleFiles(e.dataTransfer.files); }}
               className={cn(
                 'rounded-2xl border-2 border-dashed p-5 transition-colors',
@@ -313,6 +428,7 @@ export function SoftnUploadsPanel({
                   <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
                   <input
                     type="search"
+                    aria-label="Search files or folders"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     placeholder="Search files or folders…"
@@ -343,7 +459,14 @@ export function SoftnUploadsPanel({
               </div>
               <div className="flex items-center gap-2">
                 {selected.size > 0 && !readOnly && (
-                  <Button size="sm" variant="danger" leftIcon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => void removeSelected()}>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={bulkDeleting}
+                    isLoading={bulkDeleting}
+                    leftIcon={<Trash2 className="h-3.5 w-3.5" />}
+                    onClick={() => void removeSelected()}
+                  >
                     Delete {selected.size}
                   </Button>
                 )}
@@ -454,6 +577,7 @@ export function SoftnUploadsPanel({
                           href={downloadUrl}
                           download={item.originalFilename}
                           title="Download file"
+                          aria-label={`Download ${item.originalFilename}`}
                           className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                         >
                           <Download className="h-3.5 w-3.5" aria-hidden="true" />
@@ -464,6 +588,7 @@ export function SoftnUploadsPanel({
                             target="_blank"
                             rel="noopener noreferrer"
                             title="Open in sandboxed tab"
+                            aria-label={`Open ${item.originalFilename} in sandboxed tab`}
                             className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                           >
                             <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -474,6 +599,7 @@ export function SoftnUploadsPanel({
                             type="button"
                             disabled={isBusy}
                             title="Delete permanently"
+                            aria-label={`Delete ${item.originalFilename} permanently`}
                             onClick={() => void removeOne(item)}
                             className="inline-flex h-8 items-center rounded-lg border border-rose-200 px-2 text-xs text-rose-600 hover:bg-rose-50 dark:border-rose-500/30 dark:text-rose-400 dark:hover:bg-rose-500/10"
                           >
@@ -572,9 +698,21 @@ const data = await res.json();`}</pre>
                       type="number"
                       min={1}
                       max={25}
-                      value={draftPolicy.maxFileSizeMb}
+                      value={maxFileMbInput}
                       disabled={readOnly || savingPolicy}
-                      onChange={e => setDraftPolicy({ ...draftPolicy, maxFileSizeMb: Math.max(1, Math.min(25, Number(e.target.value) || 1)) })}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        setMaxFileMbInput(raw);
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 25) {
+                          setDraftPolicy({ ...draftPolicy, maxFileSizeMb: parsed });
+                        }
+                      }}
+                      onBlur={() => {
+                        const clamped = clampMaxFileMb(maxFileMbInput, draftPolicy.maxFileSizeMb);
+                        setMaxFileMbInput(String(clamped));
+                        setDraftPolicy({ ...draftPolicy, maxFileSizeMb: clamped });
+                      }}
                       className="mt-1 h-9 text-xs"
                     />
                   </div>
@@ -587,9 +725,21 @@ const data = await res.json();`}</pre>
                       type="number"
                       min={10}
                       max={2048}
-                      value={draftPolicy.maxTotalStorageMb}
+                      value={quotaMbInput}
                       disabled={readOnly || savingPolicy}
-                      onChange={e => setDraftPolicy({ ...draftPolicy, maxTotalStorageMb: Math.max(10, Math.min(2048, Number(e.target.value) || 10)) })}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        setQuotaMbInput(raw);
+                        const parsed = Number.parseInt(raw, 10);
+                        if (Number.isFinite(parsed) && parsed >= 10 && parsed <= 2048) {
+                          setDraftPolicy({ ...draftPolicy, maxTotalStorageMb: parsed });
+                        }
+                      }}
+                      onBlur={() => {
+                        const clamped = clampQuotaMb(quotaMbInput, draftPolicy.maxTotalStorageMb);
+                        setQuotaMbInput(String(clamped));
+                        setDraftPolicy({ ...draftPolicy, maxTotalStorageMb: clamped });
+                      }}
                       className="mt-1 h-9 text-xs"
                     />
                   </div>

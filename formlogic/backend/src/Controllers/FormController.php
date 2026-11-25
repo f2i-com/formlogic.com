@@ -299,35 +299,79 @@ class FormController
             $data['title'] = 'Untitled Form';
         }
 
-        // A script language outside javascript | python is refused here as on update
-        // (formlogic-python/1); createForm stores a body's customLogic as given.
-        try {
-            \FormLogic\Helpers\CustomLogicSanitizer::assertSupportedLanguages($data['customLogic'] ?? null);
-        } catch (\InvalidArgumentException $e) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 422);
+        if (isset($data['customLogic'])) {
+            if (!is_array($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic must be an object'], 422);
+            }
+            try {
+                $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            } catch (\InvalidArgumentException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 422);
+            }
+            if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 422);
+            }
         }
 
         $data['userId'] = $userId;
-        // nativeTableBinding is strictly server-managed (FormSqliteDatabaseService / NativeAppController).
-        if (isset($data['settings']) && is_array($data['settings'])) {
-            unset($data['settings']['nativeTableBinding']);
+        $existingForm = is_string($data['id'] ?? null) && $data['id'] !== '' ? $this->formService->getForm($data['id']) : null;
+        $ownedExisting = ($existingForm !== null && ($existingForm['userId'] ?? null) === $userId) ? $existingForm : null;
+        if ($ownedExisting !== null) {
+            // Upsert path: preserve server-managed SQLite table binding instead of erasing it.
+            if (isset($data['settings']) && is_array($data['settings'])) {
+                $existingSettings = is_array($ownedExisting['settings'] ?? null) ? $ownedExisting['settings'] : [];
+                if (array_key_exists('nativeTableBinding', $existingSettings)) {
+                    $data['settings']['nativeTableBinding'] = $existingSettings['nativeTableBinding'];
+                } else {
+                    unset($data['settings']['nativeTableBinding']);
+                }
+            }
+            $this->sanitizeDashboardScreen($data, (string) $ownedExisting['id']);
+        } else {
+            // nativeTableBinding is strictly server-managed (FormSqliteDatabaseService / NativeAppController).
+            if (isset($data['settings']) && is_array($data['settings'])) {
+                unset($data['settings']['nativeTableBinding']);
+            }
+            if ($this->reportValidator && isset($data['customScreen']) && is_array($data['customScreen'])
+                && ($data['customScreen']['kind'] ?? '') === 'dashboard' && is_array($data['customScreen']['dashboard'] ?? null)) {
+                $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboard($data['customScreen']['dashboard'], []);
+            }
         }
 
-        if (($refusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
+        if (($refusal = AdminActingLimits::codeRefusal($request, $data, $ownedExisting ?? [])) !== null) {
             return $this->jsonResponse($response, $refusal, 403);
         }
-        // createForm turns an id that exists into an update, which has its own checks in update().
-        if (AdminActingLimits::acting($request) && is_string($data['id'] ?? null) && $this->formService->getForm($data['id']) !== null) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'That form exists already: open it to change it'], 403);
+        // createForm turns an owned id that exists into an update, which has its own checks in update().
+        if (AdminActingLimits::acting($request)) {
+            if ($ownedExisting !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'That form exists already: open it to change it'], 403);
+            }
+            if (($formRefusal = AdminActingLimits::formRefusal($data, [])) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $formRefusal], 403);
+            }
         }
-        if ($overQuota = $this->checkFormQuota($response, $userId)) {
+        if ($ownedExisting === null && ($overQuota = $this->checkFormQuota($response, $userId))) {
             return $overQuota;
         }
 
         try {
+            if ($ownedExisting !== null) {
+                $form = $this->formService->updateForm((string) $ownedExisting['id'], $data, $userId);
+                if (isset($data['fields']) && $this->formSqliteDb !== null) {
+                    $this->formSqliteDb->maybeSyncFormOnUpdate((string) $ownedExisting['id']);
+                }
+                $this->audit($request, 'form.update', 'form', $form['id'] ?? '');
+                return $this->jsonResponse($response, ['form' => $form], 200);
+            }
             $form = $this->formService->createForm($data);
             $this->audit($request, 'form.create', 'form', $form['id'] ?? '');
             return $this->jsonResponse($response, ['form' => $form], 201);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\EncryptionEnablingException::ERROR_CODE, 'message' => $e->getMessage()], 409);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE, 'message' => $e->getMessage()], 409);
+        } catch (\FormLogic\Services\EncryptionRequestException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => $e->errorCode, 'message' => $e->getMessage()], $e->status);
         } catch (\RuntimeException | \InvalidArgumentException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -746,10 +790,22 @@ class FormController
             }
         }
 
-        $restoredForm = $this->versionService->restoreVersion($formId, $version, $userId);
+        try {
+            $restoredForm = $this->versionService->restoreVersion($formId, $version, $userId);
+        } catch (\FormLogic\Services\EncryptionEnablingException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\EncryptionEnablingException::ERROR_CODE, 'message' => $e->getMessage()], 409);
+        } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE, 'message' => $e->getMessage()], 409);
+        } catch (\FormLogic\Services\EncryptionRequestException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => $e->errorCode, 'message' => $e->getMessage()], $e->status);
+        }
 
         if (!$restoredForm) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Version not found'], 404);
+        }
+
+        if ($this->formSqliteDb !== null) {
+            $this->formSqliteDb->maybeSyncFormOnUpdate($formId);
         }
 
         $this->audit($request, 'form.version.restore', 'form', $formId, ['restoredFromVersion' => $version]);

@@ -121,30 +121,47 @@ function handleSseData(data: string): void {
   }
 }
 
+const MAX_SSE_BUFFER_CHARS = 2 * 1024 * 1024;
+
 async function readSseStream(res: Response, signal: AbortSignal): Promise<void> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error('No stream body');
   const decoder = new TextDecoder();
   let buffer = '';
   let dataLines: string[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done || signal.aborted) return;
-    buffer += decoder.decode(value, { stream: true });
-    let nl: number;
-    while ((nl = buffer.indexOf('\n')) !== -1) {
-      const line = buffer.slice(0, nl).replace(/\r$/, '');
-      buffer = buffer.slice(nl + 1);
-      if (line === '') {
-        // Frame boundary → dispatch. (`event:`/`id:` fields are informational —
-        // the full envelope, including name + idempotencyKey, is in the data JSON.)
-        handleSseData(dataLines.join('\n'));
-        dataLines = [];
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).replace(/^ /, ''));
+  let dataChars = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done || signal.aborted) return;
+      buffer += decoder.decode(value, { stream: true });
+      if (buffer.length > MAX_SSE_BUFFER_CHARS) {
+        throw new Error('SSE buffer exceeded limit');
       }
-      // `id:`, `event:`, `: ping` keep-alives — nothing to do.
+      let nl: number;
+      while ((nl = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, nl).replace(/\r$/, '');
+        buffer = buffer.slice(nl + 1);
+        if (line === '') {
+          // Frame boundary → dispatch. (`event:`/`id:` fields are informational —
+          // the full envelope, including name + idempotencyKey, is in the data JSON.)
+          handleSseData(dataLines.join('\n'));
+          dataLines = [];
+          dataChars = 0;
+        } else if (line.startsWith('data:')) {
+          const payload = line.slice(5).replace(/^ /, '');
+          dataChars += payload.length;
+          if (dataChars > MAX_SSE_BUFFER_CHARS) {
+            throw new Error('SSE event exceeded limit');
+          }
+          dataLines.push(payload);
+        }
+        // `id:`, `event:`, `: ping` keep-alives — nothing to do.
+      }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

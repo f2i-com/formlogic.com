@@ -46,8 +46,9 @@ class AppResponseService
         $result = $this->responseService->createResponse($formId, $data, $script, $sourceRunId, $quotaLimit);
 
         // Write response links for linked_record fields ({store:false} script
-        // submissions persist nothing, so there is no source row to link from)
-        if (is_array($result) && isset($result['id']) && ($result['stored'] ?? true) !== false) {
+        // submissions persist nothing, so there is no source row to link from).
+        // Never write shared MySQL response_links rows during an ephemeral demo sandbox request.
+        if (is_array($result) && isset($result['id']) && ($result['stored'] ?? true) !== false && !NativeAppService::hasSandboxRootOverrides()) {
             $this->syncResponseLinks($formId, $result['id'], $data['answers'] ?? []);
         }
 
@@ -74,8 +75,8 @@ class AppResponseService
     {
         $result = $this->responseService->updateResponse($formId, $responseId, $data, $ifMatch);
 
-        // Re-sync response links if answers were updated
-        if ($result && isset($data['answers'])) {
+        // Re-sync response links if answers were updated (skip in ephemeral demo sandbox)
+        if ($result && isset($data['answers']) && !NativeAppService::hasSandboxRootOverrides()) {
             $this->syncResponseLinks($formId, $responseId, $data['answers']);
         }
 
@@ -93,7 +94,7 @@ class AppResponseService
     {
         $deleted = $this->responseService->deleteResponse($formId, $responseId);
 
-        if ($deleted) {
+        if ($deleted && !NativeAppService::hasSandboxRootOverrides()) {
             // Clean up response links (both as source and target)
             $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id OR target_response_id = :id2");
             $stmt->execute(['id' => $responseId, 'id2' => $responseId]);

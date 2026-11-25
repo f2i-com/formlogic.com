@@ -7,6 +7,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -60,17 +61,41 @@ DirectoryIndex index.html
             if process.poll() is not None:
                 raise RuntimeError((root / 'error.log').read_text())
             time.sleep(.1)
-    cases = {'/': ('none', 'DENY'), '/app/example': ('none', 'DENY'), '/settings': ('none', 'DENY'), '/screen-host.html': ('*', None), '/hosted-runtime/index.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/host.html': ('self', 'SAMEORIGIN'), '/hosted-runtime/': ('self', 'SAMEORIGIN'), '/app-editors/builder/index.html': ('self', 'SAMEORIGIN'), '/app-editors/studio/index.html': ('self', 'SAMEORIGIN'), '/form/example': ('*', None)}
+    cases = {
+        '/': ('none', 'DENY'),
+        '/app/example': ('none', 'DENY'),
+        '/settings': ('none', 'DENY'),
+        '/screen-host.html': ('*', None),
+        '/SCREEN-HOST.HTML': ('*', None),
+        '/hosted-runtime/index.html': ('self', 'SAMEORIGIN'),
+        '/hosted-runtime/host.html': ('self', 'SAMEORIGIN'),
+        '/hosted-runtime/': ('self', 'SAMEORIGIN'),
+        '/HOSTED-RUNTIME/': ('self', 'SAMEORIGIN'),
+        '/app-editors/builder/index.html': ('self', 'SAMEORIGIN'),
+        '/app-editors/studio/index.html': ('self', 'SAMEORIGIN'),
+        '/form/example': ('*', None),
+    }
     for path, (ancestor, frame) in cases.items():
         with urllib.request.urlopen(base + path) as response:
             expected = f"frame-ancestors '{ancestor}'" if ancestor != '*' else 'frame-ancestors *'
-            if path.startswith('/hosted-runtime/'):
+            low = path.lower()
+            if low.startswith('/hosted-runtime/'):
                 expected = 'sandbox allow-scripts allow-downloads; ' + expected
+            elif low == '/screen-host.html':
+                expected = 'sandbox allow-scripts; ' + expected
             assert response.headers.get_all('Content-Security-Policy') == [expected + "; base-uri 'self'; object-src 'none'"], (path, str(response.headers))
             assert response.headers.get('X-Frame-Options') == frame, (path, str(response.headers))
-            if path.startswith('/hosted-runtime/'):
+            if low.startswith('/hosted-runtime/'):
                 assert response.headers.get('Access-Control-Allow-Origin') == '*'
             print(path + ': framing headers correct')
+    (web / '.env').write_text('JWT_SECRET=secret')
+    for secret_path in ['/.env', '/.ENV', '/.htaccess']:
+        try:
+            urllib.request.urlopen(base + secret_path)
+            raise AssertionError(f'Expected 403 for {secret_path}')
+        except urllib.error.HTTPError as err:
+            assert err.code == 403, (secret_path, err.code)
+            print(secret_path + ': 403 denied')
 finally:
     if process is not None:
         process.terminate()

@@ -43,6 +43,7 @@ final class FormSqliteDatabaseService
         private AppService $apps,
         private FormService $forms,
         private NativeAppService $native,
+        private ?PlanService $plans = null,
     ) {
         $this->mysql = $mysql->getConnection();
     }
@@ -144,7 +145,7 @@ final class FormSqliteDatabaseService
                 'boundTable' => is_string($binding['table'] ?? null) ? $binding['table'] : null,
                 'boundAppId' => is_string($binding['appId'] ?? null) ? $binding['appId'] : null,
                 'fieldCount' => is_array($full['fields'] ?? null) ? count($full['fields']) : 0,
-                'isPrivate' => !empty($fSettings['privateEncrypted']),
+                'isPrivate' => $fid !== '' && $this->isFormPrivateOrEnabling($fid),
             ];
         }
 
@@ -279,7 +280,7 @@ final class FormSqliteDatabaseService
             return null;
         }
         $fSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
-        if (!empty($fSettings['privateEncrypted'])) {
+        if ($this->isFormPrivateOrEnabling($formId)) {
             return null;
         }
         if (!$this->native->hasManagedDatabase($databaseAppId)) {
@@ -331,7 +332,7 @@ final class FormSqliteDatabaseService
             $tableExists = isset($existingTablesSet[$tableName]);
             if (!$tableExists) {
                 $colLines = ['"id" TEXT PRIMARY KEY'];
-                $usedCols = ['id' => true, 'status' => true, 'created_at' => true, 'updated_at' => true];
+                $usedCols = ['id' => true, 'status' => true, '_submitted_by_user_id' => true, 'created_at' => true, 'updated_at' => true];
                 foreach ($fieldDefs as $def) {
                     $col = self::uniqueColName($def['colName'], $usedCols);
                     $usedCols[$col] = true;
@@ -339,6 +340,7 @@ final class FormSqliteDatabaseService
                     $columnMap[$def['fieldId']] = $col;
                 }
                 $colLines[] = '"status" TEXT NOT NULL DEFAULT \'submitted\'';
+                $colLines[] = '"_submitted_by_user_id" TEXT NULL';
                 $colLines[] = '"created_at" TEXT NOT NULL DEFAULT (datetime(\'now\'))';
                 $colLines[] = '"updated_at" TEXT NOT NULL DEFAULT (datetime(\'now\'))';
                 $db->exec("CREATE TABLE IF NOT EXISTS {$qTable} (" . implode(', ', $colLines) . ')');
@@ -352,6 +354,14 @@ final class FormSqliteDatabaseService
                     if ($cname !== '') {
                         $existingCols[strtolower($cname)] = $cname;
                     }
+                }
+                if (
+                    !isset($existingCols['_submitted_by_user_id'])
+                    && !isset($existingCols['submitted_by_user_id'])
+                    && (!empty($existingBinding['managedByForm']) || !$alreadyBoundToDb)
+                ) {
+                    $db->exec("ALTER TABLE {$qTable} ADD COLUMN \"_submitted_by_user_id\" TEXT NULL");
+                    $existingCols['_submitted_by_user_id'] = '_submitted_by_user_id';
                 }
                 $prevColumns = is_array($existingBinding['columns'] ?? null) ? $existingBinding['columns'] : [];
                 $usedCols = array_fill_keys(array_values($existingCols), true);
@@ -442,7 +452,7 @@ final class FormSqliteDatabaseService
             throw new RuntimeException('Form not found', 404);
         }
         $fSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
-        if (!empty($fSettings['privateEncrypted'])) {
+        if ($this->isFormPrivateOrEnabling($formId)) {
             throw new InvalidArgumentException('Private end-to-end encrypted forms cannot be linked to a shared SQLite table.');
         }
 
@@ -539,16 +549,6 @@ final class FormSqliteDatabaseService
             throw new InvalidArgumentException('The source app does not have a SQLite database yet.');
         }
 
-        // Record shared-DB link on the target Form App
-        $this->apps->setSharedDatabase($ownerId, $targetFormAppId, $canonicalDbAppId);
-        if (!empty($sourceApp['settings']['softnApp'])) {
-            $tSettings = is_array($targetApp['settings'] ?? null) ? $targetApp['settings'] : [];
-            $tSettings['sharedDatabaseAppId'] = $canonicalDbAppId;
-            $tSettings['linkedSoftnAppId'] = $canonicalDbAppId;
-            $tSettings['unifiedSqlite'] = true;
-            $this->apps->updateApp($targetFormAppId, ['settings' => $tSettings]);
-        }
-
         $schemas = $this->native->tableSchemas($canonicalDbAppId);
         $chosen = [];
         if ($tables === []) {
@@ -563,6 +563,23 @@ final class FormSqliteDatabaseService
                     $chosen[] = $tbl;
                 }
             }
+        }
+
+        if ($chosen !== [] && $this->plans !== null && !$this->plans->canCreateForms($ownerId, count($chosen))) {
+            throw new RuntimeException(
+                'You\'ve reached your plan\'s limit of ' . $this->plans->formLimit($ownerId) . ' forms. Delete a form or upgrade to add more.',
+                402
+            );
+        }
+
+        // Record shared-DB link on the target Form App
+        $this->apps->setSharedDatabase($ownerId, $targetFormAppId, $canonicalDbAppId);
+        if (!empty($sourceApp['settings']['softnApp'])) {
+            $tSettings = is_array($targetApp['settings'] ?? null) ? $targetApp['settings'] : [];
+            $tSettings['sharedDatabaseAppId'] = $canonicalDbAppId;
+            $tSettings['linkedSoftnAppId'] = $canonicalDbAppId;
+            $tSettings['unifiedSqlite'] = true;
+            $this->apps->updateApp($targetFormAppId, ['settings' => $tSettings]);
         }
 
         $createdForms = [];
@@ -842,6 +859,23 @@ final class FormSqliteDatabaseService
         return $out;
     }
 
+    /**
+     * Authoritative check against `form_encryption` (never a client-writable settings flag).
+     */
+    private function isFormPrivateOrEnabling(string $formId): bool
+    {
+        if ($formId === '') {
+            return false;
+        }
+        $stmt = $this->mysql->prepare('SELECT mode, state FROM form_encryption WHERE form_id = :f LIMIT 1');
+        $stmt->execute(['f' => $formId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return false;
+        }
+        return ($row['mode'] ?? '') === 'private' || ($row['state'] ?? '') === 'enabling';
+    }
+
     /** @param array<string, string> $columnMap */
     private function migrateLegacyFormResponses(string $formId, string $databaseAppId, string $tableName, array $columnMap): int
     {
@@ -849,74 +883,95 @@ final class FormSqliteDatabaseService
         if (!is_file($dbPath)) {
             return 0;
         }
-        $rows = [];
         try {
             $src = $this->sqlite->getFormDatabase($formId, true);
-            $stmt = $src->query('SELECT id, answers, status, submitted_at, updated_at FROM responses ORDER BY submitted_at ASC LIMIT 5000');
-            if ($stmt !== false) {
-                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            }
         } catch (\Throwable) {
             return 0;
         }
-        if ($rows === []) {
-            return 0;
-        }
         $migrated = 0;
-        $this->native->withDatabase($databaseAppId, static function (PDO $db) use ($tableName, $columnMap, $rows, &$migrated): void {
+        $batchSize = 500;
+        $this->native->withDatabase($databaseAppId, static function (PDO $db) use ($src, $tableName, $columnMap, $batchSize, &$migrated): void {
             $qTable = self::quoteIdent($tableName);
             $pragma = $db->query("PRAGMA table_info({$qTable})")->fetchAll(PDO::FETCH_ASSOC);
             $colTypes = [];
             foreach ($pragma as $c) {
                 $colTypes[(string) $c['name']] = strtoupper((string) ($c['type'] ?? 'TEXT'));
             }
-            $db->beginTransaction();
-            try {
-                foreach ($rows as $row) {
-                    $answers = is_string($row['answers'] ?? null) ? json_decode($row['answers'], true) : [];
-                    if (!is_array($answers)) $answers = [];
-                    $cols = [];
-                    $vals = [];
-                    if (isset($colTypes['id'])) {
-                        $cols[] = '"id"';
-                        $vals[] = (string) ($row['id'] ?? bin2hex(random_bytes(8)));
-                    }
-                    foreach ($columnMap as $fid => $colName) {
-                        if (!array_key_exists($fid, $answers) || !isset($colTypes[$colName])) continue;
-                        $v = $answers[$fid];
-                        if (is_array($v)) {
-                            $v = json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                        } elseif (is_bool($v)) {
-                            $v = $v ? 1 : 0;
-                        }
-                        if ($v === '' && preg_match('/INT|REAL|FLOA|DOUB|NUMERIC/', $colTypes[$colName]) === 1) {
-                            $v = null;
-                        }
-                        $cols[] = self::quoteIdent($colName);
-                        $vals[] = $v;
-                    }
-                    if (isset($colTypes['status'])) {
-                        $cols[] = '"status"';
-                        $vals[] = (string) ($row['status'] ?? 'submitted');
-                    }
-                    if (isset($colTypes['created_at'])) {
-                        $cols[] = '"created_at"';
-                        $vals[] = (string) ($row['submitted_at'] ?? gmdate('Y-m-d H:i:s'));
-                    }
-                    if (isset($colTypes['updated_at'])) {
-                        $cols[] = '"updated_at"';
-                        $vals[] = (string) ($row['updated_at'] ?? ($row['submitted_at'] ?? gmdate('Y-m-d H:i:s')));
-                    }
-                    if ($cols === []) continue;
-                    $placeholders = implode(', ', array_fill(0, count($cols), '?'));
-                    $ins = $db->prepare("INSERT OR IGNORE INTO {$qTable} (" . implode(', ', $cols) . ") VALUES ({$placeholders})");
-                    $ins->execute($vals);
-                    $migrated += $ins->rowCount();
+            $lastRowId = 0;
+            $fetch = $src->prepare('SELECT rowid AS _rowid, id, answers, metadata, status, submitted_at, updated_at FROM responses WHERE rowid > :last ORDER BY rowid ASC LIMIT :lim');
+            while (true) {
+                $fetch->bindValue(':last', $lastRowId, PDO::PARAM_INT);
+                $fetch->bindValue(':lim', $batchSize, PDO::PARAM_INT);
+                $fetch->execute();
+                $rows = $fetch->fetchAll(PDO::FETCH_ASSOC);
+                if ($rows === []) {
+                    break;
                 }
-                $db->commit();
-            } catch (\Throwable $e) {
-                if ($db->inTransaction()) $db->rollBack();
-                throw $e;
+                $db->beginTransaction();
+                try {
+                    foreach ($rows as $row) {
+                        $lastRowId = (int) $row['_rowid'];
+                        $answers = is_string($row['answers'] ?? null) ? json_decode($row['answers'], true) : [];
+                        if (!is_array($answers)) $answers = [];
+                        $metadata = is_string($row['metadata'] ?? null) ? json_decode($row['metadata'], true) : [];
+                        $submitterId = is_array($metadata) && is_string($metadata['submittedByUserId'] ?? null) && $metadata['submittedByUserId'] !== ''
+                            ? $metadata['submittedByUserId']
+                            : null;
+                        $cols = [];
+                        $vals = [];
+                        if (isset($colTypes['id'])) {
+                            $cols[] = '"id"';
+                            $vals[] = (string) ($row['id'] ?? bin2hex(random_bytes(8)));
+                        }
+                        foreach ($columnMap as $fid => $colName) {
+                            if (!array_key_exists($fid, $answers) || !isset($colTypes[$colName])) continue;
+                            $v = $answers[$fid];
+                            if (is_array($v)) {
+                                $v = json_encode($v, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                            } elseif (is_bool($v)) {
+                                $v = $v ? 1 : 0;
+                            }
+                            if ($v === '' && preg_match('/INT|REAL|FLOA|DOUB|NUMERIC/', $colTypes[$colName]) === 1) {
+                                $v = null;
+                            }
+                            $cols[] = self::quoteIdent($colName);
+                            $vals[] = $v;
+                        }
+                        if (isset($colTypes['status'])) {
+                            $cols[] = '"status"';
+                            $vals[] = (string) ($row['status'] ?? 'submitted');
+                        }
+                        if ($submitterId !== null) {
+                            if (isset($colTypes['_submitted_by_user_id'])) {
+                                $cols[] = '"_submitted_by_user_id"';
+                                $vals[] = $submitterId;
+                            } elseif (isset($colTypes['submitted_by_user_id'])) {
+                                $cols[] = '"submitted_by_user_id"';
+                                $vals[] = $submitterId;
+                            }
+                        }
+                        if (isset($colTypes['created_at'])) {
+                            $cols[] = '"created_at"';
+                            $vals[] = (string) ($row['submitted_at'] ?? gmdate('Y-m-d H:i:s'));
+                        }
+                        if (isset($colTypes['updated_at'])) {
+                            $cols[] = '"updated_at"';
+                            $vals[] = (string) ($row['updated_at'] ?? ($row['submitted_at'] ?? gmdate('Y-m-d H:i:s')));
+                        }
+                        if ($cols === []) continue;
+                        $placeholders = implode(', ', array_fill(0, count($cols), '?'));
+                        $ins = $db->prepare("INSERT OR IGNORE INTO {$qTable} (" . implode(', ', $cols) . ") VALUES ({$placeholders})");
+                        $ins->execute($vals);
+                        $migrated += $ins->rowCount();
+                    }
+                    $db->commit();
+                } catch (\Throwable $e) {
+                    if ($db->inTransaction()) $db->rollBack();
+                    throw $e;
+                }
+                if (count($rows) < $batchSize) {
+                    break;
+                }
             }
         });
         return $migrated;

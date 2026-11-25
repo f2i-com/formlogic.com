@@ -1,4 +1,4 @@
-import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { runtimeIdentity, assertMatchingRuntime, writeRuntimeManifest, checkRuntimeArtifact } from './hosted-runtime-artifact.mjs';
 import { EDITOR_BRIDGE_PROTOCOL } from './softn-protocol.mjs';
 import { spawnSync } from 'node:child_process';
@@ -33,12 +33,33 @@ try {
   await writeFile(resolve(stage, 'manifest.json'), JSON.stringify({ protocol: EDITOR_BRIDGE_PROTOCOL, editors: ['builder', 'studio'], builtAt: new Date().toISOString() }) + '\n');
   await cp(resolve(softn, 'LICENSE'), resolve(stage, 'LICENSE'));
   await cp(resolve(softn, 'NOTICE'), resolve(stage, 'NOTICE'));
-  await rm(output, { recursive: true, force: true });
-  await mkdir(output, { recursive: true });
-  await cp(stage, output, { recursive: true, filter: path => !path.endsWith('.map') });
-  for (const kind of ['builder', 'studio']) {
-    await writeRuntimeManifest(resolve(output, kind), expected);
-    await checkRuntimeArtifact(resolve(output, kind), expected);
+  // Stage filtered output into a sibling dir and verify before swapping into place so a failure
+  // never leaves public/app-editors deleted or half-written.
+  const nextDir = `${output}.next-${process.pid}-${Date.now()}`;
+  const backupDir = `${output}.prev-${process.pid}-${Date.now()}`;
+  const hadPrevious = Boolean(await lstat(output).catch(() => null));
+  let movedPrevious = false;
+  try {
+    await mkdir(nextDir, { recursive: true });
+    await cp(stage, nextDir, { recursive: true, filter: p => !p.endsWith('.map') });
+    for (const kind of ['builder', 'studio']) {
+      await writeRuntimeManifest(resolve(nextDir, kind), expected);
+      await checkRuntimeArtifact(resolve(nextDir, kind), expected);
+    }
+    if (hadPrevious) {
+      await rename(output, backupDir);
+      movedPrevious = true;
+    }
+    await rename(nextDir, output);
+    if (movedPrevious) {
+      await rm(backupDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    await rm(nextDir, { recursive: true, force: true }).catch(() => {});
+    if (movedPrevious) {
+      await rename(backupDir, output).catch(() => {});
+    }
+    throw err;
   }
   console.log('FormLogic app editors built and verified at public/app-editors.');
 } finally {

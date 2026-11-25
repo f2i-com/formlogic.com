@@ -99,6 +99,13 @@ class InstallPlanService
         // package — a node type going away turns stored nodes into read-only placeholders,
         // and that is worth knowing before committing rather than after.
         $migration = $action === 'update' ? $this->installer->previewUpdate($aggregate, $userId) : null;
+        $plannedDigests = [];
+        $plannedTrusts = [];
+        foreach ($chain['chain'] as $step) {
+            $stepId = (string) $step['packageId'];
+            $plannedDigests[$stepId] = hash('sha256', (string) json_encode($step['aggregate'], JSON_UNESCAPED_SLASHES));
+            $plannedTrusts[$stepId] = (string) $step['trust'];
+        }
         $summary = [
             'action' => $action,
             'installedVersion' => $installedVersion,
@@ -120,6 +127,11 @@ class InstallPlanService
                 ],
                 $chain['chain']
             ),
+            // Internal TOCTOU pinning: freeze exact aggregate bytes + trust per dependency so a
+            // newer catalog listing with the same (packageId, version) cannot substitute bytes
+            // between propose() and confirm().
+            'plannedDigests' => $plannedDigests,
+            'plannedTrusts' => $plannedTrusts,
         ];
         $planId = $this->uuid();
         $stmt = $this->mysql->prepare('
@@ -167,6 +179,7 @@ class InstallPlanService
             'migration' => is_array($summary) ? ($summary['migration'] ?? null) : null,
             'capabilities' => is_array($summary) ? ($summary['capabilities'] ?? null) : null,
             'resolution' => is_array($summary) ? ($summary['resolution'] ?? null) : null,
+            'plannedInstalls' => is_array($summary) && is_array($summary['plannedInstalls'] ?? null) ? $summary['plannedInstalls'] : [],
             'installationId' => $row['installation_id'] !== null ? (string) $row['installation_id'] : null,
             'error' => $row['error_text'] !== null ? (string) $row['error_text'] : null,
         ];
@@ -233,11 +246,18 @@ class InstallPlanService
                     $reviewed[(string) $step['packageId']] = (string) $step['version'];
                 }
             }
+            $reviewedDigests = is_array($summary['plannedDigests'] ?? null) ? $summary['plannedDigests'] : [];
+            $reviewedTrusts = is_array($summary['plannedTrusts'] ?? null) ? $summary['plannedTrusts'] : [];
             foreach ($resolved['chain'] as $step) {
                 $id = $step['packageId'];
-                if (!isset($reviewed[$id]) || $reviewed[$id] !== $step['version']) {
+                $stepDigest = hash('sha256', (string) json_encode($step['aggregate'], JSON_UNESCAPED_SLASHES));
+                $digestMismatch = isset($reviewedDigests[$id]) && is_string($reviewedDigests[$id])
+                    && !hash_equals($reviewedDigests[$id], $stepDigest);
+                $trustMismatch = isset($reviewedTrusts[$id]) && is_string($reviewedTrusts[$id])
+                    && $reviewedTrusts[$id] !== (string) $step['trust'];
+                if (!isset($reviewed[$id]) || $reviewed[$id] !== $step['version'] || $digestMismatch || $trustMismatch) {
                     // Something the reviewer never saw. A listing published between propose and
-                    // confirm must not be able to insert itself into an approved install.
+                    // confirm must not be able to insert or substitute bytes into an approved install.
                     throw new \RuntimeException(
                         'plan_chain_changed: "' . $id . '" v' . $step['version']
                         . ' was not part of the reviewed install — re-review the package'
@@ -246,37 +266,37 @@ class InstallPlanService
             }
 
             $chainInstalled = [];
-            foreach ($resolved['chain'] as $step) {
-                $installedStep = $this->installer->install(
-                    $step['aggregate'],
-                    $userId,
-                    // A dependency's own grants are not approved by approving the package that
-                    // asked for it. Nothing is auto-granted; the owner reviews the dependency's
-                    // own grants when they choose to give it any.
-                    [],
-                    $row['source'] . ':dependency',
-                    // Its OWN trust, never the parent's. Inheriting an 'official' parent's trust
-                    // would stamp an unsigned dependency as verified in its immutable receipt and
-                    // walk it straight past a verified-only workspace policy.
-                    $step['trust']
-                );
-                $chainInstalled[] = [
-                    'packageId' => $step['packageId'],
-                    'version' => $step['version'],
-                    'displayName' => $step['displayName'],
-                    'publisherId' => $step['publisherId'],
-                    'trust' => $step['trust'],
-                    'installationId' => $installedStep['installationId'],
-                ];
-            }
-
             try {
+                foreach ($resolved['chain'] as $step) {
+                    $installedStep = $this->installer->install(
+                        $step['aggregate'],
+                        $userId,
+                        // A dependency's own grants are not approved by approving the package that
+                        // asked for it. Nothing is auto-granted; the owner reviews the dependency's
+                        // own grants when they choose to give it any.
+                        [],
+                        $row['source'] . ':dependency',
+                        // Its OWN trust, never the parent's. Inheriting an 'official' parent's trust
+                        // would stamp an unsigned dependency as verified in its immutable receipt and
+                        // walk it straight past a verified-only workspace policy.
+                        $step['trust']
+                    );
+                    $chainInstalled[] = [
+                        'packageId' => $step['packageId'],
+                        'version' => $step['version'],
+                        'displayName' => $step['displayName'],
+                        'publisherId' => $step['publisherId'],
+                        'trust' => $step['trust'],
+                        'installationId' => $installedStep['installationId'],
+                    ];
+                }
+
                 $result = $action === 'update'
                     ? $this->installer->update($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust'])
                     : $this->installer->install($aggregate, $userId, $approvedConnectorGrants, $row['source'] . ':plan', (string) $row['trust']);
             } catch (\Exception $e) {
-                // The target failed after its dependencies landed. Roll them back rather than
-                // leaving packages the owner only ever agreed to as a means to an end.
+                // Any mid-chain or target failure rolls back every dependency already installed
+                // in this confirm attempt so no orphan packages are left behind.
                 foreach (array_reverse($chainInstalled) as $step) {
                     try {
                         $this->installer->uninstall($step['installationId'], $userId);

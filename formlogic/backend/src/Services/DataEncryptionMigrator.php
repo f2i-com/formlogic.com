@@ -23,6 +23,7 @@ final class DataEncryptionMigrator
         private readonly PDO $mysql,
         private readonly string $hostedPath,
         private readonly ?string $trashPath = null,
+        private readonly ?NativeAppService $nativeApps = null,
     ) {
     }
 
@@ -36,7 +37,9 @@ final class DataEncryptionMigrator
         $secrets = $this->moveSecrets($crypto, 'users', 'mfa_secret', [MfaService::class, 'secretContext'], $failed)
             + $this->moveSecrets($crypto, 'webhooks', 'secret', [WebhookService::class, 'secretContext'], $failed)
             // The SoftN directory's edit keys, which only this site holds (SoftnDirectoryService).
-            + $this->moveSecrets($crypto, 'softn_directory_publications', 'edit_key', [SoftnDirectoryService::class, 'editKeyContext'], $failed);
+            + $this->moveSecrets($crypto, 'softn_directory_publications', 'edit_key', [SoftnDirectoryService::class, 'editKeyContext'], $failed)
+            // Per-app plugin secrets (private/plugin-*.json) and un-migrated legacy Twilio verify.json files.
+            + $this->moveNativeAppSecrets($crypto, $failed);
 
         $apps = 0;
         $records = 0;
@@ -102,6 +105,116 @@ final class DataEncryptionMigrator
             if ($next !== $row['value']) {
                 $update->execute([$next, $row['id'], $row['value']]);
                 $moved += $update->rowCount();
+            }
+        }
+        return $moved;
+    }
+
+    /**
+     * Reseal per-app plugin secrets (`private/plugin-*.json`) and legacy `private/verify.json`
+     * under each app's private file lock so key rotation and initial encryption cover them too.
+     *
+     * @param list<string> $failed
+     */
+    private function moveNativeAppSecrets(DataEncryption $crypto, array &$failed): int
+    {
+        if ($this->nativeApps === null) {
+            return 0;
+        }
+        try {
+            $appIds = $this->mysql->query('SELECT id FROM apps')->fetchAll(PDO::FETCH_COLUMN);
+        } catch (\Throwable $e) {
+            $failed[] = 'apps list for plugin secrets: ' . $e->getMessage();
+            return 0;
+        }
+        $moved = 0;
+        foreach ($appIds as $rawId) {
+            $appId = (string) $rawId;
+            if ($appId === '') {
+                continue;
+            }
+            foreach ($this->nativeApps->privateFileNames($appId, 'plugin-') as $fileName) {
+                if (preg_match('/^plugin-[0-9a-f]{24}\.json$/D', $fileName) !== 1) {
+                    continue;
+                }
+                try {
+                    $moved += $this->nativeApps->withPrivateFileLock($appId, $fileName, function () use ($appId, $fileName, $crypto): int {
+                        $text = $this->nativeApps->readPrivateFile($appId, $fileName);
+                        if ($text === null) {
+                            return 0;
+                        }
+                        $kept = json_decode($text, true);
+                        if (!is_array($kept) || !is_string($kept['plugin'] ?? null) || $kept['plugin'] === '' || !is_array($kept['secrets'] ?? null)) {
+                            return 0;
+                        }
+                        $pluginId = $kept['plugin'];
+                        if (PluginAppSettings::fileName($pluginId) !== $fileName) {
+                            return 0;
+                        }
+                        $count = 0;
+                        $changed = false;
+                        foreach ($kept['secrets'] as $fieldKey => $entry) {
+                            if (!is_array($entry) || !is_string($entry['value'] ?? null)) {
+                                continue;
+                            }
+                            $ctx = PluginAppSettings::secretContext($pluginId, $appId, (string) $fieldKey);
+                            $wasSealed = ($entry['sealed'] ?? false) === true;
+                            $next = $wasSealed
+                                ? $crypto->resealed($entry['value'], $ctx)
+                                : $crypto->seal($entry['value'], $ctx);
+                            if ($next !== $entry['value'] || !$wasSealed) {
+                                $kept['secrets'][$fieldKey] = ['value' => $next, 'sealed' => true];
+                                $changed = true;
+                                $count++;
+                            }
+                        }
+                        if ($changed) {
+                            $this->nativeApps->writePrivateFile($appId, $fileName, json_encode(
+                                [
+                                    'plugin' => $pluginId,
+                                    'values' => (object) (is_array($kept['values'] ?? null) ? $kept['values'] : []),
+                                    'secrets' => (object) $kept['secrets'],
+                                ],
+                                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                            ));
+                        }
+                        return $count;
+                    });
+                } catch (\Throwable $e) {
+                    $failed[] = "plugin settings {$fileName} of app {$appId}: " . $e->getMessage();
+                }
+            }
+
+            if ($this->nativeApps->readPrivateFile($appId, 'verify.json') !== null) {
+                try {
+                    $moved += $this->nativeApps->withPrivateFileLock($appId, 'verify.json', function () use ($appId, $crypto): int {
+                        $text = $this->nativeApps->readPrivateFile($appId, 'verify.json');
+                        if ($text === null) {
+                            return 0;
+                        }
+                        $kept = json_decode($text, true);
+                        if (!is_array($kept) || !is_string($kept['authToken'] ?? null)) {
+                            return 0;
+                        }
+                        $ctx = 'native-app-verify:' . $appId;
+                        $wasSealed = ($kept['sealed'] ?? false) === true;
+                        $next = $wasSealed
+                            ? $crypto->resealed($kept['authToken'], $ctx)
+                            : $crypto->seal($kept['authToken'], $ctx);
+                        if ($next !== $kept['authToken'] || !$wasSealed) {
+                            $kept['authToken'] = $next;
+                            $kept['sealed'] = true;
+                            $this->nativeApps->writePrivateFile($appId, 'verify.json', json_encode(
+                                $kept,
+                                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                            ));
+                            return 1;
+                        }
+                        return 0;
+                    });
+                } catch (\Throwable $e) {
+                    $failed[] = "legacy verify.json of app {$appId}: " . $e->getMessage();
+                }
             }
         }
         return $moved;

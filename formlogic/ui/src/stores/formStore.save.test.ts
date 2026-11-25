@@ -21,13 +21,15 @@ vi.mock('./toastStore', () => ({
 
 // E2EE sign-first path (blocker 2): saveFormPart dynamically imports formCrypto
 // to sign field changes on published private forms. Default: not private.
-const { getFormPrivacyMock, signSchemaMock } = vi.hoisted(() => ({
+const { getFormPrivacyMock, signSchemaMock, forgetFormKeysMock } = vi.hoisted(() => ({
   getFormPrivacyMock: vi.fn(async () => false),
   signSchemaMock: vi.fn(),
+  forgetFormKeysMock: vi.fn(),
 }));
 vi.mock('../lib/crypto/formCrypto', () => ({
   getFormPrivacy: getFormPrivacyMock,
   signPrivateFormSchema: signSchemaMock,
+  forgetFormKeys: forgetFormKeysMock,
 }));
 
 import { api } from '../lib/api';
@@ -198,6 +200,7 @@ describe('FL-SAVE-001 truthful save state', () => {
 
     expect(ok).toBe(true);
     expect(signSchemaMock).toHaveBeenCalledWith(FORM_ID, expect.any(String));
+    expect(forgetFormKeysMock).toHaveBeenCalledWith(FORM_ID);
     const payload = mockedUpdateForm.mock.calls.at(-1)?.[1] as Record<string, unknown>;
     expect(payload).toHaveProperty('fields');
     expect(payload).toHaveProperty('encryptionSchema');

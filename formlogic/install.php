@@ -36,6 +36,14 @@ if (defined('FORMLOGIC_INSTALL_NO_RUN')) {
     return;
 }
 
+// Security headers for every installer response (never framed, never sniffed, never cached).
+if (!headers_sent()) {
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
+    header('Cache-Control: no-store');
+}
+
 // FormLogic installs from either layout:
 //   - source checkout: this file sits beside backend/ and ui/
 //   - deployed bundle:  this file sits beside api/ (the backend); the SPA is already built at the web root
@@ -70,10 +78,30 @@ if ($installEnableRaw === false || $installEnableRaw === '') {
 $installEnabled = in_array(strtolower((string) $installEnableRaw), ['1', 'true', 'yes'], true);
 $isLocalRequest = flInstallerIsLocalRequest($_SERVER);
 
+// CSRF token & hardened session cookie (started before the post-install guard so the same
+// browser session that just completed installation can invoke `delete_installer` once).
+$isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+    || ((int) ($_SERVER['SERVER_PORT'] ?? 0) === 443);
+ini_set('session.use_strict_mode', '1');
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'secure' => $isHttps,
+    'httponly' => true,
+    'samesite' => 'Strict',
+]);
+session_start();
+
+$canDeleteAfterInstall = $alreadyInstalled
+    && ($isLocalRequest || $installEnabled)
+    && (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST')
+    && (($_POST['action'] ?? '') === 'delete_installer')
+    && !empty($_SESSION['fl_install_completed']);
+
 $installerDenied = null;
 $installerDeniedExtraHtml = '';
 $backendRelName = basename(flBackendDir()); // 'api' (deployed zip) or 'backend' (source checkout)
-if ($alreadyInstalled && !$installEnabled) {
+if ($alreadyInstalled && !$installEnabled && !$canDeleteAfterInstall) {
     $installerDenied = 'FormLogic is already installed. For security the web installer disables itself '
         . 'once a configured ' . $backendRelName . '/.env exists — delete install.php now. '
         . 'To deliberately re-run it (e.g. to use the upgrade mode), set the environment variable INSTALL_ENABLE=1.';
@@ -114,8 +142,42 @@ if ($installerDenied !== null) {
     exit;
 }
 
-// CSRF token
-session_start();
+// Optional shared secret (SetEnv INSTALL_TOKEN <random>) for authenticated remote installs/upgrades.
+$installTokenRaw = getenv('INSTALL_TOKEN');
+if ($installTokenRaw === false || $installTokenRaw === '') {
+    $installTokenRaw = $_SERVER['INSTALL_TOKEN'] ?? ($_SERVER['REDIRECT_INSTALL_TOKEN'] ?? '');
+}
+$installToken = is_string($installTokenRaw) ? trim($installTokenRaw) : '';
+if ($installToken !== '') {
+    $expectedHash = hash('sha256', $installToken);
+    $authed = is_string($_SESSION['install_token_hash'] ?? null)
+        && hash_equals($expectedHash, $_SESSION['install_token_hash']);
+    if (!$authed) {
+        $provided = $_SERVER['HTTP_X_INSTALL_TOKEN']
+            ?? ($_POST['install_token'] ?? ($_GET['token'] ?? ''));
+        if (is_string($provided) && $provided !== '' && hash_equals($installToken, $provided)) {
+            session_regenerate_id(true);
+            $_SESSION['install_token_hash'] = $expectedHash;
+            $authed = true;
+        }
+    }
+    if (!$authed) {
+        http_response_code(403);
+        $tokenMsg = 'Installer token required or invalid. Supply the configured INSTALL_TOKEN via ?token= or X-Install-Token.';
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => $tokenMsg]);
+        } else {
+            header('Content-Type: text/html; charset=utf-8');
+            echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Installer token required</title>'
+                . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
+                . '<h1 style="font-size:1.4rem">Installer token required</h1><p>'
+                . htmlspecialchars($tokenMsg, ENT_QUOTES) . '</p></body></html>';
+        }
+        exit;
+    }
+}
+
 if (empty($_SESSION['install_csrf'])) {
     $_SESSION['install_csrf'] = bin2hex(random_bytes(32));
 }
@@ -129,6 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
     // Verify CSRF token
     if (!isset($_POST['csrf']) || !is_string($_POST['csrf']) || !hash_equals($csrfToken, $_POST['csrf'])) {
+        http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'Invalid security token. Please refresh the page.']);
         exit;
     }
@@ -157,6 +220,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         echo json_encode($failure, JSON_INVALID_UTF8_SUBSTITUTE);
     });
     $result = flInstallerAction($action, $_POST);
+    if ($action === 'run_install' && !empty($result['success'])) {
+        $_SESSION['fl_install_completed'] = true;
+    }
     ob_end_clean();
     $completed = true;
     if (isset($result['errorId'])) http_response_code(500);
@@ -188,11 +254,23 @@ function flInstallerAction(string $action, array $data): array
             'run_install' => runInstall($data),
             'detect_install' => detectExistingInstall(),
             'run_upgrade' => runUpgrade(),
+            'delete_installer' => deleteInstallerSelf(),
             default => ['success' => false, 'message' => 'Unknown action'],
         };
     } catch (Throwable $error) {
         return flInstallerFailure($error);
     }
+}
+
+function deleteInstallerSelf(): array
+{
+    if (!flEnvIsConfigured(flBackendDir() . '/.env')) {
+        return ['success' => false, 'message' => 'Complete installation before removing install.php.'];
+    }
+    if (!@unlink(__FILE__)) {
+        return ['success' => false, 'message' => 'Could not delete install.php automatically — delete it manually from your web root.'];
+    }
+    return ['success' => true, 'message' => 'install.php has been deleted from the server.'];
 }
 
 /** A .env that carries a real JWT secret is what marks the site as installed. */
@@ -245,7 +323,7 @@ function flInstallerActionAllowed(string $action, bool $alreadyInstalled, bool $
     if (!$alreadyInstalled || $isLocalRequest) {
         return true;
     }
-    return in_array($action, ['check_requirements', 'detect_install', 'run_upgrade'], true);
+    return in_array($action, ['check_requirements', 'detect_install', 'run_upgrade', 'delete_installer'], true);
 }
 
 /**
@@ -377,12 +455,13 @@ function sanitizeEnvValue(string $value): string
  */
 function envEncode(string $value): string
 {
+    $value = str_replace(["\r", "\n", "\0"], '', $value);
     if ($value === '') {
         return '';
     }
     // A conservative "obviously safe" charset can be written unquoted (covers hosts, ports,
-    // typical CORS origins like http://localhost:5173).
-    if (preg_match('#^[A-Za-z0-9_.:/@-]+$#', $value)) {
+    // typical CORS origins like http://localhost:5173). /D rejects a trailing newline.
+    if (preg_match('#^[A-Za-z0-9_.:/@-]+$#D', $value)) {
         return $value;
     }
     return '"' . str_replace(['\\', '"', '$'], ['\\\\', '\\"', '\\$'], $value) . '"';
@@ -512,6 +591,7 @@ function checkRequirements(): array
         $backendRel . '/storage/forms',
         $backendRel . '/storage/hosted-apps',
         $backendRel . '/storage/native-apps',
+        $backendRel . '/storage/native-app-uploads',
         $backendRel . '/storage/packs',
         $backendRel . '/storage/uploads',
         $backendRel . '/storage/pack-screenshots',
@@ -533,8 +613,8 @@ function checkRequirements(): array
         if (!$writable) {
             $help = $isWin
                 ? 'Grant the web server user Modify rights on this folder (Properties > Security).'
-                : 'Run on the server: sudo mkdir -p "' . $fullPath . '" && sudo chown -R www-data "' . $fullPath . '"'
-                    . '  (web user: www-data on Debian/Ubuntu, apache on RHEL — or use: sudo chmod -R 775 "' . $fullPath . '")';
+                : 'Run on the server: sudo mkdir -p "' . $fullPath . '" && sudo chown -R www-data:www-data "' . $fullPath . '"'
+                    . ' && sudo chmod -R 0750 "' . $fullPath . '" (use your web user/group, e.g. apache on RHEL)';
         }
         $checks['dir_' . str_replace('/', '_', $dir)] = [
             'label' => "Directory: $dir",
@@ -687,10 +767,14 @@ function testDatabase(array $data): array
 
     try {
         $dsn = "mysql:host=$host;port=$port;charset=utf8mb4";
-        $pdo = new PDO($dsn, $user, $pass, [
+        $pdoOpts = [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_TIMEOUT => 5,
-        ]);
+        ];
+        if (defined('PDO::MYSQL_ATTR_LOCAL_INFILE')) {
+            $pdoOpts[PDO::MYSQL_ATTR_LOCAL_INFILE] = false;
+        }
+        $pdo = new PDO($dsn, $user, $pass, $pdoOpts);
 
         // Check if database exists
         $stmt = $pdo->query("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = " . $pdo->quote($name));
@@ -734,6 +818,7 @@ function runInstall(array $data): array
         $backendDir . '/storage/forms',
         $backendDir . '/storage/hosted-apps',
         $backendDir . '/storage/native-apps',
+        $backendDir . '/storage/native-app-uploads',
         $backendDir . '/storage/packs',
         $backendDir . '/storage/uploads',
         $backendDir . '/storage/pack-screenshots',
@@ -801,10 +886,14 @@ function runInstall(array $data): array
     if (!empty($dbPass) || $dbUser === 'root') {
         try {
             $dsn = "mysql:host=$dbHost;port=$dbPort;charset=utf8mb4";
-            $pdo = new PDO($dsn, $dbUser, $dbPass, [
+            $pdoOpts = [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_TIMEOUT => 10, // connect only; an unreachable host must not outlast the request
-            ]);
+            ];
+            if (defined('PDO::MYSQL_ATTR_LOCAL_INFILE')) {
+                $pdoOpts[PDO::MYSQL_ATTR_LOCAL_INFILE] = false;
+            }
+            $pdo = new PDO($dsn, $dbUser, $dbPass, $pdoOpts);
 
             // Create database if needed (dbName is already sanitized to alphanumeric/underscore/hyphen)
             $safeName = str_replace('`', '', $dbName);
@@ -1282,12 +1371,8 @@ function runUpgrade(): array
     } catch (\Throwable $e) {
         $steps[] = ['label' => 'Connect to database', 'status' => 'error',
             'message' => sprintf(
-                "Database unreachable (%s:%s / '%s' as '%s') — check the DB_* values in %s/.env. "
+                'Database unreachable — check the DB_* values in %s/.env. '
                 . 'The upgrade migrates an existing database; it does not create one.',
-                $mysqlCfg['host'],
-                $mysqlCfg['port'],
-                $mysqlCfg['database'],
-                $mysqlCfg['username'],
                 $backendRel
             )];
         return ['success' => false, 'steps' => $steps, 'message' => 'Database unreachable.'];
@@ -1796,6 +1881,10 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
       <code><?= $backendRelHtml ?>/.env</code> exists (re-running it then requires deliberately setting
       <code>INSTALL_ENABLE=1</code>), but deleting the file is the guarantee. If you added
       <code>SetEnv INSTALL_ENABLE 1</code> to your <code>.htaccess</code> for this session, remove that line too.
+      <div style="margin-top:12px;">
+        <button class="btn btn-secondary" onclick="deleteInstaller()" id="btn-delete-installer">Delete install.php now</button>
+        <span id="delete-installer-status" style="margin-left:10px;font-size:13px;"></span>
+      </div>
     </div>
   </div>
 </div>
@@ -2076,6 +2165,26 @@ function runInstall() {
     resultDiv.classList.remove('hidden');
     stepsList.innerHTML = '';
     resultDiv.innerHTML = '<div class="alert alert-error">' + esc(error.message) + '</div>';
+  });
+}
+
+function deleteInstaller() {
+  const btn = document.getElementById('btn-delete-installer');
+  const status = document.getElementById('delete-installer-status');
+  if (!btn || !status) return;
+  btn.disabled = true;
+  status.textContent = 'Deleting...';
+  post('delete_installer').then(result => {
+    if (result.success) {
+      status.textContent = result.message;
+      btn.textContent = 'Deleted';
+    } else {
+      btn.disabled = false;
+      status.textContent = result.message || 'Could not delete install.php.';
+    }
+  }).catch(error => {
+    btn.disabled = false;
+    status.textContent = error.message;
   });
 }
 </script>

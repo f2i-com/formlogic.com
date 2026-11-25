@@ -800,6 +800,48 @@ class AuthService
     }
 
     /**
+     * Revoke every session AND every long-lived credential for a user: JWTs (token_version),
+     * API keys, MCP sessions, OAuth refresh tokens & codes, device codes, backup/desktop
+     * link codes, and MFA trusted-browser cookies. Used on password resets and admin email/password
+     * resets where an attacker may have already minted persistent credentials.
+     */
+    public function revokeAllCredentials(string $userId): void
+    {
+        $this->revokeTokens($userId);
+        $this->revokeCredentialRows($userId);
+    }
+
+    /** Revoke non-JWT credentials for `$userId` (safe inside or outside an active transaction). */
+    private function revokeCredentialRows(string $userId): void
+    {
+        $coreStatements = [
+            "UPDATE api_keys SET is_active = 0 WHERE user_id = :uid",
+            "UPDATE mcp_sessions SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
+            "UPDATE mcp_oauth_refresh_tokens SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
+            "UPDATE mcp_oauth_codes SET used_at = NOW() WHERE user_id = :uid AND used_at IS NULL",
+            "UPDATE backup_link_codes SET expires_at = NOW() WHERE owner_user_id = :uid AND expires_at > NOW()",
+        ];
+        foreach ($coreStatements as $sql) {
+            $this->mysql->prepare($sql)->execute(['uid' => $userId]);
+        }
+        $optionalStatements = [
+            "UPDATE mcp_device_codes SET status = 'denied', expires_at = NOW() WHERE user_id = :uid AND status IN ('pending', 'approved')",
+            "UPDATE desktop_link_codes SET expires_at = NOW() WHERE user_id = :uid AND redeemed_at IS NULL AND expires_at > NOW()",
+            "DELETE FROM mfa_trusted_browsers WHERE user_id = :uid",
+        ];
+        foreach ($optionalStatements as $sql) {
+            try {
+                $this->mysql->prepare($sql)->execute(['uid' => $userId]);
+            } catch (\PDOException $e) {
+                $msg = $e->getMessage();
+                if ($e->getCode() !== '42S02' && !str_contains($msg, '1146') && !str_contains($msg, 'no such table')) {
+                    throw $e;
+                }
+            }
+        }
+    }
+
+    /**
      * Begin a password reset: issue a single-use, expiring token and email a
      * reset link. Says nothing a visitor could use: the forgot-password route
      * answers before this runs and never reads the result. Best-effort email —
@@ -921,15 +963,7 @@ class AuthService
             ]);
             // Someone resets a password when they fear it is known, and whoever knew it could
             // have made these. Unlike a session they outlive the password unless ended here.
-            foreach ([
-                "UPDATE api_keys SET is_active = 0 WHERE user_id = :uid",
-                "UPDATE mcp_sessions SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
-                "UPDATE mcp_oauth_refresh_tokens SET revoked_at = NOW() WHERE user_id = :uid AND revoked_at IS NULL",
-                "UPDATE mcp_oauth_codes SET used_at = NOW() WHERE user_id = :uid AND used_at IS NULL",
-                "UPDATE backup_link_codes SET expires_at = NOW() WHERE owner_user_id = :uid AND expires_at > NOW()",
-            ] as $revoke) {
-                $this->mysql->prepare($revoke)->execute(['uid' => $userId]);
-            }
+            $this->revokeCredentialRows($userId);
             $this->mysql->commit();
         } catch (\Throwable $e) {
             if ($this->mysql->inTransaction()) {

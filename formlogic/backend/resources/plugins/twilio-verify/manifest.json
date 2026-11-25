@@ -3,6 +3,11 @@
   "name": "Sign-in codes by text (Twilio Verify)",
   "version": "1.1.0",
   "main": "ui/main.ui",
+  "config": {
+    "server": {
+      "requestsPerMinute": 0
+    }
+  },
   "server": {
     "entry": "server/main.logic",
     "requires": {

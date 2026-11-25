@@ -274,6 +274,14 @@ class NativeTableFormBridge
             $fieldsByName[(string) $f['name']] = $f;
         }
         $values = $this->mapAnswersToColumns($binding, $answers, $fieldsByName, false);
+        // Apply server-derived status (e.g. from an onSubmit logicScript) when provided.
+        if (isset($data['status']) && is_string($data['status']) && $data['status'] !== '' && $binding['statusColumn'] !== null) {
+            $statusCol = $binding['statusColumn'];
+            $statusMeta = $fieldsByName[$statusCol] ?? null;
+            if ($statusMeta === null || empty($statusMeta['readOnly'])) {
+                $values[$statusCol] = $data['status'];
+            }
+        }
         // Record server-derived submitter identity when the table carries an authoritative owner column.
         $submitterId = is_string($data['submittedByUserId'] ?? null) && $data['submittedByUserId'] !== ''
             ? $data['submittedByUserId']
@@ -375,13 +383,14 @@ class NativeTableFormBridge
             $fieldsByName[(string) $f['name']] = $f;
         }
         $answers = is_array($data['answers'] ?? null) ? $data['answers'] : [];
+        $values = $this->mapAnswersToColumns($binding, $answers, $fieldsByName, true);
         if (isset($data['status']) && is_string($data['status']) && $binding['statusColumn'] !== null) {
-            $statusFieldId = array_search($binding['statusColumn'], $binding['columns'], true);
-            if (is_string($statusFieldId) && !array_key_exists($statusFieldId, $answers)) {
-                $answers[$statusFieldId] = $data['status'];
+            $statusCol = $binding['statusColumn'];
+            $statusMeta = $fieldsByName[$statusCol] ?? null;
+            if ($statusMeta === null || empty($statusMeta['readOnly'])) {
+                $values[$statusCol] = $data['status'];
             }
         }
-        $values = $this->mapAnswersToColumns($binding, $answers, $fieldsByName, true);
         if ($values !== [] && isset($fieldsByName['updated_at']) && !array_key_exists('updated_at', $values) && empty($fieldsByName['updated_at']['readOnly'])) {
             $uType = strtoupper((string) ($fieldsByName['updated_at']['type'] ?? 'TEXT'));
             $values['updated_at'] = preg_match('/INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL/', $uType) === 1 ? time() : gmdate('Y-m-d H:i:s');
@@ -490,6 +499,10 @@ class NativeTableFormBridge
             if (str_contains($type, 'BLOB')) continue;
 
             $lower = strtolower($colName);
+            // Never expose authoritative submitter-ownership columns as user-editable form fields.
+            if ($lower === '_submitted_by_user_id' || $lower === 'submitted_by_user_id') {
+                continue;
+            }
             if ($createdAtCol === null && preg_match('/^(?:created_?at|submitted_?at|inserted_?at|date_?created|timestamp)$/', $lower) === 1) {
                 $createdAtCol = $colName;
             }
@@ -629,6 +642,11 @@ class NativeTableFormBridge
         $values = [];
         foreach ($binding['columns'] as $fieldId => $colName) {
             if (!array_key_exists($fieldId, $answers)) continue;
+            $colLower = strtolower((string) $colName);
+            // Authoritative submitter columns are set exclusively server-side on create.
+            if ($colLower === '_submitted_by_user_id' || $colLower === 'submitted_by_user_id') {
+                continue;
+            }
             $meta = $fieldsByName[$colName] ?? null;
             if ($meta !== null) {
                 if (!empty($meta['readOnly'])) continue;
@@ -685,6 +703,9 @@ class NativeTableFormBridge
 
     private function dispatchEvents(string $appId): void
     {
+        if (NativeAppService::hasSandboxRootOverrides()) {
+            return;
+        }
         $router = $this->recordEvents ?? ($this->recordEventsResolver !== null ? ($this->recordEventsResolver)() : null);
         if ($router === null) return;
         try {

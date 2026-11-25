@@ -255,16 +255,15 @@ export async function probeOaiy(force = false): Promise<OaiyInfo> {
   inflight = (async () => {
     const base = getOaiyBaseUrl();
     let info: OaiyInfo = { available: false, baseUrl: base };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
       const resp = await fetch(`${base}/api/health`, {
         method: 'GET',
         credentials: 'omit',
         cache: 'no-store',
         signal: controller.signal,
       });
-      clearTimeout(timer);
       if (resp.ok) {
         const body = (await resp.json().catch(() => null)) as OaiyHealth | null;
         // Match the product EXACTLY; accept only a compatible protocol major.
@@ -283,6 +282,8 @@ export async function probeOaiy(force = false): Promise<OaiyInfo> {
       }
     } catch {
       /* unreachable / timeout / CORS → not available */
+    } finally {
+      clearTimeout(timer);
     }
     cached = info;
     cachedAt = Date.now();
@@ -476,9 +477,9 @@ export interface OaiyPluginSummary {
  * summary shape, taking name/version from the manifest and dropping `dir`.
  */
 export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const resp = await fetch(`${getOaiyBaseUrl()}/api/plugins`, {
       method: 'GET',
       credentials: 'omit',
@@ -486,7 +487,6 @@ export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
       signal: controller.signal,
       headers: { Accept: 'application/json', ...authHeaders() },
     });
-    clearTimeout(timer);
     if (!resp.ok) {
       forgetRefusedOaiyToken(resp.status, await resp.json().catch(() => null));
       return null;
@@ -509,6 +509,8 @@ export async function listOaiyPlugins(): Promise<OaiyPluginSummary[] | null> {
     }));
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -526,9 +528,9 @@ export interface OaiyPluginActionResult {
  * caller to surface.
  */
 export async function oaiyLifecycleAction(path: string, what: string, timeoutMs = 20_000): Promise<OaiyPluginActionResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const resp = await fetch(`${getOaiyBaseUrl()}${path}`, {
       method: 'POST',
       credentials: 'omit',
@@ -536,13 +538,14 @@ export async function oaiyLifecycleAction(path: string, what: string, timeoutMs 
       signal: controller.signal,
       headers: { Accept: 'application/json', ...authHeaders() },
     });
-    clearTimeout(timer);
     if (resp.ok) return { ok: true };
     const body = await resp.json().catch(() => null);
     forgetRefusedOaiyToken(resp.status, body);
     return { ok: false, error: oaiyErrorText(body) ?? `OAIY ${what} failed (HTTP ${resp.status})` };
   } catch {
     return { ok: false, error: 'OAIY Desktop did not respond.' };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

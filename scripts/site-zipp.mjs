@@ -141,7 +141,8 @@ function installedArchive(paths) {
 /** The Softn release's ZIPP installer (zipp-tools/), unpacked beside its archive, every name held inside the folder. */
 function unpackInstaller(paths) {
   const { tag, bytes } = installedArchive(paths);
-  const { entries } = readArchive(bytes);
+  const { entries, problems } = readArchive(bytes);
+  if (problems.length) refuse(`Softn ${tag}'s archive is damaged (${problems[0]}).`);
   const tools = [...entries.keys()].filter((name) => name.startsWith('zipp-tools/') && !name.endsWith('/'));
   if (!tools.includes('zipp-tools/scripts/fetch-zipp-release.mjs')) refuse(`Softn ${tag} carries no ZIPP installer (zipp-tools/, Softn v0.0.38 on): it cannot install a ZIPP of the site's own. Install a later Softn release, or remove ${PIN_FILE}.`);
   const base = resolve(paths.releases, tag);
@@ -182,11 +183,14 @@ function promote(paths, stage) {
   const placed = [];
   try {
     for (const [name, destination] of pairs) if (existsSync(destination)) { move(destination, resolve(old, name)); setAside.push([name, destination]); }
-    for (const [name, destination] of pairs) if (existsSync(resolve(stage, name))) { move(resolve(stage, name), destination); placed.push(destination); }
+    for (const [name, destination] of pairs) if (existsSync(resolve(stage, name))) { placed.push(destination); move(resolve(stage, name), destination); }
   } catch (error) {
     try {
       for (const destination of placed) rmSync(destination, { recursive: true, force: true });
-      for (const [name, destination] of setAside) if (!existsSync(destination)) move(resolve(old, name), destination);
+      for (const [name, destination] of setAside) {
+        rmSync(destination, { recursive: true, force: true });
+        move(resolve(old, name), destination);
+      }
     } catch (restoreError) {
       throw new SiteZippError(`The site's ZIPP could not be put in place (${error.message}), and putting the previous one back failed too (${restoreError.message}). It is kept at ${old}; move its folders back into formlogic/ui/vendor.`);
     }
@@ -248,8 +252,17 @@ export async function installSiteZipp({ root, log = console.log, node = process.
       }
     } catch (error) { if (!(error instanceof SiteZippError) && error?.code !== 'ENOENT') throw error; }
   }
-  // A stage a run that was stopped left behind goes first.
-  rmSync(paths.staging, { recursive: true, force: true });
+  // Refuse to wipe a preserved `old/` recovery folder left by a failed rollback; clean only empty/abandoned stages.
+  if (existsSync(paths.staging)) {
+    for (const entry of readdirSync(paths.staging, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const prevStage = resolve(paths.staging, entry.name);
+      if (existsSync(resolve(prevStage, 'old'))) {
+        refuse(`A previous failed ZIPP install kept the prior vendor trees at ${resolve(prevStage, 'old')}. Restore or remove that folder before retrying.`);
+      }
+      rmSync(prevStage, { recursive: true, force: true });
+    }
+  }
   const stage = resolve(paths.staging, randomBytes(4).toString('hex'));
   const dirs = { site: resolve(stage, 'zipp'), siteWeb: resolve(stage, 'zipp-web'), siteTorch: resolve(stage, 'zipp-torch') };
   mkdirSync(stage, { recursive: true });

@@ -5,7 +5,7 @@ import { deferEffect } from '../../lib/deferredEffect';
 // the one-time "Sign storage baseline" action (vault-gated). Presets,
 // migration, and replica management arrive with later N3 slices.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Database, ShieldCheck } from 'lucide-react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
@@ -22,7 +22,7 @@ function FormDataPlacementCard({ formId }: { formId: string }) {
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showUnlock, setShowUnlock] = useState(false);
-  const [pendingSign, setPendingSign] = useState(false);
+  const signingRef = useRef(false);
 
   const load = useCallback(async () => {
     const res = await api.getDataPlacement(formId);
@@ -36,6 +36,8 @@ function FormDataPlacementCard({ formId }: { formId: string }) {
   useEffect(() => deferEffect(() => { void load(); }), [load]);
 
   const runSign = useCallback(async () => {
+    if (signingRef.current) return;
+    signingRef.current = true;
     setBusy(true);
     try {
       const vaultRes = await api.getVault();
@@ -48,22 +50,15 @@ function FormDataPlacementCard({ formId }: { formId: string }) {
     } catch (e) {
       toast.error('Baseline signing failed', e instanceof Error ? e.message : String(e));
     } finally {
+      signingRef.current = false;
       setBusy(false);
-      setPendingSign(false);
     }
   }, [formId, load]);
 
-  useEffect(() => deferEffect(() => {
-    if (pendingSign && !showUnlock && useVaultStore.getState().status === 'unlocked') {
-      void runSign();
-    }
-  }), [pendingSign, showUnlock, runSign]);
-
   const startSign = () => {
     if (useVaultStore.getState().status === 'unlocked') {
-      setPendingSign(true);
+      void runSign();
     } else {
-      setPendingSign(true);
       setShowUnlock(true);
     }
   };
@@ -110,10 +105,12 @@ function FormDataPlacementCard({ formId }: { formId: string }) {
       )}
       <VaultUnlockDialog
         isOpen={showUnlock}
-        onUnlocked={() => setShowUnlock(false)}
+        onUnlocked={() => {
+          setShowUnlock(false);
+          void runSign();
+        }}
         onClose={() => {
           setShowUnlock(false);
-          setPendingSign(false);
         }}
         title="Unlock your vault to sign the storage baseline"
       />

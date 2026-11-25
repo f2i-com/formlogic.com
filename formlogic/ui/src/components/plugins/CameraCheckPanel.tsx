@@ -75,10 +75,23 @@ export function CameraCheckPanel({ start, mode = 'member', pluginName, onPassed,
 
   const poll = async (id: string, until: number) => {
     setPhase('checking');
+    let consecutiveErrors = 0;
     while (alive.current) {
       await sleep(2500);
       if (!alive.current) return;
       const result = await api.getCameraCheck(id);
+      if (!alive.current) return;
+      if (result.error) {
+        consecutiveErrors += 1;
+        const fatalStatus = typeof result.status === 'number' && result.status >= 400 && result.status < 500 && result.status !== 429;
+        if (fatalStatus || consecutiveErrors >= 3) {
+          setError(result.error);
+          setPhase('result');
+          return;
+        }
+      } else {
+        consecutiveErrors = 0;
+      }
       if (result.data && result.data.status === 'done') {
         setCheck(result.data);
         setPhase('result');
@@ -143,7 +156,11 @@ export function CameraCheckPanel({ start, mode = 'member', pluginName, onPassed,
       return;
     }
     setCheck(sent.data);
-    if (sent.data.status === 'done') { setPhase('result'); return; }
+    if (sent.data.status === 'done') {
+      setPhase('result');
+      if (sent.data.outcome === 'passed' && mode === 'member') onPassed?.();
+      return;
+    }
     await poll(current.id, Date.parse(current.expiresAt.replace(' ', 'T') + 'Z') || Date.now() + 660_000);
   };
 

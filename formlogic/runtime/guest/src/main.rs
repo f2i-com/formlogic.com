@@ -45,7 +45,7 @@
 
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Instruction budget for one job. The wall clock is still owned by PHP (it
 /// pauses its watchdog around host calls, which this process cannot see), so this
@@ -165,6 +165,18 @@ fn main() {
     }
 }
 
+/// Strict allowlist of `(module, method)` pairs an `onSubmit(ctx)` script may invoke
+/// over the host RPC channel. Mirrors `FormLogicRuntime::handleHostCall`.
+fn is_allowed_rpc(module: &str, method: &str) -> bool {
+    matches!(
+        (module, method),
+        ("db", "setField" | "getField" | "setStatus" | "addTag")
+            | ("utils", "uuid" | "now" | "nowMs" | "hash" | "formatDate")
+            | ("http", "get" | "post" | "put" | "patch" | "delete" | "request")
+            | ("flows", "run")
+    )
+}
+
 /// Evaluate a batch of pure expressions. No host calls; one round trip.
 fn run_eval(
     prelude: &str,
@@ -187,34 +199,60 @@ fn run_eval(
     // expression runs as a program in global scope, seeing the prelude and the
     // injected context but never this wrapper's locals.
     let mut program = String::with_capacity(prelude.len() + 4096);
-    program.push_str(&preamble(prelude));
+    program.push_str(&preamble_start(prelude));
     program.push_str(&format!(
         r#"
-var __jobs = JSON.parse({jobs});
-var __shared = JSON.parse({shared});
-__applyContext(__shared);
-var __results = [];
-for (var __i = 0; __i < __jobs.length; __i++) {{
-  var __j = __jobs[__i];
-  if (__j.context) {{ __applyContext(__j.context); }}
-  try {{
-    __results.push({{ id: __j.id, ok: true, value: __sanitize((0, eval)(String(__j.expression)), 0) }});
-  }} catch (e) {{
-    __results.push({{ id: __j.id, ok: false, error: String((e && e.message) || e) }});
+  var __jobs = __jsonParse({jobs});
+  var __shared = __jsonParse({shared});
+  __applyContext(__shared);
+  var __resultsOut = "";
+  for (var __i = 0; __i < __jobs.length; __i++) {{
+    var __j = __jobs[__i];
+    var __jobId = __hasOwn(__j, "id") ? __j.id : "";
+    var __jobExpr = __hasOwn(__j, "expression") ? __j.expression : "";
+    var __jobCtx = __hasOwn(__j, "context") ? __j.context : null;
+    if (__resultsOut !== "") {{ __resultsOut += ","; }}
+    try {{
+      if (__jobCtx) {{ __applyContext(__jobCtx); }}
+      var __valJson = __serializeSafe(__eval(__String(__jobExpr)), 0, {{ left: __MAX_NODES }});
+      __resultsOut += "{{\"id\":" + __quoteString(__jobId) + ",\"ok\":true,\"value\":" + __valJson + "}}";
+    }} catch (e) {{
+      var __errMsg = __safeErrorMessage(e);
+      __resultsOut += "{{\"id\":" + __quoteString(__jobId) + ",\"ok\":false,\"error\":" + __quoteString(__errMsg) + "}}";
+    }}
   }}
-}}
-__emit({{ type: "done", results: __results }});
+  __emitRaw("{{\"type\":\"done\",\"results\":[" + __resultsOut + "]}}");
+}})();
 "#,
         jobs = json_string_literal(&serde_json::Value::Array(jobs.clone())),
         shared = json_string_literal(&shared_context),
     ));
 
-    let mut state = compile(&program, max_steps, heap_mb, None)?;
-    state.run_init().map_err(|e| e.to_string())?;
+    let done_frame: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let done_slot = Arc::clone(&done_frame);
+    let host = Box::new(move |kind: &str, args: &[String]| -> Result<String, String> {
+        if kind != "done" {
+            return Err(format!("unsupported host call: {kind}"));
+        }
+        let payload = args.first().cloned().unwrap_or_default();
+        if payload.len() > OUTPUT_LIMIT_BYTES {
+            return Err("output limit exceeded".into());
+        }
+        let mut slot = done_slot.lock().map_err(|_| "host lock poisoned".to_string())?;
+        if slot.is_some() {
+            return Err("duplicate done frame".into());
+        }
+        *slot = Some(payload);
+        Ok(String::new())
+    });
+
+    let mut state = compile(&program, max_steps, heap_mb, Some(host))?;
+    let outcome = state.run_init();
     if let Some(limit) = state.resource_limit_error() {
         return Err(limit.to_string());
     }
-    flush_replies(&mut state);
+    outcome.map_err(|e| e.to_string())?;
+    emit_done_frame(&done_frame, RunMode::Eval);
     Ok(())
 }
 
@@ -232,55 +270,72 @@ fn run_script(
         .unwrap_or_else(|| serde_json::json!({}));
 
     let mut program = String::with_capacity(prelude.len() + 4096);
-    program.push_str(&preamble(prelude));
+    program.push_str(&preamble_start(prelude));
     program.push_str(&format!(
         r#"
-var __ctxRaw = JSON.parse({context});
-var __rpcId = 0;
-function __hostCall(module, method, args) {{
-  __rpcId++;
-  var reply = __zippHostCall("rpc", String(module), String(method), JSON.stringify(__sanitize(args, 0)), String(__rpcId));
-  var parsed;
-  try {{ parsed = JSON.parse(reply); }} catch (e) {{ throw new Error("bad host response"); }}
-  if (parsed && parsed.error) {{ throw new Error(String(parsed.error)); }}
-  return parsed ? parsed.value : null;
-}}
-function __module(name, methods) {{
-  var o = {{}};
-  methods.forEach(function (m) {{
-    o[m] = function () {{ return __hostCall(name, m, Array.prototype.slice.call(arguments)); }};
-  }});
-  return o;
-}}
-var ctx = {{
-  answers: __ctxRaw.answers || {{}},
-  meta: __ctxRaw.meta || {{}},
-  db: __module("db", ["setField", "getField", "setStatus", "addTag"]),
-  utils: __module("utils", ["uuid", "now", "nowMs", "hash", "formatDate"]),
-  http: __module("http", ["get", "post", "put", "patch", "delete", "request"]),
-  // ctx.flows.run records a queued-run intent on the PHP side; it is never
-  // executed here.
-  flows: __module("flows", ["run"])
-}};
-var __done;
-try {{
-  // `new Function` compiles the untrusted script in global scope only, so it sees
-  // the prelude but none of this wrapper's locals.
-  var __onSubmit = new Function(String({script}) + "\nreturn typeof onSubmit !== 'undefined' ? onSubmit : null;")();
-  if (typeof __onSubmit !== "function") {{
-    __done = {{ type: "done", error: "Script did not define onSubmit(ctx)" }};
-  }} else {{
-    var __out = __onSubmit(ctx);
-    if (__out && typeof __out === "object" && __out.reject === true) {{
-      __done = {{ type: "done", reject: true, message: String(__out.message || "Submission rejected") }};
-    }} else {{
-      __done = {{ type: "done", result: __sanitize(__out, 0), store: !(__out && __out.store === false) }};
+  var __ctxRaw = __jsonParse({context});
+  var __rpcId = 0;
+  function __serializeArgs(args, budget) {{
+    var out = "[";
+    var len = args.length;
+    for (var i = 0; i < len && i < 5000; i++) {{
+      if (budget.left <= 0) break;
+      if (i > 0) out += ",";
+      var elem;
+      try {{ elem = args[i]; }} catch (_e) {{ elem = null; }}
+      out += __serializeSafe(elem, 1, budget);
     }}
+    return out + "]";
   }}
-}} catch (e) {{
-  __done = {{ type: "done", error: "Script execution error: " + String((e && e.message) || e) }};
-}}
-__emit(__done);
+  function __hostCall(module, method, args) {{
+    __rpcId++;
+    var reply = __hostCallRaw("rpc", __String(module), __String(method), __serializeArgs(args, {{ left: __MAX_NODES }}), __String(__rpcId));
+    var parsed;
+    try {{ parsed = __jsonParse(reply); }} catch (e) {{ throw new __Error("bad host response"); }}
+    if (parsed && typeof parsed === "object" && __hasOwn(parsed, "error") && parsed.error) {{ throw new __Error(__String(parsed.error)); }}
+    return (parsed && typeof parsed === "object" && __hasOwn(parsed, "value")) ? parsed.value : null;
+  }}
+  function __module(name, methods) {{
+    var o = {{}};
+    for (var i = 0; i < methods.length; i++) {{
+      (function (m) {{
+        o[m] = function () {{ return __hostCall(name, m, arguments); }};
+      }})(methods[i]);
+    }}
+    return o;
+  }}
+  var ctx = {{
+    answers: __ctxRaw.answers || {{}},
+    meta: __ctxRaw.meta || {{}},
+    db: __module("db", ["setField", "getField", "setStatus", "addTag"]),
+    utils: __module("utils", ["uuid", "now", "nowMs", "hash", "formatDate"]),
+    http: __module("http", ["get", "post", "put", "patch", "delete", "request"]),
+    // ctx.flows.run records a queued-run intent on the PHP side; it is never
+    // executed here.
+    flows: __module("flows", ["run"])
+  }};
+  var __doneJson;
+  try {{
+    // `new Function` compiles the untrusted script in global scope only, so it sees
+    // the prelude but none of this wrapper's locals.
+    var __onSubmit = new __Function(__String({script}) + "\nreturn typeof onSubmit !== 'undefined' ? onSubmit : null;")();
+    if (typeof __onSubmit !== "function") {{
+      __doneJson = "{{\"type\":\"done\",\"error\":\"Script did not define onSubmit(ctx)\"}}";
+    }} else {{
+      var __out = __onSubmit(ctx);
+      if (__out && typeof __out === "object" && __hasOwn(__out, "reject") && __out.reject === true) {{
+        var __rejMsg = (__hasOwn(__out, "message") && __out.message) ? __out.message : "Submission rejected";
+        __doneJson = "{{\"type\":\"done\",\"reject\":true,\"message\":" + __quoteString(__rejMsg) + "}}";
+      }} else {{
+        var __store = !(__out && typeof __out === "object" && __hasOwn(__out, "store") && __out.store === false);
+        __doneJson = "{{\"type\":\"done\",\"result\":" + __serializeSafe(__out, 0, {{ left: __MAX_NODES }}) + ",\"store\":" + (__store ? "true" : "false") + "}}";
+      }}
+    }}
+  }} catch (e) {{
+    __doneJson = "{{\"type\":\"done\",\"error\":" + __quoteString("Script execution error: " + __safeErrorMessage(e)) + "}}";
+  }}
+  __emitRaw(__doneJson);
+}})();
 "#,
         context = json_string_literal(&context),
         script = json_string_literal_str(script),
@@ -291,13 +346,39 @@ __emit(__done);
     // interleave, and a guest cannot get ahead of its own answers.
     let failed: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let transport_failed = Arc::clone(&failed);
+    let done_frame: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let done_slot = Arc::clone(&done_frame);
+    let done_received: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let done_flag = Arc::clone(&done_received);
     let host = Box::new(move |kind: &str, args: &[String]| -> Result<String, String> {
+        if kind == "done" {
+            let payload = args.first().cloned().unwrap_or_default();
+            if payload.len() > OUTPUT_LIMIT_BYTES {
+                return Err("output limit exceeded".into());
+            }
+            let mut slot = done_slot.lock().map_err(|_| "host lock poisoned".to_string())?;
+            if slot.is_some() {
+                return Err("duplicate done frame".into());
+            }
+            *slot = Some(payload);
+            done_flag.store(true, Ordering::Relaxed);
+            return Ok(String::new());
+        }
         if kind != "rpc" {
             return Err(format!("unsupported host call: {kind}"));
         }
+        if done_flag.load(Ordering::Relaxed) {
+            return Err("rpc after completion".into());
+        }
         let module = args.first().cloned().unwrap_or_default();
         let method = args.get(1).cloned().unwrap_or_default();
+        if !is_allowed_rpc(&module, &method) {
+            return Err(format!("disallowed host rpc: {module}.{method}"));
+        }
         let raw_args = args.get(2).cloned().unwrap_or_else(|| "[]".into());
+        if raw_args.len() > OUTPUT_LIMIT_BYTES {
+            return Err("rpc arguments limit exceeded".into());
+        }
         let id: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
         let parsed_args: serde_json::Value =
             serde_json::from_str(&raw_args).unwrap_or_else(|_| serde_json::json!([]));
@@ -328,64 +409,183 @@ __emit(__done);
     if let Some(limit) = state.resource_limit_error() {
         return Err(limit.to_string());
     }
+    if failed.load(Ordering::Relaxed) {
+        return Err("host channel closed".into());
+    }
     outcome.map_err(|e| e.to_string())?;
-    flush_replies(&mut state);
+    emit_done_frame(&done_frame, RunMode::Script);
     Ok(())
 }
 
-/// Shared guest-side helpers: the standard library, the sanitizer, the reply
-/// channel, and the context installer.
+/// Shared guest-side helpers: the standard library in global scope, followed by an
+/// IIFE that captures all intrinsics and the host-call trampoline before removing
+/// `globalThis.__zippHostCall`, so untrusted code cannot forge replies, bypass
+/// module allowlists, or poison serializer prototypes.
 ///
 /// `print` and `console` are stubbed to no-ops on purpose. The host reads this
 /// process's stdout as the protocol, so a guest that could write a line there
 /// could forge a `{"type":"done"}` frame and have the trusted side accept a
 /// fabricated result. Guest output has no destination, so it gets none.
-fn preamble(prelude: &str) -> String {
+fn preamble_start(prelude: &str) -> String {
     format!(
         r#"{prelude}
-var __MAX_DEPTH = 8;
-var __DANGEROUS = {{ "__proto__": true, "constructor": true, "prototype": true }};
-function __sanitize(value, depth) {{
-  if (value === null || value === undefined) return null;
-  var t = typeof value;
-  if (t === "number") return isFinite(value) ? value : null;
-  if (t === "string" || t === "boolean") return value;
-  if (depth >= __MAX_DEPTH) return null;
-  if (t === "object" && typeof value.length === "number" && !(value instanceof String)) {{
-    var arr = [];
-    for (var i = 0; i < value.length && i < 5000; i++) arr.push(__sanitize(value[i], depth + 1));
-    return arr;
+(function () {{
+  var __hostCallRaw = typeof globalThis.__zippHostCall === "function" ? globalThis.__zippHostCall : null;
+  try {{ delete globalThis.__zippHostCall; }} catch (e) {{ globalThis.__zippHostCall = undefined; }}
+  globalThis.print = function () {{}};
+  globalThis.console = {{ log: function () {{}}, warn: function () {{}}, error: function () {{}}, info: function () {{}}, debug: function () {{}} }};
+  var __jsonParse = JSON.parse;
+  var __eval = eval;
+  // Pre-bind every prototype method with the original Function.prototype.bind/call BEFORE
+  // untrusted code executes, so mutating Function.prototype.call or *.prototype.toJSON can
+  // never hijack serialization or frame framing.
+  var __bind = Function.prototype.bind;
+  var __call = Function.prototype.call;
+  var __hasOwn = __bind.call(__call, Object.prototype.hasOwnProperty);
+  var __objToString = __bind.call(__call, Object.prototype.toString);
+  var __dateToIso = __bind.call(__call, Date.prototype.toISOString);
+  var __regExpTest = __bind.call(__call, RegExp.prototype.test);
+  var __stringIndexOf = __bind.call(__call, String.prototype.indexOf);
+  var __charCodeAt = __bind.call(__call, String.prototype.charCodeAt);
+  var __fromCharCode = String.fromCharCode;
+  var __String = String;
+  var __isFinite = isFinite;
+  var __Error = Error;
+  var __Function = Function;
+  var __isArray = Array.isArray;
+  var __HEX = "0123456789abcdef";
+  var __MAX_DEPTH = 8;
+  var __MAX_NODES = 50000;
+  var __IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+  var __BLOCKED_GLOBALS = {{
+    "eval": true, "Function": true, "Object": true, "Array": true, "String": true,
+    "Number": true, "Boolean": true, "JSON": true, "Date": true, "RegExp": true,
+    "Error": true, "TypeError": true, "RangeError": true, "SyntaxError": true,
+    "ReferenceError": true, "URIError": true, "EvalError": true, "Promise": true,
+    "Proxy": true, "Reflect": true, "Math": true, "Symbol": true, "Map": true,
+    "Set": true, "WeakMap": true, "WeakSet": true, "globalThis": true,
+    "print": true, "console": true, "undefined": true, "NaN": true, "Infinity": true,
+    "isFinite": true, "isNaN": true, "parseInt": true, "parseFloat": true,
+    "encodeURI": true, "decodeURI": true, "encodeURIComponent": true, "decodeURIComponent": true
+  }};
+  function __isDangerous(k) {{
+    return k === "__proto__" || k === "constructor" || k === "prototype";
   }}
-  if (t === "object") {{
-    var out = {{}};
-    for (var k in value) {{
-      if (!Object.prototype.hasOwnProperty.call(value, k)) continue;
-      if (__DANGEROUS[k]) continue;
-      out[k] = __sanitize(value[k], depth + 1);
+  function __hex4(code) {{
+    return "\\u" + __fromCharCode(
+      __charCodeAt(__HEX, (code >> 12) & 15),
+      __charCodeAt(__HEX, (code >> 8) & 15),
+      __charCodeAt(__HEX, (code >> 4) & 15),
+      __charCodeAt(__HEX, code & 15)
+    );
+  }}
+  function __quoteString(raw) {{
+    var s = __String(raw);
+    var out = "\"";
+    for (var i = 0; i < s.length; i++) {{
+      var c = __charCodeAt(s, i);
+      if (c === 34) out += "\\\"";
+      else if (c === 92) out += "\\\\";
+      else if (c === 8) out += "\\b";
+      else if (c === 12) out += "\\f";
+      else if (c === 10) out += "\\n";
+      else if (c === 13) out += "\\r";
+      else if (c === 9) out += "\\t";
+      else if (c < 32) out += __hex4(c);
+      else if (c >= 0xd800 && c <= 0xdbff) {{
+        var next = (i + 1 < s.length) ? __charCodeAt(s, i + 1) : 0;
+        if (next >= 0xdc00 && next <= 0xdfff) {{
+          out += __fromCharCode(c, next);
+          i++;
+        }} else {{
+          out += __hex4(c);
+        }}
+      }} else if (c >= 0xdc00 && c <= 0xdfff) {{
+        out += __hex4(c);
+      }} else out += __fromCharCode(c);
     }}
-    return out;
+    return out + "\"";
   }}
-  return null;
-}}
-var __IDENT = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
-function __applyContext(ctx) {{
-  if (!ctx || typeof ctx !== "object") return;
-  for (var k in ctx) {{
-    if (!Object.prototype.hasOwnProperty.call(ctx, k)) continue;
-    // `__`-prefixed names are the wrapper's own (__jobs, __replies, __emit …);
-    // a context key that spelled one would replace it, and every caller's
-    // sanitiser is the only thing that stops that today. Refuse them here too.
-    if (!__IDENT.test(k) || __DANGEROUS[k] || k.indexOf("__") === 0) continue;
-    globalThis[k] = ctx[k];
+  function __safeErrorMessage(e) {{
+    try {{
+      if (e && typeof e === "object") {{
+        var m = e.message;
+        if (m !== undefined && m !== null && m !== "") return __String(m);
+      }}
+      return __String(e);
+    }} catch (_inner) {{
+      return "error";
+    }}
   }}
-}}
-var __replies = [];
-function __emit(obj) {{ __replies.push(JSON.stringify(obj)); }}
-globalThis.print = function () {{}};
-globalThis.console = {{ log: function () {{}}, warn: function () {{}}, error: function () {{}}, info: function () {{}}, debug: function () {{}} }};
+  function __serializeSafe(value, depth, budget) {{
+    if (budget.left <= 0) return "null";
+    budget.left--;
+    if (value === null || value === undefined) return "null";
+    var t = typeof value;
+    if (t === "number") return __isFinite(value) ? __String(value) : "null";
+    if (t === "boolean") return value ? "true" : "false";
+    if (t === "string") return __quoteString(value);
+    if (depth >= __MAX_DEPTH) return "null";
+    if (__isArray(value)) {{
+      var arrOut = "[";
+      var len = value.length;
+      for (var i = 0; i < len && i < 5000; i++) {{
+        if (budget.left <= 0) break;
+        if (i > 0) arrOut += ",";
+        var elem;
+        try {{ elem = value[i]; }} catch (_e) {{ elem = null; }}
+        arrOut += __serializeSafe(elem, depth + 1, budget);
+      }}
+      return arrOut + "]";
+    }}
+    if (t === "object") {{
+      if (__objToString(value) === "[object Date]") {{
+        try {{
+          return __quoteString(__dateToIso(value));
+        }} catch (_d) {{
+          return "null";
+        }}
+      }}
+      var objOut = "{{";
+      var first = true;
+      for (var k in value) {{
+        if (!__hasOwn(value, k)) continue;
+        if (__isDangerous(k)) continue;
+        if (budget.left <= 0) break;
+        var prop;
+        try {{ prop = value[k]; }} catch (_e) {{ prop = null; }}
+        var pt = typeof prop;
+        if (prop === undefined || pt === "function" || pt === "symbol") continue;
+        if (!first) objOut += ",";
+        first = false;
+        objOut += __quoteString(k) + ":" + __serializeSafe(prop, depth + 1, budget);
+      }}
+      return objOut + "}}";
+    }}
+    return "null";
+  }}
+  function __applyContext(ctx) {{
+    if (!ctx || typeof ctx !== "object") return;
+    for (var k in ctx) {{
+      if (!__hasOwn(ctx, k)) continue;
+      if (!__regExpTest(__IDENT, k) || __isDangerous(k) || __hasOwn(__BLOCKED_GLOBALS, k) || __stringIndexOf(k, "__") === 0) continue;
+      globalThis[k] = ctx[k];
+    }}
+  }}
+  function __emitRaw(jsonText) {{
+    if (__hostCallRaw) {{
+      __hostCallRaw("done", __String(jsonText));
+    }}
+  }}
 "#,
         prelude = prelude,
     )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunMode {
+    Eval,
+    Script,
 }
 
 fn compile(
@@ -404,22 +604,91 @@ fn compile(
     Ok(state)
 }
 
-/// Write whatever the guest queued on the reply channel.
-fn flush_replies(state: &mut zipp_vm::embed::ScriptState) {
-    let joined = state
-        .eval_in_context("__replies.join(\"\\n\")")
+fn valid_done_payload(obj: &serde_json::Map<String, serde_json::Value>, mode: RunMode) -> bool {
+    if obj.get("type").and_then(|v| v.as_str()) != Some("done") {
+        return false;
+    }
+    if obj.len() == 2 && obj.get("error").is_some_and(|v| v.is_string()) {
+        return true;
+    }
+    match mode {
+        RunMode::Eval => {
+            if obj.len() != 2 {
+                return false;
+            }
+            let Some(results) = obj.get("results").and_then(|v| v.as_array()) else {
+                return false;
+            };
+            results.iter().all(|item| {
+                let Some(entry) = item.as_object() else {
+                    return false;
+                };
+                if !entry.get("id").is_some_and(|v| v.is_string()) {
+                    return false;
+                }
+                match entry.get("ok").and_then(|v| v.as_bool()) {
+                    Some(true) => entry.len() == 3 && entry.contains_key("value"),
+                    Some(false) => {
+                        entry.len() == 3 && entry.get("error").is_some_and(|v| v.is_string())
+                    }
+                    None => false,
+                }
+            })
+        }
+        RunMode::Script => {
+            let is_result = obj.len() == 3
+                && obj.contains_key("result")
+                && obj.get("store").is_some_and(|v| v.is_boolean());
+            let is_reject = obj.len() == 3
+                && obj.get("reject").and_then(|v| v.as_bool()) == Some(true)
+                && obj.get("message").is_some_and(|v| v.is_string());
+            is_result || is_reject
+        }
+    }
+}
+
+/// Write the single validated `done` frame delivered through the private host callback.
+/// Parse and mode-specific schema-validate in Rust before emitting so untrusted guest mutations
+/// can never smuggle raw JSON syntax or unexpected top-level protocol keys onto stdout.
+fn emit_done_frame(done_frame: &Arc<Mutex<Option<String>>>, mode: RunMode) {
+    let frame = done_frame
+        .lock()
         .ok()
-        .and_then(|v| v.as_str().map(str::to_string))
+        .and_then(|mut slot| slot.take())
         .unwrap_or_default();
-    if joined.is_empty() {
+    if frame.is_empty()
+        || frame.len() > OUTPUT_LIMIT_BYTES
+        || frame.contains('\n')
+        || frame.contains('\r')
+    {
         emit_done_error("the sandbox produced no result");
         return;
     }
+    let parsed: serde_json::Value = match serde_json::from_str(&frame) {
+        Ok(v) => v,
+        Err(_) => {
+            emit_done_error("the sandbox produced malformed output");
+            return;
+        }
+    };
+    let Some(obj) = parsed.as_object() else {
+        emit_done_error("the sandbox produced malformed output");
+        return;
+    };
+    if !valid_done_payload(obj, mode) {
+        emit_done_error("the sandbox produced malformed output");
+        return;
+    }
+    let canonical = match serde_json::to_string(&parsed) {
+        Ok(s) if s.len() <= OUTPUT_LIMIT_BYTES => s,
+        _ => {
+            emit_done_error("output limit exceeded");
+            return;
+        }
+    };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    for line in joined.lines() {
-        let _ = writeln!(out, "{line}");
-    }
+    let _ = writeln!(out, "{canonical}");
     let _ = out.flush();
 }
 
@@ -439,4 +708,57 @@ fn json_string_literal(value: &serde_json::Value) -> String {
 
 fn json_string_literal_str(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn done_payload_schema_is_enforced_per_mode() {
+        let eval_ok = serde_json::json!({
+            "type": "done",
+            "results": [
+                { "id": "a", "ok": true, "value": 42 },
+                { "id": "b", "ok": false, "error": "boom" }
+            ]
+        });
+        assert!(valid_done_payload(eval_ok.as_object().unwrap(), RunMode::Eval));
+        assert!(!valid_done_payload(eval_ok.as_object().unwrap(), RunMode::Script));
+
+        let script_ok = serde_json::json!({
+            "type": "done",
+            "result": { "ok": true },
+            "store": true
+        });
+        assert!(valid_done_payload(script_ok.as_object().unwrap(), RunMode::Script));
+        assert!(!valid_done_payload(script_ok.as_object().unwrap(), RunMode::Eval));
+
+        let script_reject = serde_json::json!({
+            "type": "done",
+            "reject": true,
+            "message": "nope"
+        });
+        assert!(valid_done_payload(script_reject.as_object().unwrap(), RunMode::Script));
+        assert!(!valid_done_payload(script_reject.as_object().unwrap(), RunMode::Eval));
+
+        let script_false_reject = serde_json::json!({
+            "type": "done",
+            "reject": false,
+            "message": "nope"
+        });
+        assert!(!valid_done_payload(script_false_reject.as_object().unwrap(), RunMode::Script));
+
+        let err_frame = serde_json::json!({ "type": "done", "error": "failed" });
+        assert!(valid_done_payload(err_frame.as_object().unwrap(), RunMode::Eval));
+        assert!(valid_done_payload(err_frame.as_object().unwrap(), RunMode::Script));
+
+        let extra_key = serde_json::json!({
+            "type": "done",
+            "result": null,
+            "store": true,
+            "reject": true
+        });
+        assert!(!valid_done_payload(extra_key.as_object().unwrap(), RunMode::Script));
+    }
 }

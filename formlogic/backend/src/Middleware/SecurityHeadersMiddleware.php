@@ -291,8 +291,8 @@ class SecurityHeadersMiddleware implements MiddlewareInterface
             $csp = self::SANDBOXED_IMAGE;
         }
         // The site's own page, exactly: under this API's policy it could run nothing at all.
-        // Never allow /api/* routes (including external app passthroughs) to opt into SITE_PAGE CSP.
-        $reqPath = $request->getUri()->getPath();
+        // Never allow /api/* routes (including percent-encoded paths like /%61pi/* or external app passthroughs) to opt into SITE_PAGE CSP.
+        $reqPath = '/' . ltrim(rawurldecode($request->getUri()->getPath()), '/');
         if (!str_starts_with($reqPath, '/api/') && $reqPath !== '/api' && $response->getHeaderLine('Content-Security-Policy') === self::SITE_PAGE) {
             $csp = self::SITE_PAGE;
         }

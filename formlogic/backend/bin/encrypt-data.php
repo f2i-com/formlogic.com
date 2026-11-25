@@ -29,6 +29,7 @@ date_default_timezone_set('UTC');
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Services\DataEncryptionMigrator;
+use FormLogic\Services\NativeAppService;
 use FormLogic\Support\DataEncryption;
 
 if (in_array('--new-key', $argv, true)) {
@@ -50,7 +51,7 @@ if (!$crypto->enabled()) {
 }
 
 $trashPath = $config['settings']['trash']['dir'] ?? __DIR__ . '/../storage/trash';
-$result = (new DataEncryptionMigrator($mysql->getConnection(), __DIR__ . '/../storage/hosted-apps', $trashPath))->run($crypto);
+$result = (new DataEncryptionMigrator($mysql->getConnection(), __DIR__ . '/../storage/hosted-apps', $trashPath, new NativeAppService()))->run($crypto);
 printf(
     "%d secrets, %d records in %d apps and %d recycle bin snapshots moved onto key %s\n",
     $result['secrets'],

@@ -63,13 +63,22 @@ class ArtifactController
             );
         }
         $ref = $result['ref'];
-        $filename = is_string($ref['filename'] ?? null) && $ref['filename'] !== '' ? $ref['filename'] : ($ref['$artifact'] . '.bin');
+        $rawName = is_string($ref['filename'] ?? null) && $ref['filename'] !== '' ? $ref['filename'] : ($ref['$artifact'] . '.bin');
+        $cleanName = trim((string) (preg_replace('/[\x00-\x1F\x7F"\\\\\/]+/', '_', $rawName) ?? ''));
+        if ($cleanName === '' || $cleanName === '.' || $cleanName === '..') {
+            $cleanName = $ref['$artifact'] . '.bin';
+        }
+        $asciiFallback = trim((string) (preg_replace('/[^\x20-\x7E]+/', '_', $cleanName) ?? ''));
+        if ($asciiFallback === '') {
+            $asciiFallback = $ref['$artifact'] . '.bin';
+        }
+        $disposition = 'attachment; filename="' . $asciiFallback . '"; filename*=UTF-8\'\'' . rawurlencode($cleanName);
         $response->getBody()->write($result['bytes']);
         return $response
             ->withHeader('Content-Type', (string) $ref['mediaType'])
             ->withHeader('Content-Length', (string) strlen($result['bytes']))
             // Artifacts are third-party output. Never inline, never sniffed.
-            ->withHeader('Content-Disposition', 'attachment; filename="' . addslashes($filename) . '"')
+            ->withHeader('Content-Disposition', $disposition)
             ->withHeader('X-Content-Type-Options', 'nosniff')
             ->withHeader('Cache-Control', 'private, no-store');
     }

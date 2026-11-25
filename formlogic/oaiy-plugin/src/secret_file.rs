@@ -38,6 +38,51 @@ pub fn write(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
     Err(io::Error::new(io::ErrorKind::AlreadyExists, "no staging name was free"))
 }
 
+/// Atomically creates `path` only if it does not already exist, returning `Ok(true)` if this
+/// call created it and `Ok(false)` if another thread or process created it first.
+pub fn write_if_absent(path: &Path, contents: impl AsRef<[u8]>) -> io::Result<bool> {
+    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?.to_string_lossy().into_owned();
+    create_private_dir(dir)?;
+    let mut random = [0u8; 4];
+    getrandom::fill(&mut random).map_err(|e| io::Error::other(e.to_string()))?;
+    let base = u32::from_le_bytes(random);
+    for offset in 0..STAGING_NAMES {
+        let staging = dir.join(format!(".{name}.{}.tmp", base.wrapping_add(offset)));
+        let mut file = match create_new_owner_only(&staging) {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        let written = file.write_all(contents.as_ref()).and_then(|_| file.sync_all());
+        drop(file);
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&staging);
+            return Err(e);
+        }
+        let linked = std::fs::hard_link(&staging, path);
+        let _ = std::fs::remove_file(&staging);
+        return match linked {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+            Err(_) => {
+                // Fallback for filesystems without hard links (e.g. some network/FAT mounts):
+                // create_new fails atomically with AlreadyExists without overwriting.
+                match create_new_owner_only(path) {
+                    Ok(mut dest) => {
+                        dest.write_all(contents.as_ref())?;
+                        dest.sync_all()?;
+                        Ok(true)
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+                    Err(e) => Err(e),
+                }
+            }
+        };
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no staging name was free"))
+}
+
 /// `rename`, which replaces `to`. On Windows a scanner or an indexer can hold a file for a moment.
 pub fn rename_over(from: &Path, to: &Path) -> io::Result<()> {
     let mut attempt = 0u64;

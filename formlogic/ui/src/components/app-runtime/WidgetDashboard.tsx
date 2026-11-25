@@ -345,28 +345,225 @@ function DashboardCustomCss({ css, scopeId }: { css?: string; scopeId: string })
   return null;
 }
 
+/** Split a CSS selector list by top-level commas, respecting backslash escapes, quotes, and parens/brackets. Fails closed on unbalanced syntax. */
+function splitCssSelectors(selectorText: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote: '"' | "'" | null = null;
+  let start = 0;
+  for (let i = 0; i < selectorText.length; i++) {
+    const ch = selectorText[i];
+    // Handle CSS backslash escapes BOTH inside and outside quotes (e.g. `.\(` or `.\"`)
+    // so escaped delimiter characters cannot trap quote/depth state and skip subsequent commas.
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === '(' || ch === '[') { depth++; continue; }
+    if (ch === ')' || ch === ']') {
+      if (depth === 0) return [];
+      depth--;
+      continue;
+    }
+    if (ch === ',' && depth === 0) {
+      const part = selectorText.slice(start, i).trim();
+      if (part) parts.push(part);
+      start = i + 1;
+    }
+  }
+  // Fail closed on unclosed quotes or brackets so no trailing selector can escape #scopeId.
+  if (quote !== null || depth !== 0) return [];
+  const tail = selectorText.slice(start).trim();
+  if (tail) parts.push(tail);
+  if (parts.some((p) => /[{};]|\/\*/.test(p))) return [];
+  return parts;
+}
+
+const SAFE_DATA_IMAGE_URL_RE = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/=]+$/i;
+const SAFE_CSS_PROP_RE = /^--?[A-Za-z0-9_-]+$|^[A-Za-z][A-Za-z0-9-]*$/;
+
+/**
+ * Replace named CSS functions (e.g. `image-set(...)`, `-webkit-image-set(...)`, `src(...)`) with
+ * `'none'` using balanced-parenthesis scanning so nested `url(...)` calls cannot truncate the match.
+ */
+function stripCssFunctions(input: string, names: readonly string[]): string {
+  const lower = input.toLowerCase();
+  let out = '';
+  let i = 0;
+  while (i < input.length) {
+    let matchedNameLen = 0;
+    for (const name of names) {
+      if (lower.startsWith(name, i)) {
+        const prev = i > 0 ? lower[i - 1] : '';
+        if (prev && /[a-z0-9_-]/.test(prev)) continue;
+        let j = i + name.length;
+        while (j < input.length && /\s/.test(input[j])) j++;
+        if (input[j] === '(') {
+          matchedNameLen = j - i;
+          break;
+        }
+      }
+    }
+    if (matchedNameLen > 0) {
+      let j = i + matchedNameLen + 1;
+      let depth = 1;
+      let quote: '"' | "'" | null = null;
+      while (j < input.length && depth > 0) {
+        const ch = input[j];
+        if (ch === '\\') { j += 2; continue; }
+        if (quote) {
+          if (ch === quote) quote = null;
+          j++;
+          continue;
+        }
+        if (ch === '"' || ch === "'") { quote = ch; j++; continue; }
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        j++;
+      }
+      out += 'none';
+      i = j;
+      continue;
+    }
+    out += input[i++];
+  }
+  return out;
+}
+
+/** Balanced-parenthesis `url(...)` sanitizer that keeps ONLY strict closed inline base64 raster data URIs. */
+function sanitizeCssUrls(input: string): string {
+  const lower = input.toLowerCase();
+  let out = '';
+  let i = 0;
+  while (i < input.length) {
+    if (lower.startsWith('url', i)) {
+      const prev = i > 0 ? lower[i - 1] : '';
+      if (!prev || !/[a-z0-9_-]/.test(prev)) {
+        let j = i + 3;
+        while (j < input.length && /\s/.test(input[j])) j++;
+        if (input[j] === '(') {
+          const argStart = j + 1;
+          j = argStart;
+          let depth = 1;
+          let quote: '"' | "'" | null = null;
+          while (j < input.length && depth > 0) {
+            const ch = input[j];
+            if (ch === '\\') { j += 2; continue; }
+            if (quote) {
+              if (ch === quote) quote = null;
+              j++;
+              continue;
+            }
+            if (ch === '"' || ch === "'") { quote = ch; j++; continue; }
+            if (ch === '(') depth++;
+            else if (ch === ')') depth--;
+            j++;
+          }
+          if (depth === 0 && quote === null) {
+            const inner = input.slice(argStart, j - 1).trim();
+            let raw: string | null = null;
+            if (inner.length >= 2 && (inner[0] === '"' || inner[0] === "'") && inner[inner.length - 1] === inner[0]) {
+              const unquoted = inner.slice(1, -1);
+              if (!unquoted.includes(inner[0])) raw = unquoted.trim();
+            } else if (!/[\s"']/.test(inner)) {
+              raw = inner;
+            }
+            if (raw !== null && SAFE_DATA_IMAGE_URL_RE.test(raw)) {
+              out += input.slice(i, j);
+              i = j;
+              continue;
+            }
+          }
+          out += 'none';
+          i = j;
+          continue;
+        }
+      }
+    }
+    out += input[i++];
+  }
+  return out;
+}
+
+/**
+ * Normalize and sanitize one CSS declaration value to a fixed point — handles CSS custom
+ * properties (`--*`) which CSSStyleSheet stores verbatim without decoding escapes or stripping comments.
+ */
+function sanitizeCssValue(value: string): string {
+  let clean = value;
+  for (let iter = 0; iter < 6; iter++) {
+    const prev = clean;
+    clean = clean.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, ' ');
+    clean = clean.replace(/\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?/g, (_m, hex: string) => {
+      const cp = parseInt(hex, 16);
+      return cp >= 0x20 && cp <= 0x7e ? String.fromCharCode(cp) : '';
+    });
+    clean = clean.replace(/\\([^\r\n\f])/g, '$1').replace(/\\/g, '');
+    clean = stripCssFunctions(clean, ['-webkit-image-set', 'image-set', 'cross-fade', 'image', 'src']);
+    clean = sanitizeCssUrls(clean);
+    clean = clean.replace(/expression\s*\(|-moz-binding|behavior\s*:/gi, ' ');
+    if (clean === prev) break;
+  }
+  return clean.trim();
+}
+
+/** Serialize CSSStyleDeclaration property-by-property so custom properties and escapes cannot bypass sanitization. */
+function sanitizeCssStyle(style: CSSStyleDeclaration): string {
+  const decls: string[] = [];
+  for (let i = 0; i < style.length; i++) {
+    const prop = style.item(i);
+    if (!prop || !SAFE_CSS_PROP_RE.test(prop)) continue;
+    const rawVal = style.getPropertyValue(prop);
+    const val = sanitizeCssValue(rawVal);
+    if (!val || /[{};\\]|\/\*/.test(val)) continue;
+    const priority = style.getPropertyPriority(prop) === 'important' ? ' !important' : '';
+    decls.push(`${prop}: ${val}${priority};`);
+  }
+  return decls.join(' ');
+}
+
 /** Serialize rules with every selector prefixed by `scope` (recursing into grouping rules). */
 function scopeCssRules(rules: CSSRuleList, scope: string): string {
   let out = '';
   for (const rule of Array.from(rules)) {
     if (rule instanceof CSSStyleRule) {
-      const selectors = rule.selectorText
-        .split(',')
-        .map((sel) => `${scope} ${sel.trim()}`)
+      const selectors = splitCssSelectors(rule.selectorText)
+        .map((sel) => `${scope} ${sel}`)
         .join(', ');
-      const body = rule.cssText.slice(rule.cssText.indexOf('{'));
-      out += `${selectors} ${body}
-`;
+      if (!selectors) continue;
+      // Serialize declaration-by-declaration from rule.style so quoted attribute selectors with '{'
+      // and raw custom-property token streams cannot break out of scope or bypass URL filtering.
+      const body = sanitizeCssStyle(rule.style);
+      if (!body) continue;
+      out += `${selectors} { ${body} }\n`;
     } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
       const kind = rule instanceof CSSMediaRule ? '@media' : '@supports';
-      out += `${kind} ${rule.conditionText} { ${scopeCssRules(rule.cssRules, scope)} }
-`;
-    } else if (rule instanceof CSSKeyframesRule || rule instanceof CSSFontFaceRule) {
-      // Keyframes/font-face are name-scoped, not selector-scoped — pass through.
-      out += `${rule.cssText}
-`;
+      const condition = rule.conditionText;
+      if (/[{};\\]|\/\*|url\s*\(/i.test(condition)) continue;
+      const inner = scopeCssRules(rule.cssRules, scope);
+      if (inner) {
+        out += `${kind} ${condition} { ${inner} }\n`;
+      }
+    } else if (rule instanceof CSSKeyframesRule) {
+      // Keyframes are name-scoped, not selector-scoped — serialize each keyframe declaration block safely.
+      if (!/^[A-Za-z0-9_-]+$/.test(rule.name)) continue;
+      const frames: string[] = [];
+      for (const frame of Array.from(rule.cssRules)) {
+        if (frame instanceof CSSKeyframeRule) {
+          const body = sanitizeCssStyle(frame.style);
+          if (body) frames.push(`${frame.keyText} { ${body} }`);
+        }
+      }
+      if (frames.length > 0) {
+        out += `@keyframes ${rule.name} { ${frames.join(' ')} }\n`;
+      }
     }
-    // Anything else (@import survived nothing server-side; @page etc.) is dropped.
+    // @font-face, @import, @page, etc. are dropped so dashboard CSS cannot hijack shell fonts or fetch remote URLs.
   }
   return out;
 }

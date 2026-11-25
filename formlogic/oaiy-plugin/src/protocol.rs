@@ -16,6 +16,8 @@ use crate::commands::App;
 
 /// OAIY's limit is 1 MiB. A little under, for what goes round the answer.
 const MAX_LINE_BYTES: usize = 1_000_000;
+/// Maximum incoming JSON-RPC line length accepted on stdin before dropping the line.
+const MAX_IN_LINE_BYTES: usize = 2 * 1024 * 1024;
 /// Commands answered at once. More than the page ever sends: this is for a caller gone wrong.
 const MAX_AT_ONCE: usize = 16;
 
@@ -43,12 +45,67 @@ fn fitted(message: &Value) -> String {
     if text.len() <= MAX_LINE_BYTES {
         return text;
     }
+    let id = message
+        .get("id")
+        .filter(|id| id.to_string().len() <= 256)
+        .cloned()
+        .unwrap_or(Value::Null);
     json!({
         "jsonrpc": "2.0",
-        "id": message.get("id").cloned().unwrap_or(Value::Null),
+        "id": id,
         "result": {"ok": false, "error": {"code": "failed", "message": "That answer is too long to send."}},
     })
     .to_string()
+}
+
+enum ReadLine {
+    Line,
+    TooLong,
+    Eof,
+}
+
+/// Reads a single newline-delimited frame bounded by `max_bytes`. If a line exceeds the bound,
+/// the remainder up to the next `\n` (or EOF) is drained without allocating unbounded memory.
+fn read_bounded_line(reader: &mut impl BufRead, out: &mut Zeroizing<String>, max_bytes: usize) -> ReadLine {
+    out.clear();
+    let mut raw = Zeroizing::new(Vec::<u8>::new());
+    let mut too_long = false;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok([]) => {
+                if raw.is_empty() && !too_long {
+                    return ReadLine::Eof;
+                }
+                break;
+            }
+            Ok(buf) => buf,
+            Err(_) => return ReadLine::Eof,
+        };
+        let newline = available.iter().position(|&b| b == b'\n');
+        let take = newline.map(|pos| pos + 1).unwrap_or(available.len());
+        if !too_long {
+            if raw.len().saturating_add(take) > max_bytes {
+                too_long = true;
+                raw.clear();
+            } else {
+                raw.extend_from_slice(&available[..take]);
+            }
+        }
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if too_long {
+        return ReadLine::TooLong;
+    }
+    match String::from_utf8(std::mem::take(&mut *raw)) {
+        Ok(text) => {
+            *out = Zeroizing::new(text);
+            ReadLine::Line
+        }
+        Err(_) => ReadLine::TooLong,
+    }
 }
 
 /// The folder OAIY gave the plugin. Nothing is kept anywhere else.
@@ -68,16 +125,20 @@ pub fn serve() {
     // Recovery words pass through here, so the line doesn't stay in memory after it is read.
     let mut line = Zeroizing::new(String::new());
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
+        match read_bounded_line(&mut reader, &mut line, MAX_IN_LINE_BYTES) {
+            ReadLine::Eof => break,
+            ReadLine::TooLong => continue,
+            ReadLine::Line => {}
         }
         let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
         let id = message.get("id").cloned();
         match (message.get("method").and_then(Value::as_str), id) {
             (Some("plugin.shutdown"), _) => break,
             (Some("plugin.init"), Some(id)) => {
+                if app.is_some() {
+                    out.reply(id, json!({"ok": true}));
+                    continue;
+                }
                 let params = message.get("params").cloned().unwrap_or(Value::Null);
                 match data_dir(&params) {
                     Some(dir) => {
@@ -101,9 +162,21 @@ pub fn serve() {
                 }
                 let (out, busy) = (out.clone(), busy.clone());
                 std::thread::spawn(move || {
+                    struct BusyGuard(Arc<AtomicUsize>);
+                    impl Drop for BusyGuard {
+                        fn drop(&mut self) {
+                            self.0.fetch_sub(1, Ordering::AcqRel);
+                        }
+                    }
+                    let _guard = BusyGuard(busy);
                     let params = message.get("params").cloned().unwrap_or(Value::Null);
-                    out.reply(id, crate::commands::handle(&app, params));
-                    busy.fetch_sub(1, Ordering::AcqRel);
+                    let reply = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        crate::commands::handle(&app, params)
+                    })) {
+                        Ok(result) => result,
+                        Err(_) => json!({"ok": false, "error": {"code": "failed", "message": "The request stopped unexpectedly."}}),
+                    };
+                    out.reply(id, reply);
                 });
             }
             (Some(method), Some(id)) => {

@@ -402,8 +402,8 @@ export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) 
   // tree's own ui/public/.htaccess to the same rule; this is that rule at the door, for what a
   // release would install. Header and type lines are what these files are for and pass.
   for (const [name, entry] of entries) {
-    if (!/^(hosted-runtime|app-editors)\/.*\.htaccess$/.test(name)) continue;
-    const rule = entry.data.toString('utf8').match(/^\s*(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp|RewriteRule|RewriteCond)\b.*$/m);
+    if (!/^(hosted-runtime|app-editors)\/.*\.htaccess$/i.test(name)) continue;
+    const rule = entry.data.toString('utf8').match(/^\s*(Redirect|RedirectMatch|RedirectPermanent|RedirectTemp|RewriteRule|RewriteCond|ErrorDocument|FallbackResource|ProxyPass|ProxyPassMatch)\b.*$/im);
     if (rule) throw new ReleaseError(`${name} redirects or rewrites under a frame tree (${rule[0].trim()}); a redirect under /hosted-runtime/ or /app-editors/ would carry a hosted app's requests past the runtime's connect-src pin, so this archive is refused.`);
   }
 

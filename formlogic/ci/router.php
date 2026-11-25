@@ -69,12 +69,23 @@ if (in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD'], true)) {
     }
 }
 
+// Mirror ui/public/.htaccess dot-file and backup/dump blocking (outside /api and /.well-known).
+if (preg_match('#(?:^|/)\.(?!well-known(?:/|$))#i', $uri)
+    || preg_match('#\.(?:bak|old|orig|save|swp|sql(?:\.gz)?|sqlite3?(?:-wal|-shm)?|db|tar|tar\.gz|tgz|zip|7z|rar)$#i', $uri)) {
+    http_response_code(404);
+    return true;
+}
+
 // The hosted runtime, the embedded editors and the site's ZIPP folder, with the headers the
 // .htaccess files give them in production (ui/public/zipp/.htaccess for the last).
-if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#', $uri)) {
+if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#i', $uri)) {
     $root = realpath($dist);
-    $file = $root !== false ? realpath($root . $uri) : false;
-    if ($file !== false && str_starts_with($file, $root . DIRECTORY_SEPARATOR) && is_file($file)) {
+    $candidate = $root !== false ? realpath($root . $uri) : false;
+    if ($candidate !== false && is_dir($candidate)) {
+        $candidate = realpath($candidate . DIRECTORY_SEPARATOR . 'index.html');
+    }
+    if ($root !== false && $candidate !== false && str_starts_with($candidate, $root . DIRECTORY_SEPARATOR) && is_file($candidate)) {
+        $relPath = '/' . str_replace('\\', '/', substr($candidate, strlen($root) + 1));
         $types = [
             'js' => 'application/javascript', 'mjs' => 'application/javascript', 'wasm' => 'application/wasm',
             'json' => 'application/json', 'css' => 'text/css', 'html' => 'text/html; charset=UTF-8',
@@ -82,29 +93,39 @@ if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#', $uri)) {
             'ico' => 'image/x-icon', 'map' => 'application/json', 'txt' => 'text/plain; charset=UTF-8',
             'onnx' => 'application/octet-stream', 'bin' => 'application/octet-stream',
         ];
-        $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+        $ext = strtolower(pathinfo($candidate, PATHINFO_EXTENSION));
         header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
         header('X-Content-Type-Options: nosniff');
         header('Access-Control-Allow-Origin: *');
         // Mirrors ui/public/.htaccess IS_APP_FRAME, host.html included: the hosted runtime's
         // second entry document serves host-js under a policy carrying 'unsafe-eval', so it is
         // framed under exactly the same rule as index.html and never a looser one.
-        if (preg_match('#^/(hosted-runtime/(index\.html|host\.html)?|app-editors/(builder|studio)/(index\.html)?)$#', $uri)) {
+        if (preg_match('#^/(hosted-runtime/(index\.html|host\.html)|app-editors/(builder|studio)/index\.html)$#i', $relPath)) {
             header('X-Frame-Options: SAMEORIGIN');
             // And .htaccess IS_APP_RUNTIME: the runtime documents sandbox themselves.
-            $sandbox = str_starts_with($uri, '/hosted-runtime/') ? 'sandbox allow-scripts allow-downloads; ' : '';
+            $sandbox = stripos($relPath, '/hosted-runtime/') === 0 ? 'sandbox allow-scripts allow-downloads; ' : '';
             header("Content-Security-Policy: {$sandbox}frame-ancestors 'self'; base-uri 'self'; object-src 'none'");
             // And its no-transform: a CDN leaves the app's documents as they were sent.
             if ($sandbox !== '') header('Cache-Control: no-cache, no-transform');
         }
         // A ZIPP folder is named by its engine, so its files never change.
-        if (str_starts_with($uri, '/zipp/')) header('Cache-Control: public, max-age=31536000, immutable');
-        header('Content-Length: ' . filesize($file));
-        readfile($file);
+        if (stripos($relPath, '/zipp/') === 0) header('Cache-Control: public, max-age=31536000, immutable');
+        header('Content-Length: ' . filesize($candidate));
+        readfile($candidate);
         return true;
     }
-    // A file of a ZIPP this site does not have is missing, never the app shell: a frame imports the glue as a script.
-    if (str_starts_with($uri, '/zipp/')) {
+    // Missing build/runtime assets return 404, never the app shell.
+    if (preg_match('#^/(hosted-runtime/assets|app-editors/[^/]+/assets|zipp)/#i', $uri)) {
+        http_response_code(404);
+        return true;
+    }
+}
+
+// Missing hashed bundle assets return 404 rather than HTML SPA fallback (mirrors .htaccess).
+if (preg_match('#^/assets/#i', $uri)) {
+    $root = realpath($dist);
+    $file = $root !== false ? realpath($root . $uri) : false;
+    if ($root === false || $file === false || !str_starts_with($file, $root . DIRECTORY_SEPARATOR) || !is_file($file)) {
         http_response_code(404);
         return true;
     }
@@ -112,16 +133,21 @@ if (preg_match('#^/(hosted-runtime|app-editors|zipp)/#', $uri)) {
 
 // Mirrors ui/public/.htaccess IS_SCREEN_HOST, so the end-to-end suite runs custom screens
 // under the framing rule they get on a real server: sandboxed, and framed by anything.
-if ($uri === '/screen-host.html' && is_file($dist . $uri)) {
+if (strtolower($uri) === '/screen-host.html' && is_file($dist . '/screen-host.html')) {
     header('Content-Type: text/html; charset=UTF-8');
+    header('X-Content-Type-Options: nosniff');
     header("Content-Security-Policy: sandbox allow-scripts; frame-ancestors *; base-uri 'self'; object-src 'none'");
-    readfile($dist . $uri);
+    readfile($dist . '/screen-host.html');
     return true;
 }
 
 // Let the built-in server serve a real static asset from the doc root (dist).
-if ($uri !== '/' && is_file($dist . $uri)) {
-    return false;
+if ($uri !== '/') {
+    $root = realpath($dist);
+    $file = $root !== false ? realpath($root . $uri) : false;
+    if ($root !== false && $file !== false && str_starts_with($file, $root . DIRECTORY_SEPARATOR) && is_file($file)) {
+        return false;
+    }
 }
 
 // SPA fallback (client-side routes), under the app shell's framing rule from ui/public/.htaccess:
@@ -130,7 +156,7 @@ if ($uri !== '/' && is_file($dist . $uri)) {
 // (the SoftN workspace's preview did, until v0.1.16) worked here and was refused by the browser on
 // every real server.
 header('Content-Type: text/html; charset=UTF-8');
-if (str_starts_with($uri, '/form/')) {
+if (stripos($uri, '/form/') === 0) {
     header("Content-Security-Policy: frame-ancestors *; base-uri 'self'; object-src 'none'");
 } else {
     header('X-Frame-Options: DENY');

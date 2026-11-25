@@ -136,6 +136,13 @@ function Workspace({ app }: { app: App }) {
   const reloadPreview = () => { setSiteProblems([]); setConsoleLogs([]); setPreviewKey(key => key + 1); };
   const draft = useNativeProjectDraft(app, { reloadKey, onInstalled: reloadPreview });
   const { project, version, ready, readOnly, busy, dirty } = draft;
+  const debugScopeKey = `${app?.id ?? ''}:${version}`;
+  const [seenDebugScope, setSeenDebugScope] = useState(debugScopeKey);
+  if (seenDebugScope !== debugScopeKey) {
+    setSeenDebugScope(debugScopeKey);
+    setSiteProblems([]);
+    setConsoleLogs([]);
+  }
   const ai = useAiReady({ withRecheck: true });
   // The section, and what is open inside it, come from the address: /softn/data/<table>/<view>.
   const location = useLocation();

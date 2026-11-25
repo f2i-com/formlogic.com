@@ -21,6 +21,7 @@
 import { api } from '../../lib/api';
 import { resolveBackendApiUrl } from '../../lib/apiBase';
 import { logger } from '../../lib/logger';
+import { subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { aiPreferenceSaveCount } from '../../lib/websiteAiRouting';
 import { useAuthStore } from '../../stores/authStore';
 import {
@@ -187,7 +188,10 @@ async function contractFetch(method: 'GET' | 'POST', endpoint: string, body?: un
 /** lib/api response shapes this module can consume once the Site-AI scope lands them. */
 interface PrefsApiLike {
   getAiPreferences?: () => Promise<{ data?: unknown; error?: string; status?: number; code?: string }>;
-  aiChat?: (body: { messages: AiDefaultChatMessage[]; stream: false; editor?: 1 }) => Promise<{
+  aiChat?: (
+    body: { messages: AiDefaultChatMessage[]; stream: false; editor?: 1 },
+    options?: { signal?: AbortSignal },
+  ) => Promise<{
     data?: unknown;
     error?: string;
     status?: number;
@@ -273,11 +277,20 @@ export function __setAiPreferencesFetcherForTests(fetcher: PrefsFetcher | null):
 let oaiySourcesCache: { at: number; sources: Array<{ id?: string; providerId?: string; protocol?: string }> } | null = null;
 const OAIY_SOURCES_CACHE_TTL_MS = 15_000;
 
+/** Drop user-scoped AI caches when a session ends or switches. */
+export function clearAiDefaultCaches(): void {
+  prefsCache = null;
+  oaiySourcesCache = null;
+}
+
+subscribeSessionGeneration(() => {
+  clearAiDefaultCaches();
+});
+
 /** Test-only: drop the cache AND any stubbed fetcher. */
 export function __resetAiDefaultForTests(): void {
-  prefsCache = null;
+  clearAiDefaultCaches();
   prefsFetcherForTests = null;
-  oaiySourcesCache = null;
 }
 
 /**
@@ -542,7 +555,7 @@ async function defaultSiteChat(
   let message: string | undefined;
   let data: unknown;
   if (typeof apiMethod === 'function') {
-    const res = await apiMethod.call(api, body);
+    const res = signal ? await apiMethod.call(api, body, { signal }) : await apiMethod.call(api, body);
     if (res.error !== undefined) {
       status = res.status;
       code = res.code;

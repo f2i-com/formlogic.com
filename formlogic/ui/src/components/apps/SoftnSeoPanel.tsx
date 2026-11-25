@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, CheckCircle2, Copy, ExternalLink, FileCode2, Globe, RefreshCw, Search, ShieldOff } from 'lucide-react';
 import { api, type NativeAppSeoOverview } from '../../lib/api';
 import { Button } from '../ui/Button';
@@ -15,68 +15,105 @@ export function SoftnSeoPanel({
   appId: string;
   readOnly?: boolean;
 }) {
-  const [overview, setOverview] = useState<NativeAppSeoOverview | null>(null);
+  const [loadedState, setLoadedState] = useState<{ appId: string; overview: NativeAppSeoOverview } | null>(null);
+  const overview = loadedState?.appId === appId ? loadedState.overview : null;
   const [allowIndexing, setAllowIndexing] = useState(true);
   const [defaultDescription, setDefaultDescription] = useState('');
   const [extraRoutesText, setExtraRoutesText] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
+  const [activeAppId, setActiveAppId] = useState(appId);
+  const seqRef = useRef(0);
+  const saveSeqRef = useRef(0);
+  const activeAppIdRef = useRef(appId);
+  const copyTimerRef = useRef<number | null>(null);
+
+  if (activeAppId !== appId) {
+    setActiveAppId(appId);
+    setLoading(true);
+    setLoadError(null);
+    setSaving(false);
+    setCopiedUrl(null);
+  }
+
+  useEffect(() => {
+    activeAppIdRef.current = appId;
+    saveSeqRef.current += 1;
+  }, [appId]);
 
   const load = useCallback(async () => {
+    const seq = ++seqRef.current;
+    const requestedAppId = appId;
     setLoading(true);
-    const res = await api.getNativeAppSeo(appId);
+    setLoadError(null);
+    const res = await api.getNativeAppSeo(requestedAppId);
+    if (seq !== seqRef.current || activeAppIdRef.current !== requestedAppId) return;
     if (res.data) {
-      setOverview(res.data);
+      setLoadedState({ appId: requestedAppId, overview: res.data });
       setAllowIndexing(res.data.settings.allowIndexing);
       setDefaultDescription(res.data.settings.defaultDescription);
       setExtraRoutesText(res.data.settings.extraRoutes.join('\n'));
+    } else if (res.error) {
+      setLoadError(res.error);
     }
     setLoading(false);
   }, [appId]);
 
   useEffect(() => {
-    let active = true;
-    void api.getNativeAppSeo(appId).then((res) => {
-      if (!active) return;
-      if (res.data) {
-        setOverview(res.data);
-        setAllowIndexing(res.data.settings.allowIndexing);
-        setDefaultDescription(res.data.settings.defaultDescription);
-        setExtraRoutesText(res.data.settings.extraRoutes.join('\n'));
-      }
-      setLoading(false);
-    });
-    return () => { active = false; };
-  }, [appId]);
+    const seqHolder = seqRef;
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      seqHolder.current += 1;
+    };
+  }, [load]);
+
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+  }, []);
 
   const save = async () => {
-    if (readOnly) return;
+    if (readOnly || saving) return;
+    const requestedAppId = appId;
+    const saveSeq = ++saveSeqRef.current;
     setSaving(true);
-    const extraRoutes = extraRoutesText
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean);
-    const res = await api.updateNativeAppSeo(appId, {
-      allowIndexing,
-      defaultDescription: defaultDescription.trim(),
-      extraRoutes,
-    });
-    setSaving(false);
-    if (res.error || !res.data) {
-      toast.error('Could not save SEO settings', res.error || 'Please try again.');
-      return;
+    try {
+      const extraRoutes = extraRoutesText
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+      const res = await api.updateNativeAppSeo(requestedAppId, {
+        allowIndexing,
+        defaultDescription: defaultDescription.trim(),
+        extraRoutes,
+      });
+      if (saveSeq !== saveSeqRef.current || activeAppIdRef.current !== requestedAppId) return;
+      if (res.error || !res.data) {
+        toast.error('Could not save SEO settings', res.error || 'Please try again.');
+        return;
+      }
+      // Invalidate any older in-flight load so it cannot overwrite the freshly saved state.
+      seqRef.current += 1;
+      setLoadedState({ appId: requestedAppId, overview: res.data });
+      setAllowIndexing(res.data.settings.allowIndexing);
+      setDefaultDescription(res.data.settings.defaultDescription);
+      setExtraRoutesText(res.data.settings.extraRoutes.join('\n'));
+      toast.success('SEO & crawlability settings saved');
+    } finally {
+      if (saveSeq === saveSeqRef.current && activeAppIdRef.current === requestedAppId) {
+        setSaving(false);
+      }
     }
-    setOverview(res.data);
-    setExtraRoutesText(res.data.settings.extraRoutes.join('\n'));
-    toast.success('SEO & crawlability settings saved');
   };
 
   const copy = async (url: string) => {
     await copyToClipboard(url);
     setCopiedUrl(url);
     toast.success('Copied to clipboard');
-    window.setTimeout(() => setCopiedUrl(curr => curr === url ? null : curr), 1600);
+    if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopiedUrl(curr => curr === url ? null : curr), 1600);
   };
 
   return (
@@ -84,7 +121,9 @@ export function SoftnSeoPanel({
       {loading && !overview ? (
         <p className="text-xs text-slate-500 dark:text-slate-400">Checking discoverable pages…</p>
       ) : !overview ? (
-        <p className="text-xs text-slate-500 dark:text-slate-400">SEO overview is unavailable for this app right now.</p>
+        <p role={loadError ? 'alert' : undefined} className={cn('text-xs', loadError ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400')}>
+          {loadError || 'SEO overview is unavailable for this app right now.'}
+        </p>
       ) : (
         <div className="space-y-4" data-testid="softn-seo-panel">
           {/* Indexability status banner */}
@@ -121,15 +160,17 @@ export function SoftnSeoPanel({
                     type="button"
                     onClick={() => void copy(item.url)}
                     title={`Copy ${item.label} URL`}
+                    aria-label={`Copy ${item.label} URL`}
                     className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
                   >
-                    {copiedUrl === item.url ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedUrl === item.url ? <Check className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
                   </button>
                   <a
                     href={item.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     title={`Open ${item.label}`}
+                    aria-label={`Open ${item.label}`}
                     className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300"
                   >
                     <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />

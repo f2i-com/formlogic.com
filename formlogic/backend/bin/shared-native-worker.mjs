@@ -61,9 +61,9 @@ function quoteIdent(name) {
   return '"' + String(name).replaceAll('"', '""') + '"';
 }
 
-function markLimited(minute, bucket) {
+function markLimited(dataDir, minute, bucket) {
   try {
-    const all = join(root, 'private/limited');
+    const all = sharedDatabaseMode ? join(dataDir, 'limited') : join(root, 'private/limited');
     const now = join(all, String(minute));
     mkdirSync(now, {recursive: true, mode: 0o700});
     writeFileSync(join(now, bucket), '', {mode: 0o600});
@@ -149,7 +149,11 @@ function previewRowValue(val) {
 
 function snapshotSubscribedTables(dbFile, subscribedTables) {
   const snap = new Map();
-  if (!existsSync(dbFile) || subscribedTables.size === 0) return snap;
+  if (subscribedTables.size === 0) return snap;
+  if (!existsSync(dbFile)) {
+    for (const table of subscribedTables.keys()) snap.set(table, {ok: true, rows: new Map()});
+    return snap;
+  }
   if (lstatSync(dbFile).isSymbolicLink()) return snap;
   const sdb = new DatabaseSync(dbFile, {allowExtension: false, limits: SQL_LIMITS, readOnly: true});
   try {
@@ -161,7 +165,11 @@ function snapshotSubscribedTables(dbFile, subscribedTables) {
         .map(r => r.name)
     );
     for (const table of subscribedTables.keys()) {
-      if (!existing.has(table)) continue;
+      if (!existing.has(table)) {
+        // Table legitimately does not exist yet — an empty snapshot is accurate.
+        snap.set(table, {ok: true, rows: new Map()});
+        continue;
+      }
       const cols = sdb.prepare(`PRAGMA table_info(${quoteIdent(table)})`).all();
       const pkCols = cols
         .filter(c => Number(c.pk) > 0)
@@ -177,7 +185,10 @@ function snapshotSubscribedTables(dbFile, subscribedTables) {
       const rows = sdb
         .prepare(`SELECT ${selectCols.map(c => quoteIdent(c)).join(',')} FROM ${quoteIdent(table)} LIMIT ${SNAPSHOT_ROW_LIMIT + 1}`)
         .all();
-      if (rows.length > SNAPSHOT_ROW_LIMIT) continue;
+      if (rows.length > SNAPSHOT_ROW_LIMIT) {
+        snap.set(table, {ok: false, reason: 'limit'});
+        continue;
+      }
       const map = new Map();
       for (const row of rows) {
         const keyVal = JSON.stringify(keyCols.map(k => row[k] ?? null));
@@ -186,10 +197,13 @@ function snapshotSubscribedTables(dbFile, subscribedTables) {
         const hash = createHash('sha256').update(JSON.stringify(preview)).digest('hex');
         map.set(keyVal, {hash, preview});
       }
-      snap.set(table, map);
+      snap.set(table, {ok: true, rows: map});
     }
   } catch {
-    // Best-effort snapshot
+    // Mark any remaining tables as failed so callers never diff against an empty map.
+    for (const table of subscribedTables.keys()) {
+      if (!snap.has(table)) snap.set(table, {ok: false, reason: 'error'});
+    }
   } finally {
     try {
       sdb.close();
@@ -204,8 +218,14 @@ function recordContainerDiffEvents(dbFile, subscribedTables, beforeSnap) {
   const afterSnap = snapshotSubscribedTables(dbFile, subscribedTables);
   const events = [];
   for (const [table, ops] of subscribedTables.entries()) {
-    const before = beforeSnap.get(table) || new Map();
-    const after = afterSnap.get(table) || new Map();
+    const beforeEntry = beforeSnap.get(table);
+    const afterEntry = afterSnap.get(table);
+    // Only emit diff events when both before and after snapshots succeeded within row limits;
+    // otherwise crossing SNAPSHOT_ROW_LIMIT or a transient SQLite busy error would fabricate
+    // mass created/deleted events.
+    if (!beforeEntry?.ok || !afterEntry?.ok) continue;
+    const before = beforeEntry.rows;
+    const after = afterEntry.rows;
     if (ops.created.length > 0) {
       for (const [k, row] of after.entries()) {
         if (!before.has(k)) {
@@ -279,10 +299,11 @@ function recordContainerDiffEvents(dbFile, subscribedTables, beforeSnap) {
   }
 }
 
-let db;
-let startupStage = 'configuration_read';
+async function main() {
+  let db;
+  let startupStage = 'configuration_read';
 
-try {
+  try {
   const config = JSON.parse(readFileSync(join(root, 'private/config.json'), 'utf8'));
   startupStage = 'configuration_values';
   if (!/^[a-f0-9]{64}$/.test(config.keyHex) || typeof config.development !== 'boolean') {
@@ -471,7 +492,7 @@ try {
       if (migrations.some(name => typeof name !== 'string')) throw new Error('Invalid migration list');
       migrations.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
       if (migrations.some((name, i) => i > 0 && name === migrations[i - 1])) throw new Error('Duplicate migration path');
-      const stoppedNote = join(root, 'private/data/migration-stopped.json');
+      const stoppedNote = join(data, 'migration-stopped.json');
       const operatorRun = setupDeadlineMs(process.env) !== null;
       let stopped = null;
       try {
@@ -526,9 +547,9 @@ try {
       const declaredLimit = manifest.config?.server?.requestsPerMinute;
       const perMinute = Number.isInteger(declaredLimit) && declaredLimit >= 0 ? declaredLimit : 120;
       if (perMinute > 0 && count > perMinute) {
-        markLimited(minute, ip);
+        markLimited(data, minute, ip);
         emit({status: 429, body: {error: 'Too many requests.', code: 'rate_limited'}});
-        process.exit(0);
+        return;
       }
     } catch (e) {
       try {
@@ -544,7 +565,7 @@ try {
           code: 'photo_rejected',
         },
       });
-      process.exit(0);
+      return;
     }
     startupStage = 'record_events';
     const recordSubscriptions =
@@ -628,8 +649,11 @@ try {
             },
           }
   );
-} finally {
-  try {
-    db?.close();
-  } catch {}
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
 }
+
+await main();

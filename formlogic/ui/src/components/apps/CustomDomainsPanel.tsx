@@ -402,8 +402,16 @@ function NativeConfigEditor({ appId, domain, onSaved }: { appId: string; domain:
 
 /** `softn`: an installed app, which opens full screen on its domain by default. */
 export function CustomDomainsPanel({ appId, published = true, softn = false }: { appId: string; appSlug?: string; published?: boolean; softn?: boolean }) {
-  const [domains, setDomains] = useState<AppDomain[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [domainsState, setDomainsState] = useState<{ appId: string; items: AppDomain[] } | null>(null);
+  const domains = domainsState?.appId === appId ? domainsState.items : [];
+  const loading = domainsState?.appId !== appId;
+  const setDomains = (updater: AppDomain[] | ((prev: AppDomain[]) => AppDomain[])) => {
+    setDomainsState((prev) => {
+      const base = prev?.appId === appId ? prev.items : [];
+      const next = typeof updater === 'function' ? updater(base) : updater;
+      return { appId, items: next };
+    });
+  };
   const [newDomain, setNewDomain] = useState('');
   const [mode, setMode] = useState(softn ? 'runtime_direct' : 'launch_page');
   const [adding, setAdding] = useState(false);
@@ -415,8 +423,7 @@ export function CustomDomainsPanel({ appId, published = true, softn = false }: {
     let cancelled = false;
     api.getAppDomains(appId).then((res) => {
       if (cancelled) return;
-      if (res.data?.domains) setDomains(res.data.domains);
-      setLoading(false);
+      setDomainsState({ appId, items: res.data?.domains ?? [] });
     });
     return () => { cancelled = true; };
   }, [appId]);

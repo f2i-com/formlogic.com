@@ -316,11 +316,19 @@ class ChatToolsService
                 if (!is_array($node)) continue;
                 $nodeType = (string) ($node['type'] ?? '');
                 $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
-                if ($nodeType === 'native_record_action' && strtolower(trim((string) ($nodeData['operation'] ?? ''))) === 'delete') {
-                    throw new ChatToolDeniedException(
-                        'Automations that delete app records are not created from chat — configure delete nodes in the app\'s flow editor.',
-                        'delete_refused'
-                    );
+                if ($nodeType === 'native_record_action') {
+                    $rawOp = $nodeData['operation'] ?? 'list';
+                    $op = is_string($rawOp) ? strtolower(trim($rawOp)) : '';
+                    if (
+                        !in_array($op, ['list', 'read', 'create', 'update'], true)
+                        || str_contains($op, '{{')
+                        || str_starts_with($op, '$')
+                    ) {
+                        throw new ChatToolDeniedException(
+                            'Automations that delete app records or use dynamic operations are not created from chat — configure them in the app\'s flow editor.',
+                            'delete_refused'
+                        );
+                    }
                 }
             }
         }
@@ -573,7 +581,7 @@ class ChatToolsService
                 }
                 if ($scopedApp !== null) throw new ChatToolDeniedException('Install creates a new app; use an account-wide or creator connection.', 'app_scope');
                 if (!$this->packs) throw new \RuntimeException('Starter installation is unavailable.');
-                if (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true') throw new ChatToolDeniedException('This workspace requires verified package installation through the marketplace.', 'verified_package_required');
+                if (filter_var(\FormLogic\Support\Environment::get('REQUIRE_VERIFIED_PACKAGES', 'false'), FILTER_VALIDATE_BOOLEAN)) throw new ChatToolDeniedException('This workspace requires verified package installation through the marketplace.', 'verified_package_required');
                 if (!is_array($args['approvedConnectorGrants'] ?? null) || !array_is_list($args['approvedConnectorGrants']) || array_filter($args['approvedConnectorGrants'], static fn($g) => !is_string($g))) throw new \InvalidArgumentException('Read get_aokie_starter, then provide the explicitly reviewed approvedConnectorGrants list (empty is allowed).');
                 if ($args['approvedConnectorGrants']) $ctx->requireScope('connector:command');
                 if ($this->planService && !$this->planService->canCreateForms($userId, count($pack['forms']))) throw new ChatToolDeniedException('The starter would exceed the account form limit.', 'form_limit');
@@ -791,9 +799,12 @@ class ChatToolsService
             case 'publish_app_project': {
                 $id = (string)($args['appId'] ?? $scopedApp ?? '');
                 $this->assertAppScope($ctx, $id);
-                $this->ownApp($id, $userId);
+                $owned = $this->ownApp($id, $userId);
                 if (!$this->hosting) throw new \RuntimeException('Hosting is unavailable.');
                 if (!is_array($args['package'] ?? null) || !is_int($args['expectedVersion'] ?? null) || $args['expectedVersion'] < 0) throw new \InvalidArgumentException('Provide package and expectedVersion (0 for a new deployment).');
+                $clientFiles = is_array($args['package']['client'] ?? null) ? $args['package']['client'] : [];
+                $torch = $this->engines?->torchRefusal($owned, $clientFiles);
+                if ($torch !== null) throw new \InvalidArgumentException($torch);
                 $data = ['deployment' => $this->hosting->publish($id, $args['package'], $args['expectedVersion'])];
                 $ctx->audit('publish_app_project', ['appId' => $id, 'version' => $data['deployment']['version']]);
                 break;
@@ -1057,7 +1068,11 @@ class ChatToolsService
                         }
                     }
                 }
-                $data = $materializer->materialize($userId, $blueprintId);
+                try {
+                    $data = $materializer->materialize($userId, $blueprintId);
+                } catch (BlueprintPlanLimitException $e) {
+                    throw new ChatToolDeniedException($e->getMessage(), 'form_limit');
+                }
                 if ($creatorMode) {
                     // Creator tokens stay confined to what they made — the materialised
                     // app + its forms count, so the token can keep building on them.
@@ -1147,6 +1162,7 @@ class ChatToolsService
                     $input['mode'] = 'async'; // the forgiving default; sync/background/manual are opt-in
                 }
                 $this->requireConnectorScopeIf($ctx, $this->bindingSendsConnectorCommands($appId, $input));
+                $this->assertFlowBindingPermitted($appId, $input, $ctx);
                 $data = $this->flows()->createBinding($appId, $input);
                 $ctx->audit('create_flow_binding', ['appId' => $appId, 'bindingId' => $data['id'] ?? null, 'event' => $input['event'] ?? null]);
                 break;
@@ -1168,6 +1184,8 @@ class ChatToolsService
                     $this->bindingSendsConnectorCommands($appId, $input)
                         || ($stored !== null && $this->bindingSendsConnectorCommands($appId, $stored))
                 );
+                $effectiveBinding = $stored !== null ? array_merge($stored, $input) : $input;
+                $this->assertFlowBindingPermitted($appId, $effectiveBinding, $ctx);
                 $data = $this->flows()->updateBinding($appId, (string) ($args['bindingId'] ?? ''), $input);
                 if (!$data) {
                     throw new \Exception('Flow binding not found in this app');
@@ -1504,51 +1522,79 @@ class ChatToolsService
      */
     private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx): void
     {
+        foreach ((is_array($flowInput['nodeCapabilities'] ?? null) ? $flowInput['nodeCapabilities'] : []) as $capability) {
+            if (!is_string($capability)) continue;
+            if ($capability === 'formlogic.responses.read' || $capability === 'formlogic.responses.*') {
+                $ctx->requireScope('responses:read');
+            }
+            if ($capability === 'formlogic.responses.write' || $capability === 'formlogic.responses.*') {
+                $ctx->requireScope('responses:write');
+            }
+        }
         $graph = is_array($flowInput['flowJson'] ?? null) ? $flowInput['flowJson'] : [];
         $nodes = is_array($graph['nodes'] ?? null) ? $graph['nodes'] : [];
         $confined = $ctx->scopedAppId !== null || $ctx->creatorMode;
         $ownApp = null;
+        $readFormNodeTypes = ['formlogic_list_responses', 'list_responses', 'get_response'];
+        $writeFormNodeTypes = ['formlogic_submit_response', 'formlogic_update_response', 'create_response', 'update_response', 'delete_response'];
+        $allFormNodeTypes = array_merge($readFormNodeTypes, $writeFormNodeTypes);
+
         foreach ($nodes as $node) {
             if (!is_array($node)) continue;
             $type = (string) ($node['type'] ?? '');
             $data = is_array($node['data'] ?? null) ? $node['data'] : [];
-            if (in_array($type, ['list_responses', 'get_response'], true)) {
+            if (in_array($type, $readFormNodeTypes, true)) {
                 $ctx->requireScope('responses:read');
-            } elseif (in_array($type, ['create_response', 'update_response', 'delete_response'], true)) {
+            } elseif (in_array($type, $writeFormNodeTypes, true)) {
                 $ctx->requireScope('responses:write');
             } elseif ($type === 'native_record_action') {
-                $op = strtolower(trim((string) ($data['operation'] ?? 'list')));
-                if ($op === 'list' || $op === 'read') {
+                $rawOp = $data['operation'] ?? 'list';
+                $op = is_string($rawOp) ? strtolower(trim($rawOp)) : '';
+                if ($op === '' || str_contains($op, '{{') || str_starts_with($op, '$')) {
+                    $ctx->requireScope('responses:read');
+                    $ctx->requireScope('responses:write');
+                } elseif ($op === 'list' || $op === 'read') {
                     $ctx->requireScope('responses:read');
                 } else {
                     $ctx->requireScope('responses:write');
                 }
             } elseif ($type === 'native_app_request') {
-                $method = strtoupper(trim((string) ($data['method'] ?? 'GET')));
-                if ($method === 'GET' || $method === 'HEAD') {
+                $rawMethod = $data['method'] ?? 'GET';
+                $method = is_string($rawMethod) ? strtoupper(trim($rawMethod)) : '';
+                if ($method === '' || str_contains($method, '{{') || str_starts_with($method, '$')) {
+                    $ctx->requireScope('responses:read');
+                    $ctx->requireScope('responses:write');
+                } elseif ($method === 'GET' || $method === 'HEAD') {
                     $ctx->requireScope('responses:read');
                 } else {
                     $ctx->requireScope('responses:write');
                 }
             }
 
-            if (in_array($type, ['list_responses', 'get_response', 'create_response', 'update_response', 'delete_response'], true)) {
-                $targetFormId = is_string($data['formId'] ?? null) ? trim($data['formId']) : '';
-                if ($confined) {
-                    if ($targetFormId !== '' && str_contains($targetFormId, '{{')) {
-                        throw new ChatToolDeniedException('Scoped tokens cannot use dynamic template formId expressions inside flows.', 'form_scope');
+            if (in_array($type, $allFormNodeTypes, true) && $confined) {
+                foreach (['form', 'formId'] as $refKey) {
+                    if (!array_key_exists($refKey, $data) || $data[$refKey] === null) {
+                        continue;
                     }
-                    if ($targetFormId !== '') {
-                        $this->assertFormInScope($ctx, $targetFormId);
+                    if (!is_string($data[$refKey])) {
+                        throw new ChatToolDeniedException('Scoped tokens must use static form IDs inside flows.', 'form_scope');
                     }
+                    $targetFormId = trim($data[$refKey]);
+                    if ($targetFormId === '') {
+                        continue;
+                    }
+                    if (str_contains($targetFormId, '{{') || str_starts_with($targetFormId, '$')) {
+                        throw new ChatToolDeniedException('Scoped tokens cannot use dynamic form selector or template expressions inside flows.', 'form_scope');
+                    }
+                    $this->assertFormInScope($ctx, $targetFormId);
                 }
             }
 
             if (in_array($type, ['native_app_request', 'native_record_action'], true)) {
                 $rawTargetApp = is_string($data['appId'] ?? null) ? trim($data['appId']) : '';
                 if ($rawTargetApp !== '') {
-                    if (str_contains($rawTargetApp, '{{')) {
-                        throw new ChatToolDeniedException('Dynamic template appId expressions are not permitted inside app-level flows.', 'app_scope');
+                    if (str_contains($rawTargetApp, '{{') || str_starts_with($rawTargetApp, '$')) {
+                        throw new ChatToolDeniedException('Dynamic template or selector appId expressions are not permitted inside app-level flows.', 'app_scope');
                     }
                     $ownApp ??= $this->appService->getApp($appId);
                     $ownSlug = is_array($ownApp) ? (string) ($ownApp['slug'] ?? '') : '';
@@ -1563,6 +1609,60 @@ class ChatToolsService
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * Enforce MCP data scopes and form confinement on flow bindings (record triggers,
+     * response-mutating output actions, and the bound target flow itself).
+     */
+    private function assertFlowBindingPermitted(string $appId, array $binding, ChatToolsContext $ctx): void
+    {
+        $confined = $ctx->scopedAppId !== null || $ctx->creatorMode;
+        $event = is_string($binding['event'] ?? null) ? trim($binding['event']) : '';
+        if ($event === 'form.submitted' || str_starts_with($event, 'form.') || str_starts_with($event, 'app.record.')) {
+            $ctx->requireScope('responses:read');
+        }
+        $bindingFormId = is_string($binding['formId'] ?? null) ? trim($binding['formId']) : '';
+        if ($confined && $bindingFormId !== '') {
+            if (str_contains($bindingFormId, '{{') || str_starts_with($bindingFormId, '$')) {
+                throw new ChatToolDeniedException('Scoped tokens cannot use dynamic form references in flow bindings.', 'form_scope');
+            }
+            $this->assertFormInScope($ctx, $bindingFormId);
+        }
+        foreach ((is_array($binding['outputActions'] ?? null) ? $binding['outputActions'] : []) as $action) {
+            if (!is_array($action)) continue;
+            $actionType = (string) ($action['type'] ?? '');
+            if (in_array($actionType, ['formlogic.submitResponse', 'formlogic.updateResponse'], true)) {
+                $ctx->requireScope('responses:write');
+                if ($confined) {
+                    foreach (['form', 'formId'] as $refKey) {
+                        if (!array_key_exists($refKey, $action) || $action[$refKey] === null) {
+                            continue;
+                        }
+                        if (!is_string($action[$refKey])) {
+                            throw new ChatToolDeniedException('Scoped tokens must use static form IDs in binding output actions.', 'form_scope');
+                        }
+                        $targetFormId = trim($action[$refKey]);
+                        if ($targetFormId === '') {
+                            continue;
+                        }
+                        if (str_contains($targetFormId, '{{') || str_starts_with($targetFormId, '$')) {
+                            throw new ChatToolDeniedException('Scoped tokens cannot use dynamic form selector or template expressions in binding output actions.', 'form_scope');
+                        }
+                        $this->assertFormInScope($ctx, $targetFormId);
+                    }
+                }
+            }
+        }
+        $slug = is_string($binding['flow'] ?? null) ? trim($binding['flow']) : '';
+        if ($slug !== '') {
+            foreach ($this->flows()->listFlows($appId) as $flow) {
+                if (($flow['slug'] ?? null) === $slug) {
+                    $this->assertFlowGraphPermitted($flow, $appId, $ctx);
+                    break;
                 }
             }
         }

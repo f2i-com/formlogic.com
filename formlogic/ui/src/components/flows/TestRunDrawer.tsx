@@ -10,7 +10,7 @@
 // flow's executionLocation — 'auto' keeps the browser executor untouched, 'desktop' rides the
 // E2E desktop relay with live queue/progress, 'cloud' calls the synchronous cloud runner
 // (credit-metered; typed refusals — credits exhausted / unsupported nodes — surface inline).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, Cloud, Laptop, Loader2, MinusCircle, PlayCircle, X } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -163,6 +163,28 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
     }
   };
 
+  const runAbortRef = useRef<AbortController | null>(null);
+  const flowIdRef = useRef(flow.id);
+  const [trackedFlowId, setTrackedFlowId] = useState(flow.id);
+  if (trackedFlowId !== flow.id) {
+    setTrackedFlowId(flow.id);
+    setRunning(false);
+  }
+  useEffect(() => {
+    flowIdRef.current = flow.id;
+    return () => {
+      runAbortRef.current?.abort();
+      runAbortRef.current = null;
+    };
+  }, [flow.id]);
+
+  const startRunAbort = () => {
+    runAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    runAbortRef.current = ctrl;
+    return ctrl;
+  };
+
   const resetRunState = () => {
     setOutcome(null);
     setRunLog(EMPTY_RUN_LOG);
@@ -174,18 +196,22 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
   const runBrowser = async () => {
     const inputs = parseInputs();
     if (inputs === null) return;
+    const ctrl = startRunAbort();
+    const runFlowId = flow.id;
     setRunning(true);
     resetRunState();
     onRunStart?.();
     try {
       // RUN-301: a graph with contributed nodes executes the server-compiled canonical IR —
       // Test Runs use the exact same lowering contract as cloud runs (plan §9.3).
-      const resolved = await resolveExecutableGraph(flow.id, flow.flowJson ?? { nodes: [], edges: [] });
+      const resolved = await resolveExecutableGraph(runFlowId, flow.flowJson ?? { nodes: [], edges: [] });
+      if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
       const result = !resolved.ok
         ? { status: 'error' as const, error: resolved.error, nodesExecuted: 0 }
         : await executeFlow(resolved.graph, {
         inputs,
         deps: buildWorkspaceExecutorDeps(),
+        signal: ctrl.signal,
         // No explicit deadline: the executor's adaptive default applies (30s for plain
         // flows, 3 min for flows with AI/service nodes — a browser LLM call can be slow).
         capabilities: flow.nodeCapabilities,
@@ -193,18 +219,21 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
         // flow_call ancestry seed. The workspace deps wire the workspace child-flow
         // invoker (flowDispatcher.ts), so flow_call in a Test Run runs its child; this
         // seed is what the invoker's recursion and depth guards check.
-        callStack: [flow.id],
+        callStack: [runFlowId],
         onNodeStatus: (id, status, info) => {
+          if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
           setRunLog((l) => reduceRunLog(l, id, status, info));
           onNodeStatus?.(id, status, info);
         },
       });
+      if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
       setRunLocation('browser');
       setOutcome(result);
     } catch (err) {
+      if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
       setOutcome({ status: 'error', error: { code: 'node_failed', message: err instanceof Error ? err.message : String(err) }, nodesExecuted: 0 });
     } finally {
-      setRunning(false);
+      if (runAbortRef.current === ctrl) setRunning(false);
     }
   };
 
@@ -212,6 +241,8 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
   const runCloud = async () => {
     const inputs = parseInputs();
     if (inputs === null) return;
+    const ctrl = startRunAbort();
+    const runFlowId = flow.id;
     setRunning(true);
     resetRunState();
     onRunStart?.();
@@ -223,7 +254,8 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
       await runBrowser();
       return;
     }
-    const res = await api.runFlowCloud(flow.id, inputs);
+    const res = await api.runFlowCloud(runFlowId, inputs);
+    if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
     setRunning(false);
     if (res.error || !res.data) {
       if (res.code === 'flow_credits_exceeded') {
@@ -233,13 +265,13 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
       if (res.code === 'cloud_unsupported_node') {
         const nodes = res.details?.nodes ?? [];
         setCloudError({ kind: 'unsupported', message: res.error ?? 'This flow has nodes the cloud runner cannot execute', nodes });
-        onCloudRunFeedback?.(flow.id, { kind: 'unsupported', nodes });
+        onCloudRunFeedback?.(runFlowId, { kind: 'unsupported', nodes });
         return;
       }
       if (res.status === 404 || res.code === 'not_found' || res.code === 'route_not_found') {
         // The server predates the cloud runner: Cloud can't work here at all — the
         // editor's dropdown disables the option with this reason.
-        onCloudRunFeedback?.(flow.id, { kind: 'unavailable', reason: 'this FormLogic server has no cloud runner' });
+        onCloudRunFeedback?.(runFlowId, { kind: 'unavailable', reason: 'this FormLogic server has no cloud runner' });
         setCloudError({ kind: 'other', message: 'Cloud runs are not available on this FormLogic server yet.' });
         return;
       }
@@ -251,7 +283,7 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
       return;
     }
     const data = res.data;
-    onCloudRunFeedback?.(flow.id, { kind: 'ok' });
+    onCloudRunFeedback?.(runFlowId, { kind: 'ok' });
     setRunLocation('cloud');
     setOutcome({
       status: data.status === 'done' ? 'done' : data.status === 'timeout' ? 'timeout' : data.status === 'cancelled' ? 'cancelled' : 'error',
@@ -271,6 +303,8 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
   const runDesktop = async () => {
     const inputs = parseInputs();
     if (inputs === null) return;
+    const ctrl = startRunAbort();
+    const runFlowId = flow.id;
     setRunning(true);
     resetRunState();
     onRunStart?.();
@@ -281,11 +315,16 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
       return;
     }
     let executed = 0;
-    const res = await runFlowOnDesktop(flow.id, {
+    const res = await runFlowOnDesktop(runFlowId, {
       inputs,
+      signal: ctrl.signal,
       ...(desktopInstanceId ? { instanceId: desktopInstanceId } : {}),
-      onState: (s) => setDesktopState(s),
+      onState: (s) => {
+        if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
+        setDesktopState(s);
+      },
       onProgress: (p) => {
+        if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
         if (p.status === 'done' || p.status === 'error') executed += 1;
         if (!p.nodeId) return;
         // The Desktop progress stream has no skipped phase of its own yet (RUN-303 carries the
@@ -296,6 +335,7 @@ export function TestRunDrawer({ flow, onClose, onRunStart, onNodeStatus, onCloud
         onNodeStatus?.(p.nodeId, phase, info);
       },
     });
+    if (ctrl.signal.aborted || flowIdRef.current !== runFlowId) return;
     setRunning(false);
     if (!res.ok) {
       if (res.error.code === 'uncertain') {

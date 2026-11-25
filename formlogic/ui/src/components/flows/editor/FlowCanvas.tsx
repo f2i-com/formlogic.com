@@ -18,12 +18,12 @@ import {
   SelectionMode,
   type Connection,
   type Edge,
-  type EdgeChange,
   type EdgeTypes,
-  type NodeChange,
   type NodeTypes,
   type OnConnectEnd,
   type OnConnectStart,
+  type OnEdgesChange,
+  type OnNodesChange,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -98,8 +98,8 @@ const DELETE_KEYS = ['Backspace', 'Delete'];
 interface FlowCanvasProps {
   nodes: FlowRFNode[];
   edges: FlowRFEdge[];
-  onNodesChange: (changes: NodeChange[]) => void;
-  onEdgesChange: (changes: EdgeChange[]) => void;
+  onNodesChange: OnNodesChange<FlowRFNode>;
+  onEdgesChange: OnEdgesChange<FlowRFEdge>;
   onConnect: (connection: Connection) => void;
   /** Drag-reconnect an existing edge to a new source/target. */
   onReconnect: (oldEdge: FlowRFEdge, newConnection: Connection) => void;

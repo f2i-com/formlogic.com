@@ -193,4 +193,16 @@ describe('vaultStore lock semantics', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(useVaultStore.getState().status).toBe('locked');
   });
+
+  it('refreshStatus() does not spawn an idle crypto worker when locked', async () => {
+    const { wire } = await makeVaultWire();
+    vi.mocked(api.getVault).mockResolvedValue({ data: { vault: wire } });
+    const client = getCryptoClient();
+    expect(client.isRunning).toBe(false);
+
+    await useVaultStore.getState().refreshStatus();
+
+    expect(useVaultStore.getState().status).toBe('locked');
+    expect(client.isRunning).toBe(false);
+  });
 });

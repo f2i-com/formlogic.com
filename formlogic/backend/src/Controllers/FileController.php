@@ -399,10 +399,17 @@ class FileController
         }
 
         $userId = $request->getAttribute('userId');
+        $domainSession = $request->getAttribute(\FormLogic\Support\AppDomainSession::ATTRIBUTE);
+        $domainAppId = is_array($domainSession) && is_string($domainSession['appId'] ?? null) && $domainSession['appId'] !== ''
+            ? $domainSession['appId']
+            : null;
 
-        // The form owner can always access.
+        // The form owner can always access (unless confined to a different app's domain session).
         if ($userId !== null && $userId !== '' && ($form['userId'] ?? null) === $userId) {
-            return 'private';
+            if ($domainAppId === null || ($this->appService !== null && $this->appService->formBelongsToApp($domainAppId, $formId))) {
+                return 'private';
+            }
+            return null;
         }
 
         $appScoped = $this->appService ? $this->appService->isFormInAnyApp($formId) : false;
@@ -415,7 +422,11 @@ class FileController
             if (!$userId || !$this->appService || !$this->appUserService) {
                 return null;
             }
-            foreach ($this->appService->activeAppIdsContainingForm($formId, $userId) as $appId) {
+            $candidateAppIds = $this->appService->activeAppIdsContainingForm($formId, $userId);
+            if ($domainAppId !== null) {
+                $candidateAppIds = in_array($domainAppId, $candidateAppIds, true) ? [$domainAppId] : [];
+            }
+            foreach ($candidateAppIds as $appId) {
                 // An app's age gate holds for its files as for its routes (AppAccessGateMiddleware).
                 $app = $this->gate !== null ? $this->appService->getApp($appId) : null;
                 if ($app !== null && $this->gate->decide($app, $userId) !== null) {

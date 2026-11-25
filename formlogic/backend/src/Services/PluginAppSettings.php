@@ -352,8 +352,13 @@ final class PluginAppSettings
     }
 
     /** What a secret is sealed for: this app, this plugin and this setting, so one moved to another reads nothing. */
-    private static function context(string $pluginId, string $appId, string $key): string
+    public static function secretContext(string $pluginId, string $appId, string $key): string
     {
         return self::CONTEXT . $pluginId . ':' . $appId . ':' . $key;
+    }
+
+    private static function context(string $pluginId, string $appId, string $key): string
+    {
+        return self::secretContext($pluginId, $appId, $key);
     }
 }

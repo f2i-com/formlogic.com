@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api, newIdempotencyKey } from '../lib/api';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { ensureSandboxSession, resetSandboxSession } from '../lib/demoSandboxSession';
 import { setOnScreenApp } from '../client-runtime/appLocalAccess';
 import { setConnectorCapabilityContext } from '../client-runtime/desktop/desktopClient';
@@ -254,8 +255,12 @@ export const useAppRuntimeStore = create<AppRuntimeState>()(
       resetDemoSandbox: async () => {
         const { appSlug, demoSandboxPackSlug } = get();
         if (!appSlug || !demoSandboxPackSlug) return false;
+        const load = currentLoad;
+        const gen = currentSessionGeneration();
         const session = await resetSandboxSession(demoSandboxPackSlug);
-        if (!session?.token) return false;
+        if (!session?.token || load !== currentLoad || !isSessionGenerationCurrent(gen) || get().appSlug !== appSlug) {
+          return false;
+        }
         api.setDemoSandboxToken?.(appSlug, session.token);
         set((s) => ({ hasLiveDemoSandbox: true, sandboxRevision: s.sandboxRevision + 1 }));
         return true;

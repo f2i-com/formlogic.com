@@ -4,6 +4,9 @@
   "description": "Only the bundled shell page: the deep link the runtime was started with, and whether an app may be remembered to reopen at launch.",
   "windows": ["main"],
   "permissions": [
+    "core:default",
+    "opener:default",
+    "deep-link:default",
     "allow-pending-deep-link",
     "allow-app-memory"
   ]

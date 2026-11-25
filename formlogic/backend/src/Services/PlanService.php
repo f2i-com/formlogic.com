@@ -248,10 +248,30 @@ class PlanService
             throw new \RuntimeException($code);
         }
         if ($allowance['monthlyValue'] >= 0) {
-            $current = $this->meterCount($userId, $metric, $period);
-            if ($current + $amount > $allowance['monthlyValue']) {
+            $pdo = $this->mysql->getConnection();
+            if ($amount === 0 && $tokensIn === 0 && $tokensOut === 0) {
+                $stmt = $pdo->prepare('SELECT `count` FROM usage_meter WHERE user_id = ? AND metric = ? AND period = ?');
+                $stmt->execute([$userId, $metric, $period]);
+                $used = (int) ($stmt->fetchColumn() ?: 0);
+                if ($used > $allowance['monthlyValue']) {
+                    throw new \RuntimeException($code);
+                }
+                return;
+            }
+            $pdo->prepare(
+                'INSERT IGNORE INTO usage_meter (user_id, metric, period, `count`, tokens_in, tokens_out)
+                 VALUES (?, ?, ?, 0, 0, 0)'
+            )->execute([$userId, $metric, $period]);
+            $update = $pdo->prepare(
+                'UPDATE usage_meter
+                 SET `count` = `count` + ?, tokens_in = tokens_in + ?, tokens_out = tokens_out + ?
+                 WHERE user_id = ? AND metric = ? AND period = ? AND `count` + ? <= ?'
+            );
+            $update->execute([$amount, $tokensIn, $tokensOut, $userId, $metric, $period, $amount, $allowance['monthlyValue']]);
+            if ($update->rowCount() !== 1) {
                 throw new \RuntimeException($code);
             }
+            return;
         }
         $this->incrementMeter($userId, $metric, $period, $amount, $tokensIn, $tokensOut);
     }

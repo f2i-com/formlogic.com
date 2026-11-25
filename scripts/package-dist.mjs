@@ -99,6 +99,7 @@ const BACKEND_SKELETON_DIRS = [
   'storage/pack-projects',
   'storage/hosted-apps',
   'storage/native-apps',
+  'storage/native-app-uploads',
   'storage/packs',
   'storage/uploads',
   'storage/pack-screenshots',
@@ -144,11 +145,13 @@ function fail(msg) {
   process.exit(1);
 }
 
-/** Quote an argument for the Windows shell (only needed because .cmd/.bat shims
- *  like npm/composer require shell:true on Windows since CVE-2024-27980). */
+/** Quote an argument for cmd.exe (only needed for .cmd/.bat shims like npm/composer on Windows). */
 function winQuote(arg) {
-  return /[\s"^&|<>]/.test(arg) ? `"${arg.replace(/"/g, '""')}"` : arg;
+  const escaped = String(arg).replace(/%/g, '%%').replace(/"/g, '\\"');
+  return /[\s"^&|<>%]/.test(arg) ? `"${escaped}"` : escaped;
 }
+
+const WINDOWS_CMD_SHIMS = new Set(['npm', 'npx', 'composer', 'pnpm', 'yarn']);
 
 /** Run a command, streaming output; hard-fails the build on a non-zero exit. */
 function run(cmd, args, opts = {}) {
@@ -158,12 +161,14 @@ function run(cmd, args, opts = {}) {
     cwd: opts.cwd || repoRoot,
     env: { ...process.env, ...(opts.env || {}) },
   };
-  // npm/composer are .cmd/.bat shims on Windows, which Node refuses to spawn directly
-  // (CVE-2024-27980) — run them through the shell as ONE pre-quoted command string
-  // (avoids DEP0190: args arrays are concatenated unescaped under shell:true).
-  const res = isWindows
+  // Only .cmd/.bat shims (npm/composer) require shell:true on Windows (CVE-2024-27980);
+  // run native binaries directly without a shell so metacharacters are never interpreted.
+  const needsWindowsShell = isWindows && (
+    WINDOWS_CMD_SHIMS.has(cmd.toLowerCase()) || /\.(?:cmd|bat)$/i.test(cmd)
+  );
+  const res = needsWindowsShell
     ? spawnSync([cmd, ...args.map(winQuote)].join(' '), { ...spawnOpts, shell: true })
-    : spawnSync(cmd, args, spawnOpts);
+    : spawnSync(cmd, args, { ...spawnOpts, shell: false });
   if (res.error) fail(`failed to run ${cmd}: ${res.error.message}`);
   if (res.status !== 0) fail(`${cmd} ${args[0] ?? ''} exited with code ${res.status}`);
 }
@@ -588,10 +593,19 @@ for (const dir of BACKEND_SKELETON_DIRS) {
   writeFileSync(path.join(abs, '.gitkeep'), '');
   info(`created empty ${path.join('api', dir)}/`);
 }
-// storage/.htaccess denies the whole of storage/ over HTTP: the layer that holds when the
-// web-root .htaccess (which funnels /api/* to the front controller) is missing or ignored.
-copyFileSync(path.join(backendDir, 'storage/.htaccess'), path.join(apiDst, 'storage/.htaccess'));
-info('copied backend/storage/.htaccess');
+// storage/.htaccess, logs/.htaccess, and upload-directory .htaccess files deny direct HTTP access
+// and disable PHP execution: the defense-in-depth layer that holds if the web-root .htaccess is altered.
+for (const rel of [
+  'storage/.htaccess',
+  'logs/.htaccess',
+  'storage/uploads/.htaccess',
+  'storage/native-app-uploads/.htaccess',
+]) {
+  const src = path.join(backendDir, rel);
+  if (!existsSync(src)) fail(`required backend hardening file missing: formlogic/backend/${rel}`);
+  copyFileSync(src, path.join(apiDst, rel));
+  info(`copied backend/${rel}`);
+}
 
 // [4] Fresh production vendor/ -------------------------------------------------
 step('Installing production composer dependencies into staging (never touches the dev vendor/)');
@@ -671,6 +685,9 @@ const mustExist = [
   'engine-identity.json',
   ...BACKEND_SKELETON_DIRS.map((d) => path.join('api', d)),
   'api/storage/.htaccess',
+  'api/logs/.htaccess',
+  'api/storage/uploads/.htaccess',
+  'api/storage/native-app-uploads/.htaccess',
 ];
 const mustNotExist = ['api/.env', 'api/tests', 'api/scripts', 'api/phpunit.xml', 'api/.phpunit.cache'];
 for (const p of mustExist) {
@@ -737,10 +754,15 @@ if (commandExists('zip', ['-v'])) {
   // Preferred: Info-ZIP (Linux/macOS/CI; preserves the empty-dir skeleton natively too).
   run('zip', ['-r', '-q', zipPath, '.'], { cwd: staging });
 } else if (isWindows) {
-  info('system "zip" not found — falling back to PowerShell Compress-Archive');
-  const psCmd = `$ErrorActionPreference='Stop'; Compress-Archive -Path '${staging}\\*' -DestinationPath '${zipPath}' -CompressionLevel Optimal -Force`;
-  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], { stdio: 'inherit' });
-  if (res.error || res.status !== 0) fail('Compress-Archive failed');
+  info('system "zip" not found — falling back to .NET System.IO.Compression.ZipFile (POSIX / paths, dotfiles & literal paths)');
+  // PowerShell 5.1 (.NET Framework 4.x) defaults ZipFileUseBackslash to true, which writes
+  // backslash ZIP entry names (`api\public\index.php`) that break Linux unzip and UpgradeService::locateName().
+  const psCmd = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.AppContext]::SetSwitch('Switch.System.IO.Compression.ZipFile.UseBackslash', $false); [System.IO.Compression.ZipFile]::CreateFromDirectory($env:FL_STAGING, $env:FL_ZIP_PATH, [System.IO.Compression.CompressionLevel]::Optimal, $false)`;
+  const res = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCmd], {
+    stdio: 'inherit',
+    env: { ...process.env, FL_STAGING: staging, FL_ZIP_PATH: zipPath },
+  });
+  if (res.error || res.status !== 0) fail('ZipFile::CreateFromDirectory failed');
 } else {
   fail('no zip tool available: install Info-ZIP ("zip") — e.g. apt-get install zip / apk add zip');
 }

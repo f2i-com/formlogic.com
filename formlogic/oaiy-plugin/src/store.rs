@@ -134,9 +134,39 @@ fn safe_folder(folder: &str) -> bool {
     folder.split_once('-').is_some_and(|(kind, rest)| safe_kind(kind) && safe_id(rest))
 }
 
+fn file_sha256(path: &Path) -> std::io::Result<[u8; 32]> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+fn same_file_contents(a: &Path, b: &Path) -> bool {
+    let Ok(ma) = std::fs::metadata(a) else { return false };
+    let Ok(mb) = std::fs::metadata(b) else { return false };
+    if !ma.is_file() || !mb.is_file() || ma.len() != mb.len() {
+        return false;
+    }
+    match (file_sha256(a), file_sha256(b)) {
+        (Ok(ha), Ok(hb)) => ha == hb,
+        _ => false,
+    }
+}
+
 impl Store {
     pub fn open(data_dir: &Path) -> Store {
-        let chosen = std::fs::read_to_string(data_dir.join(LOCATION)).ok().map(|text| PathBuf::from(text.trim())).filter(|folder| folder.is_absolute());
+        let chosen = std::fs::read_to_string(data_dir.join(LOCATION))
+            .ok()
+            .map(|text| PathBuf::from(text.trim_end_matches(['\r', '\n'])))
+            .filter(|folder| folder.is_absolute());
         Store { root: data_dir.to_path_buf(), chosen }
     }
 
@@ -197,7 +227,7 @@ impl Store {
             let parent = destination.parent().ok_or("That folder can't be used.")?;
             secret_file::create_private_dir(parent).map_err(|e| format!("Could not make a folder for your backups: {e}"))?;
             match std::fs::metadata(&destination) {
-                Ok(there) if std::fs::metadata(&source).is_ok_and(|here| here.len() == there.len()) => {}
+                Ok(_) if same_file_contents(&source, &destination) => {}
                 Ok(_) => return Err("That folder already holds a different backup under the same name. Nothing was moved.".to_string()),
                 Err(_) => secret_file::copy_over(&source, &destination).map_err(|e| format!("Could not copy your backups there: {e}. Nothing was moved."))?,
             }
@@ -546,7 +576,7 @@ mod tests {
 
         store.prune(&newest, 1);
 
-        assert_eq!(store.list().iter().map(|b| b.id.clone()).collect::<Vec<_>>(), [newest.id.clone()]);
+        assert_eq!(store.list().iter().map(|b| b.id.clone()).collect::<Vec<_>>(), std::slice::from_ref(&newest.id));
         let _ = std::fs::remove_dir_all(dir);
     }
 

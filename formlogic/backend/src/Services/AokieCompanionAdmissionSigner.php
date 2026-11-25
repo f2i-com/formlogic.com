@@ -395,6 +395,6 @@ final class AokieCompanionAdmissionSigner
         $environment = (string) ($_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production');
         return $scheme === 'ws'
             && $environment === 'development'
-            && in_array(strtolower((string) $parts['host']), ['127.0.0.1', 'localhost', '::1'], true);
+            && in_array(strtolower((string) $parts['host']), ['127.0.0.1', 'localhost', '::1', '[::1]'], true);
     }
 }

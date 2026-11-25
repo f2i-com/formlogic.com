@@ -147,10 +147,31 @@ export interface RealtimeCaptionsHandle {
  * reducer. Reconnects with backoff while running; silent about failures —
  * captions are best-effort observation, never an error surface.
  */
+const MAX_REALTIME_SSE_BUFFER_CHARS = 512 * 1024;
+
 export function startRealtimeCaptions(onState: (s: CaptionState) => void): RealtimeCaptionsHandle {
   let stopped = false;
   let state = emptyCaptionState();
   let controller: AbortController | null = null;
+  let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelBackoff: (() => void) | null = null;
+
+  const waitBackoff = (ms: number) => new Promise<void>((resolve) => {
+    if (stopped) { resolve(); return; }
+    cancelBackoff = () => {
+      if (backoffTimer !== null) {
+        clearTimeout(backoffTimer);
+        backoffTimer = null;
+      }
+      cancelBackoff = null;
+      resolve();
+    };
+    backoffTimer = setTimeout(() => {
+      backoffTimer = null;
+      cancelBackoff = null;
+      resolve();
+    }, ms);
+  });
 
   const run = async () => {
     let backoffMs = 1000;
@@ -166,40 +187,48 @@ export function startRealtimeCaptions(onState: (s: CaptionState) => void): Realt
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done || stopped) break;
-          buf += decoder.decode(value, { stream: true });
-          // SSE framing: records separated by blank lines; payload in `data:`.
-          let idx: number;
-          while ((idx = buf.indexOf('\n\n')) >= 0) {
-            const record = buf.slice(0, idx);
-            buf = buf.slice(idx + 2);
-            const data = record
-              .split('\n')
-              .filter((l) => l.startsWith('data:'))
-              .map((l) => l.slice(5).trim())
-              .join('');
-            if (data === '') continue;
-            try {
-              const frame = parseRealtimeFrame(JSON.parse(data));
-              if (frame) {
-                const nextState = applyRealtimeFrame(state, frame);
-                if (nextState !== state) {
-                  state = nextState;
-                  onState(state);
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || stopped) break;
+            buf += decoder.decode(value, { stream: true });
+            if (buf.length > MAX_REALTIME_SSE_BUFFER_CHARS) {
+              throw new Error('realtime SSE buffer exceeded limit');
+            }
+            // SSE framing: records separated by blank lines; payload in `data:`.
+            let idx: number;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const record = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const data = record
+                .split('\n')
+                .filter((l) => l.startsWith('data:'))
+                .map((l) => l.slice(5).trim())
+                .join('');
+              if (data === '') continue;
+              try {
+                const frame = parseRealtimeFrame(JSON.parse(data));
+                if (frame) {
+                  const nextState = applyRealtimeFrame(state, frame);
+                  if (nextState !== state) {
+                    state = nextState;
+                    onState(state);
+                  }
                 }
+              } catch {
+                /* malformed frame: droppable by contract */
               }
-            } catch {
-              /* malformed frame: droppable by contract */
             }
           }
+        } finally {
+          await reader.cancel().catch(() => undefined);
+          reader.releaseLock();
         }
       } catch {
         /* transport hiccup: retry below */
       }
       if (stopped) return;
-      await new Promise((r) => setTimeout(r, backoffMs));
+      await waitBackoff(backoffMs);
       backoffMs = Math.min(backoffMs * 2, 15_000);
     }
   };
@@ -209,6 +238,7 @@ export function startRealtimeCaptions(onState: (s: CaptionState) => void): Realt
     stop: () => {
       stopped = true;
       controller?.abort();
+      cancelBackoff?.();
     },
     tombstone: () => {
       const next = tombstoneCurrentTurn(state);

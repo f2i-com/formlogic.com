@@ -49,11 +49,25 @@ function ask(settings, endpoint, form, next) {
   }};
 }
 
+// Strict E.164 phone number: leading '+', non-zero country digit, 7 to 15 total digits.
+function isE164(phone) {
+  if (typeof phone != "string" || phone.length < 8 || phone.length > 16 || phone.charAt(0) != "+") return false;
+  let first = phone.charAt(1);
+  if (first < "1" || first > "9") return false;
+  let i = 2;
+  while (i < phone.length) {
+    let ch = phone.charAt(i);
+    if (ch < "0" || ch > "9") return false;
+    i = i + 1;
+  }
+  return true;
+}
+
 // The site asks for a code to be sent to a number the app has admitted.
 function send(req) {
   let body = req.body;
   let settings = settingsOf(body);
-  if (!settings || typeof body.phone != "string" || body.phone.length < 4 || body.phone.length > 32) return answer("unavailable");
+  if (!settings || !isE164(body ? body.phone : null)) return answer("unavailable");
   return ask(settings, "Verifications", {To: body.phone, Channel: "sms"}, "/api/site/codes/sent");
 }
 

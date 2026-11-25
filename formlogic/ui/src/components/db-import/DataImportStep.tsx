@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -171,6 +171,11 @@ export function DataImportStep({
   const pauseRef = useRef(false);
   const cancelRef = useRef(false);
   const multiDropInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => () => {
+    cancelRef.current = true;
+    pauseRef.current = false;
+  }, []);
 
   const updateTableData = (tableKey: string, updater: (prev: TableDataState) => TableDataState) => {
     setDataByTable((prev) => ({

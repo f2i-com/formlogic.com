@@ -179,9 +179,25 @@ function bindActivityListeners(): void {
   window.addEventListener('keydown', note, { passive: true });
 }
 
-/** Exported for authStore's session purge: lock everywhere without a circular import. */
-export function lockVaultForSessionTeardown(): void {
-  useVaultStore.getState().lock();
+/** Exported for authStore's session purge: hard-terminate and reset synchronously without a circular import. */
+export function lockVaultForSessionTeardown(broadcast = true): void {
+  stopIdleTimer();
+  dropPendingSetup();
+  const gen = useVaultStore.getState().generation + 1;
+  // Synchronously hard-terminate the worker and bump generation BEFORE setting status: 'unknown'
+  // so no earlier pending lockAndTerminate().then() can later overwrite status to 'none'.
+  getCryptoClient().terminate();
+  usePrivateDataStore.getState().setGeneration(gen);
+  usePrivateDataStore.getState().clear();
+  useVaultStore.setState({ generation: gen, status: 'unknown', vault: null, autoLockAt: null, locking: false });
+  if (broadcast) {
+    ensureChannel();
+    try {
+      channel?.postMessage({ type: 'lock' });
+    } catch {
+      /* channel unavailable — this tab still locked */
+    }
+  }
 }
 
 /**
@@ -334,9 +350,13 @@ async function adoptCreatedVault(pending: PendingSetup, stored: VaultWire): Prom
   const sameSession = isSessionGenerationCurrent(pending.sessionGeneration);
   const live = pendingSetup === pending && sameSession && holdsSecrets;
   pending.sent = false; // a verdict: the vault exists
-  dropPendingSetup();
+  if (pendingSetup === pending) dropPendingSetup();
   if (!live) {
-    await getCryptoClient().lockAndTerminate();
+    if (sameSession) {
+      await getCryptoClient().lockAndTerminate();
+    } else {
+      await getCryptoClient().lockAndTerminateForSession(pending.sessionGeneration);
+    }
     if (!sameSession) {
       return {
         ok: false,
@@ -371,7 +391,9 @@ async function adoptCreatedVault(pending: PendingSetup, stored: VaultWire): Prom
  * there is none. Reads only — it can mark the vault as present and LOCKED, never unlock it.
  */
 async function syncStoreWithServer(): Promise<void> {
+  const sessionGen = currentSessionGeneration();
   const res = await api.getVault();
+  if (!isSessionGenerationCurrent(sessionGen)) return;
   const vault = res.data?.vault ?? null;
   const state = useVaultStore.getState();
   if (vault && !pendingSetup && state.status !== 'unlocked') {
@@ -389,11 +411,13 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
   setupPending: false,
 
   refreshStatus: async () => {
+    const sessionGen = currentSessionGeneration();
     if (!api.isAuthenticated()) {
       set({ status: 'none', vault: null });
       return;
     }
     const res = await api.getVault();
+    if (!isSessionGenerationCurrent(sessionGen)) return;
     if (res.error) {
       // An unreachable vault endpoint must not strand the UI in 'unknown' — treat as
       // locked state only if we already hold wrapped material; otherwise 'none'.
@@ -419,13 +443,17 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     // Otherwise the setup is void, and the worker it left unlocked holds a DIFFERENT
     // vault's secrets, which must never be mistaken for this account's.
     if (pendingSetup) await discardPendingSetup();
+    if (!isSessionGenerationCurrent(sessionGen)) return;
     const client = getCryptoClient();
-    let unlocked: boolean;
-    try {
-      unlocked = (await client.status()).unlocked && client.isRunning;
-    } catch {
-      unlocked = false;
+    let unlocked = false;
+    if (client.isRunning) {
+      try {
+        unlocked = (await client.status()).unlocked && client.isRunning;
+      } catch {
+        unlocked = false;
+      }
     }
+    if (!isSessionGenerationCurrent(sessionGen)) return;
     set({ status: unlocked ? 'unlocked' : 'locked', vault });
   },
 
@@ -435,33 +463,42 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       return { ok: false, error: 'A vault is already being set up — wait for it to finish.' };
     }
     preparing = true;
+    const sessionGeneration = currentSessionGeneration();
     try {
       // A second start replaces the first: its kit is void the moment a new one exists.
       if (pendingSetup) await discardPendingSetup();
+      if (!isSessionGenerationCurrent(sessionGeneration)) {
+        return { ok: false, error: 'You were signed out while the vault was being prepared — try again.' };
+      }
 
       // Refuse BEFORE the Argon2id run — and before any kit is shown — when the create
       // request cannot succeed anyway (a vault already exists, this account may not use
       // vaults, private forms are off on this server). The user must never save a kit
       // for a vault that cannot come into being.
       const existing = await api.getVault();
+      if (!isSessionGenerationCurrent(sessionGeneration)) {
+        return { ok: false, error: 'You were signed out while the vault was being prepared — try again.' };
+      }
       if (existing.error) return { ok: false, error: existing.error };
       if (existing.data?.vault) {
         set({ vault: existing.data.vault, ...(get().status === 'unlocked' ? {} : { status: 'locked' as const }) });
         return { ok: false, error: 'A vault already exists for this account — unlock it with your vault passphrase.' };
       }
       const health = await api.healthCheck();
+      if (!isSessionGenerationCurrent(sessionGeneration)) {
+        return { ok: false, error: 'You were signed out while the vault was being prepared — try again.' };
+      }
       if (health.data?.privateForms === false) {
         return { ok: false, error: 'Private forms are not enabled on this server.' };
       }
 
       const client = getCryptoClient();
-      const sessionGeneration = currentSessionGeneration();
       try {
         // Generates the wrappers + kit in the worker (which keeps the secrets). NOTHING is
         // sent to the server here: the vault does not exist until commitSetup.
         const { vault, recoveryDisplay } = await client.createVault(userId, passphrase);
         if (!isSessionGenerationCurrent(sessionGeneration)) {
-          await client.lockAndTerminate();
+          await client.lockAndTerminateForSession(sessionGeneration);
           return { ok: false, error: 'You were signed out while the vault was being prepared — try again.' };
         }
         const setupId = `setup-${nextSetupId++}`;
@@ -469,7 +506,7 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         set({ setupPending: true });
         return { ok: true, setupId, recoveryDisplay };
       } catch (e) {
-        await client.lockAndTerminate();
+        await client.lockAndTerminateForSession(sessionGeneration);
         return { ok: false, error: e instanceof Error ? e.message : 'Vault setup failed' };
       }
     } catch (e) {
@@ -537,8 +574,13 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         // A DIFFERENT vault: a verdict — this one can never be created.
         pending.sent = false;
         const stillThisSession = pendingSetup === pending && isSessionGenerationCurrent(pending.sessionGeneration);
-        await discardPendingSetup();
-        if (stillThisSession) set({ vault: theirs, status: 'locked' });
+        if (stillThisSession) {
+          await discardPendingSetup();
+          set({ vault: theirs, status: 'locked' });
+        } else {
+          if (pendingSetup === pending) dropPendingSetup();
+          await getCryptoClient().lockAndTerminateForSession(pending.sessionGeneration);
+        }
         return { ok: false, code: 'vault_exists', discarded: true, error: SETUP_OTHER_VAULT_MESSAGE };
       }
       if (res.status === 0 || res.status === 408 || res.status === 429 || res.status >= 500) {
@@ -549,7 +591,12 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         return unconfirmedResult(pending);
       }
       pending.sent = false; // a refusal is a verdict: nothing was saved
-      await discardPendingSetup();
+      if (pendingSetup === pending && isSessionGenerationCurrent(pending.sessionGeneration)) {
+        await discardPendingSetup();
+      } else {
+        if (pendingSetup === pending) dropPendingSetup();
+        await getCryptoClient().lockAndTerminateForSession(pending.sessionGeneration);
+      }
       return {
         ok: false,
         code: 'setup_rejected',
@@ -626,9 +673,13 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
 
   unlock: async (userId, passphrase) => {
     ensureChannel();
+    const sessionGen = currentSessionGeneration();
     let vault = get().vault;
     if (!vault) {
       const res = await api.getVault();
+      if (!isSessionGenerationCurrent(sessionGen)) {
+        return { ok: false, error: 'Session changed while unlocking vault.', code: 'session_changed' };
+      }
       vault = res.data?.vault ?? null;
       if (!vault) return { ok: false, error: 'No vault found for this account', code: 'vault_not_found' };
       set({ vault });
@@ -639,6 +690,10 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
     } catch (e) {
       const code = (e as { code?: string }).code ?? 'vault_unlock_failed';
       return { ok: false, error: e instanceof Error ? e.message : 'Unlock failed', code };
+    }
+    if (!isSessionGenerationCurrent(sessionGen)) {
+      client.terminateForSession(sessionGen);
+      return { ok: false, error: 'Session changed while unlocking vault.', code: 'session_changed' };
     }
     const gen = get().generation + 1;
     set({ status: 'unlocked', generation: gen });
@@ -651,14 +706,19 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
 
   recoveryUnlock: async (userId, recoveryCode, newPassphrase) => {
     ensureChannel();
+    const sessionGen = currentSessionGeneration();
     let vault = get().vault;
     if (!vault) {
       const res = await api.getVault();
+      if (!isSessionGenerationCurrent(sessionGen)) {
+        return { ok: false, error: 'Session changed during vault recovery.', code: 'session_changed' };
+      }
       vault = res.data?.vault ?? null;
       if (!vault) return { ok: false, error: 'No vault found for this account', code: 'vault_not_found' };
       set({ vault });
     }
     const client = getCryptoClient();
+    const vaultGenBefore = get().generation;
     let rewrap;
     try {
       ({ rewrap } = await client.recoveryUnlock(userId, recoveryCode, newPassphrase, vault));
@@ -669,9 +729,20 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         : e instanceof Error ? e.message : 'Recovery failed';
       return { ok: false, error: message, code };
     }
+    if (!isSessionGenerationCurrent(sessionGen)) {
+      client.terminateForSession(sessionGen);
+      return { ok: false, error: 'Session changed during vault recovery.', code: 'session_changed' };
+    }
+    if (get().generation !== vaultGenBefore || !client.isRunning) {
+      return { ok: false, error: 'The vault was locked during recovery — please unlock with your new passphrase.', code: 'vault_locked' };
+    }
     // Recovery replaces the passphrase: the version-checked rewrap endpoint is the
     // same one as a passphrase change (only the passphrase-side fields move).
     const res = await api.changeVaultPassphrase(vault.version, rewrap);
+    if (!isSessionGenerationCurrent(sessionGen)) {
+      client.terminateForSession(sessionGen);
+      return { ok: false, error: 'Session changed during vault recovery.', code: 'session_changed' };
+    }
     if (!res.ok) {
       // The worker already adopted the recovered secrets but the server did NOT
       // confirm the rewrap (a 409 means another session rewrote the vault; a network
@@ -691,6 +762,12 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       };
     }
     const updated = vaultFromBody(res.body) ?? { ...vault, ...rewrap, version: vault.version + 1 };
+    // If lock() ran concurrently while changeVaultPassphrase was in flight, the worker was
+    // terminated — persist the server's updated vault metadata but never claim 'unlocked'.
+    if (get().generation !== vaultGenBefore || !client.isRunning) {
+      set({ status: 'locked', vault: updated });
+      return { ok: false, error: 'The vault was locked during recovery — please unlock with your new passphrase.', code: 'vault_locked' };
+    }
     const gen = get().generation + 1;
     set({ status: 'unlocked', vault: updated, generation: gen });
     usePrivateDataStore.getState().setGeneration(gen);
@@ -701,6 +778,8 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
   },
 
   changePassphrase: async (userId, currentPassphrase, newPassphrase) => {
+    const sessionGen = currentSessionGeneration();
+    const vaultGenBefore = get().generation;
     const vault = get().vault;
     if (!vault || get().status !== 'unlocked') {
       return { ok: false, error: 'The vault is locked', code: 'vault_locked' };
@@ -716,13 +795,24 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         : e instanceof Error ? e.message : 'Passphrase change failed';
       return { ok: false, error: message, code };
     }
+    if (!isSessionGenerationCurrent(sessionGen)) {
+      client.terminateForSession(sessionGen);
+      return { ok: false, error: 'Session changed while updating passphrase.', code: 'session_changed' };
+    }
+    if (get().generation !== vaultGenBefore) {
+      return { ok: false, error: 'The vault was locked while updating passphrase.', code: 'vault_locked' };
+    }
     // Rewrap-only (§11): version-checked against the backend; 409 → reload required.
     const res = await api.changeVaultPassphrase(vault.version, rewrap);
+    if (!isSessionGenerationCurrent(sessionGen)) {
+      client.terminateForSession(sessionGen);
+      return { ok: false, error: 'Session changed while updating passphrase.', code: 'session_changed' };
+    }
     if (!res.ok) {
-      // Same posture as recovery: the rewrap was computed but not confirmed (a 409
-      // means the served vault is stale; a network failure is ambiguous) — force
-      // lock + terminate rather than leaving an unlocked worker in an unknown state.
-      await forceLockAfterUnknownState();
+      // Only force-lock if the vault generation is still ours (don't clobber a concurrent lock/re-unlock).
+      if (get().generation === vaultGenBefore) {
+        await forceLockAfterUnknownState();
+      }
       const conflict = res.status === 409;
       const bodyCode = (res.body as { code?: string } | null)?.code;
       return {
@@ -735,7 +825,9 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
         code: conflict ? 'vault_version_conflict' : 'vault_state_unknown',
       };
     }
-    set({ vault: vaultFromBody(res.body) ?? { ...vault, ...rewrap, version: vault.version + 1 } });
+    if (get().generation === vaultGenBefore) {
+      set({ vault: vaultFromBody(res.body) ?? { ...vault, ...rewrap, version: vault.version + 1 } });
+    }
     return { ok: true };
   },
 
@@ -759,7 +851,7 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
       //    never report 'locked' while a live worker may still hold keys. A newer
       //    unlock (generation moved on) supersedes the flip.
       void getCryptoClient().lockAndTerminate().then(() => {
-        if (get().generation === gen) {
+        if (get().generation === gen && get().status !== 'unknown') {
           set({ status: get().vault ? 'locked' : 'none', autoLockAt: null });
         }
       });
@@ -779,14 +871,26 @@ export const useVaultStore = create<VaultState>()((set, get) => ({
   },
 
   setAutoLockMinutes: (minutes) => {
+    if (!Number.isFinite(minutes)) return;
     const clamped = Math.max(1, Math.min(24 * 60, Math.floor(minutes)));
-    set({ autoLockMinutes: clamped });
+    if (get().status === 'unlocked') {
+      set({ autoLockMinutes: clamped, autoLockAt: lastActivity + clamped * 60_000 });
+    } else {
+      set({ autoLockMinutes: clamped });
+    }
   },
 
   noteActivity: () => {
-    lastActivity = Date.now();
-    const { status, autoLockMinutes } = get();
-    if (status === 'unlocked') set({ autoLockAt: lastActivity + autoLockMinutes * 60_000 });
+    const now = Date.now();
+    lastActivity = now;
+    const { status, autoLockMinutes, autoLockAt } = get();
+    if (status === 'unlocked') {
+      const next = now + autoLockMinutes * 60_000;
+      // Throttle Zustand notifications so keystrokes don't trigger high-frequency store churn.
+      if (autoLockAt === null || Math.abs(next - autoLockAt) >= 5_000) {
+        set({ autoLockAt: next });
+      }
+    }
   },
 }));
 

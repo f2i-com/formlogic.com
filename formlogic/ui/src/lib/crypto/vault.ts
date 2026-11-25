@@ -99,12 +99,17 @@ export async function unwrapKey(blob: Uint8Array, wrappingKey: Uint8Array, aad: 
 }
 
 export async function sealBundle(bundle: KeyBundle, umk: Uint8Array, userId: string): Promise<Uint8Array> {
+  const sodium = await getSodium();
   const plaintext = utf8Bytes(JSON.stringify({
     v: 1,
     x25519Sk: toB64(bundle.x25519Sk),
     ed25519Sk: toB64(bundle.ed25519Sk),
   }));
-  return wrapKey(plaintext, umk, bundleAad(userId));
+  try {
+    return await wrapKey(plaintext, umk, bundleAad(userId));
+  } finally {
+    sodium.memzero(plaintext);
+  }
 }
 
 /**
@@ -124,6 +129,8 @@ export async function openBundle(
     parsed = JSON.parse(utf8String(raw)) as typeof parsed;
   } catch {
     throw new VaultError('vault_corrupt', 'bundle payload malformed');
+  } finally {
+    sodium.memzero(raw);
   }
   if (parsed.v !== 1 || typeof parsed.x25519Sk !== 'string' || typeof parsed.ed25519Sk !== 'string') {
     throw new VaultError('vault_corrupt', 'bundle payload malformed');
@@ -132,11 +139,15 @@ export async function openBundle(
   const ed25519Sk = fromB64(parsed.ed25519Sk);
   if (x25519Sk.length !== sodium.crypto_box_SECRETKEYBYTES
     || ed25519Sk.length !== sodium.crypto_sign_SECRETKEYBYTES) {
+    sodium.memzero(x25519Sk);
+    sodium.memzero(ed25519Sk);
     throw new VaultError('vault_corrupt', 'bundle key lengths invalid');
   }
   const derivedX = sodium.crypto_scalarmult_base(x25519Sk);
   const derivedEd = sodium.crypto_sign_ed25519_sk_to_pk(ed25519Sk);
   if (!bytesEqual(derivedX, expected.x25519Pk) || !bytesEqual(derivedEd, expected.ed25519Pk)) {
+    sodium.memzero(x25519Sk);
+    sodium.memzero(ed25519Sk);
     throw new VaultError('vault_corrupt', 'derived public keys do not match stored public keys');
   }
   return { x25519Sk, ed25519Sk };

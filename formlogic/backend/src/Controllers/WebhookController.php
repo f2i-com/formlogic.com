@@ -50,19 +50,15 @@ class WebhookController
         $events = $data['events'] ?? [];
         $description = $data['description'] ?? null;
 
-        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
+        if (!is_string($url) || empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'A valid URL is required'], 400);
         }
 
-        // Enforce HTTPS in production
-        $scheme = parse_url($url, PHP_URL_SCHEME);
-        if ($scheme !== 'https' && $scheme !== 'http') {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
-        }
-
-        // Block internal/private hosts
-        if ($this->isBlockedWebhookHost($url)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Webhook URL host is not allowed'], 400);
+        // Single SSRF/URL authority (shared identically with create/update/delivery).
+        try {
+            WebhookService::validateWebhookUrl($url);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
 
         if (empty($events) || !is_array($events)) {
@@ -78,6 +74,8 @@ class WebhookController
 
         try {
             $webhook = $this->webhookService->createWebhook($formId, $userId, $url, $events, $description);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         } catch (\FormLogic\Services\EncryptionEnablingException $e) {
             // Enable-race gate: mid-enable webhook creation fails closed (409).
             return $this->jsonError($response, $e->getMessage(), 409, \FormLogic\Services\EncryptionEnablingException::ERROR_CODE);
@@ -104,17 +102,18 @@ class WebhookController
         }
 
         $data = $request->getParsedBody();
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
 
         if (isset($data['url'])) {
-            if (!filter_var($data['url'], FILTER_VALIDATE_URL)) {
+            if (!is_string($data['url']) || !filter_var($data['url'], FILTER_VALIDATE_URL)) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'A valid URL is required'], 400);
             }
-            $scheme = parse_url($data['url'], PHP_URL_SCHEME);
-            if ($scheme !== 'https' && $scheme !== 'http') {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'URL must use http or https'], 400);
-            }
-            if ($this->isBlockedWebhookHost($data['url'])) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Webhook URL host is not allowed'], 400);
+            try {
+                WebhookService::validateWebhookUrl($data['url']);
+            } catch (\InvalidArgumentException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
             }
         }
 
@@ -130,14 +129,14 @@ class WebhookController
             }
         }
 
-        if (!is_array($data)) {
-            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
-        }
-
         // Only allow known fields to prevent mass-assignment
         $allowedFields = ['url', 'events', 'is_active', 'description'];
         $filtered = array_intersect_key($data, array_flip($allowedFields));
-        $updated = $this->webhookService->updateWebhook($webhookId, $filtered);
+        try {
+            $updated = $this->webhookService->updateWebhook($webhookId, $filtered);
+        } catch (\InvalidArgumentException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+        }
         return $this->jsonResponse($response, ['webhook' => $updated]);
     }
 
@@ -177,44 +176,6 @@ class WebhookController
 
         $deliveries = $this->webhookService->getDeliveries($webhookId);
         return $this->jsonResponse($response, ['deliveries' => $deliveries]);
-    }
-
-    /**
-     * Validate that a webhook URL does not target internal/private hosts.
-     */
-    private function isBlockedWebhookHost(string $url): bool
-    {
-        $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
-        $blockedHosts = [
-            'localhost', '127.0.0.1', '169.254.169.254', 'metadata.google.internal',
-            '0.0.0.0', '::1', '::ffff:127.0.0.1', '::ffff:0:127.0.0.1',
-            '::ffff:169.254.169.254', '::ffff:0.0.0.0', 'metadata.azure.internal',
-        ];
-        if (in_array($host, $blockedHosts, true)) {
-            return true;
-        }
-        // Block IP addresses in private/reserved ranges (covers both IPv4 and IPv6)
-        if (filter_var($host, FILTER_VALIDATE_IP) && !filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-            return true;
-        }
-        // Resolve hostname and check if it points to a private/reserved IP
-        if (!filter_var($host, FILTER_VALIDATE_IP)) {
-            $resolved = gethostbyname($host);
-            if ($resolved !== $host && filter_var($resolved, FILTER_VALIDATE_IP) && !filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                return true;
-            }
-            // Also check IPv6 resolution
-            $ipv6Records = dns_get_record($host, DNS_AAAA);
-            if (is_array($ipv6Records)) {
-                foreach ($ipv6Records as $record) {
-                    $ip = $record['ipv6'] ?? '';
-                    if ($ip !== '' && filter_var($ip, FILTER_VALIDATE_IP) && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
     }
 
     private function authorizeFormOwner(string $formId, ?string $userId): bool

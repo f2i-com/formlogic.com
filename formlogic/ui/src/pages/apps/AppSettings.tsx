@@ -71,6 +71,7 @@ const EDITED_SETTING_KEYS = [
   'hideNav',
   'services',
   'requires',
+  'signInPage',
 ] as const;
 
 // The accent hex lands in an inline CSS custom property, so keep the format strict.

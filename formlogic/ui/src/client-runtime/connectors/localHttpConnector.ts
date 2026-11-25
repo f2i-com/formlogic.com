@@ -6,6 +6,7 @@
 // Gracefully reports "unavailable" when no bridge is reachable.
 import type { BrowserConnector, ConnectorStatusInfo } from './connectorTypes';
 import type { VehicleStatus } from './vehicleConnector';
+import { appMayUseThisComputer, assertAppMayUseThisComputer } from '../appLocalAccess';
 
 const DEFAULT_URL = 'http://127.0.0.1:39291';
 
@@ -38,6 +39,16 @@ export function createLocalHttpConnector(baseUrl: string = DEFAULT_URL): Browser
     label: 'Vehicle (local bridge)',
     commands: ['identity.read', 'status.read', 'engineHours.read', 'faults.read', 'gps.read', 'production.read'],
     async status(): Promise<ConnectorStatusInfo> {
+      if (!(await appMayUseThisComputer())) {
+        return {
+          id: 'local_http',
+          kind: 'local_http',
+          available: false,
+          source: 'local_http',
+          label: 'Vehicle (local bridge)',
+          detail: 'Local device access is not allowed for this app',
+        };
+      }
       const t = await read();
       return {
         id: 'local_http',
@@ -49,6 +60,7 @@ export function createLocalHttpConnector(baseUrl: string = DEFAULT_URL): Browser
       };
     },
     async request(command: string): Promise<unknown> {
+      await assertAppMayUseThisComputer();
       const t = await read();
       if (!t) throw new Error(`No local bridge at ${url}`);
       switch (command) {

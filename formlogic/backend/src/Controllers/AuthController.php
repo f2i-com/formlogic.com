@@ -78,12 +78,26 @@ class AuthController
     public function register(Request $request, Response $response): Response
     {
         $data = $request->getParsedBody();
+        if (!is_array($data)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Email and password are required',
+            ], 400);
+        }
         // Trim as early as possible so a pasted trailing space/newline can't produce a
         // stored email that silently mismatches the trimmed value login() looks up
         // (requestPasswordReset already trims for the same reason).
         $email = trim(self::field($data, 'email'));
+        $password = is_string($data['password'] ?? null) ? $data['password'] : '';
+        $name = is_string($data['name'] ?? null) ? trim($data['name']) : null;
+        if ($name !== null && mb_strlen($name) > 255) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Name must be 255 characters or fewer',
+            ], 400);
+        }
 
-        if ($email === '' || empty($data['password'])) {
+        if ($email === '' || $password === '') {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => 'Email and password are required',
@@ -97,7 +111,7 @@ class AuthController
             ], 400);
         }
 
-        if (($pwError = \FormLogic\Services\AuthService::passwordError($data['password'])) !== null) {
+        if (($pwError = \FormLogic\Services\AuthService::passwordError($password)) !== null) {
             return $this->jsonResponse($response, [
                 'error' => true,
                 'message' => $pwError,
@@ -107,8 +121,8 @@ class AuthController
         try {
             $result = $this->authService->register(
                 $email,
-                $data['password'],
-                $data['name'] ?? null,
+                $password,
+                $name !== '' ? $name : null,
                 is_string($data['timezone'] ?? null) ? $data['timezone'] : null
             );
 

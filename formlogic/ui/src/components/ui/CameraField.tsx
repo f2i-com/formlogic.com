@@ -31,8 +31,9 @@ const JPEG_QUALITY = 0.85;
 /** Downscale an image blob/file to MAX_DIMENSION and re-encode as JPEG.
  *  Falls back to the original bytes if decoding fails (e.g. exotic format). */
 async function resizeImage(source: Blob): Promise<Blob> {
+  let bitmap: ImageBitmap | null = null;
   try {
-    const bitmap = await createImageBitmap(source);
+    bitmap = await createImageBitmap(source);
     const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
     const w = Math.max(1, Math.round(bitmap.width * scale));
     const h = Math.max(1, Math.round(bitmap.height * scale));
@@ -42,11 +43,12 @@ async function resizeImage(source: Blob): Promise<Blob> {
     const ctx = canvas.getContext('2d');
     if (!ctx) return source;
     ctx.drawImage(bitmap, 0, 0, w, h);
-    bitmap.close();
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
     return blob ?? source;
   } catch {
     return source;
+  } finally {
+    bitmap?.close();
   }
 }
 
@@ -63,6 +65,7 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const mountedRef = useRef(true);
   // Local previews for photos taken THIS session (object URLs, keyed by file id) —
   // the server file URL may require auth, so freshly captured shots preview locally.
   const [previews, setPreviews] = useState<Record<string, string>>({});
@@ -81,7 +84,9 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       stopStream();
       Object.values(previewsLatest.current).forEach((url) => URL.revokeObjectURL(url));
     };
@@ -131,6 +136,11 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
         video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
         audio: false,
       });
+      if (!mountedRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      stopStream();
       streamRef.current = stream;
       setCameraOpen(true);
       // The <video> mounts with the state flip; attach on the next frame.
@@ -149,7 +159,7 @@ export function CameraField({ field, value, onChange, primaryColor, formId, appS
         fileInputRef.current?.click();
       }
     }
-  }, []);
+  }, [stopStream]);
 
   const closeCamera = useCallback(() => {
     stopStream();

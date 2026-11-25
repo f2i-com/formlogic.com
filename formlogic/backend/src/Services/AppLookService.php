@@ -120,6 +120,27 @@ final class AppLookService
     }
 
     /**
+     * Whether a SoftN app's installed project is open to the public ('application' access) rather
+     * than restricted to signed-in members ('members'). Returns true when no installed project is
+     * readable yet so public apps without a bundle behave consistently with AppLookTest fixtures.
+     */
+    public function isPublicApplication(array $app): bool
+    {
+        $appId = (string) ($app['id'] ?? '');
+        if ($appId === '') return false;
+        try {
+            $runtime = $this->native->runtimeProject($appId);
+            if (is_array($runtime) && is_array($runtime['project'] ?? null)) {
+                $access = (string) ($runtime['project']['access'] ?? 'application');
+                return $access === 'application';
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * The app's own icon for wherever the workspace lists apps (its table, the sidebar, an app's own
      * pages): which kind it is and the look's version its address carries, or null where the app has
      * none of its own (a list then shows the app's initial). The same icon resolve() names, so a list

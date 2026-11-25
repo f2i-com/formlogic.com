@@ -155,7 +155,7 @@ class MfaService
         try {
             $this->mysql->prepare(
                 'UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_recovery_codes = NULL,
-                        token_version = token_version + 1 WHERE id = :id'
+                        mfa_last_totp_step = NULL, token_version = token_version + 1 WHERE id = :id'
             )->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_trusted_browsers WHERE user_id = :id')->execute(['id' => $userId]);
             $this->mysql->prepare('DELETE FROM mfa_challenges WHERE user_id = :id')->execute(['id' => $userId]);
@@ -271,8 +271,11 @@ class MfaService
             return false;
         }
         $secret = $this->readableSecret($userId, (string) $row['mfa_secret']);
-        if ($secret !== null && $this->totp->verify($secret, $code)) {
-            return true;
+        if ($secret !== null) {
+            $matchedStep = $this->totp->verifyStep($secret, $code);
+            if ($matchedStep !== null) {
+                return $this->claimTotpStep($userId, $matchedStep);
+            }
         }
         // Recovery code path: normalized (case/dash/space-insensitive), single-use.
         $normalized = strtoupper(preg_replace('/[^a-z0-9]/i', '', $code) ?? '');
@@ -280,6 +283,29 @@ class MfaService
             return false;
         }
         return $this->consumeRecoveryCode($userId, hash('sha256', $normalized));
+    }
+
+    /**
+     * Atomically record the consumed TOTP time step so a code cannot be replayed
+     * within its ±1 step validity window (RFC 6238 §5.2).
+     */
+    private function claimTotpStep(string $userId, int $step): bool
+    {
+        try {
+            $claim = $this->mysql->prepare(
+                'UPDATE users SET mfa_last_totp_step = :step
+                 WHERE id = :id AND mfa_enabled = 1
+                   AND (mfa_last_totp_step IS NULL OR mfa_last_totp_step < :step2)'
+            );
+            $claim->execute(['step' => $step, 'id' => $userId, 'step2' => $step]);
+            return $claim->rowCount() > 0;
+        } catch (\PDOException $e) {
+            // Unmigrated schema fallback (only if column truly missing)
+            if ($e->getCode() === '42S22' || str_contains($e->getMessage(), 'Unknown column')) {
+                return true;
+            }
+            throw $e;
+        }
     }
 
     public static function secretContext(string $userId): string

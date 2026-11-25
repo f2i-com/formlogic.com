@@ -51,7 +51,7 @@ class MarketplaceController
      *
      * @return array<string, mixed>|null
      */
-    private function resolveCatalogForDemo(string $slug, ?string $viewerId = null, bool $ensureInstalled = false): ?array
+    private function resolveCatalogForDemo(string $slug, ?string $viewerId = null, bool $ensureInstalled = false, ?string $sandboxToken = null): ?array
     {
         if ($slug === 'landing-pottery-studio') {
             $archivePath = dirname(__DIR__, 2) . '/resources/landing-demos/pottery-studio.softn';
@@ -80,8 +80,13 @@ class MarketplaceController
 
         $catalog = $this->catalog->getCatalogBySlug($slug);
         if ($catalog !== null) {
-            if (($catalog['visibility'] ?? 'public') === 'private' && ($catalog['publisher_id'] ?? null) !== $viewerId) {
-                return null;
+            if (($catalog['visibility'] ?? 'public') === 'private') {
+                $isPublisher = $viewerId !== null && $viewerId !== '' && (string) ($catalog['publisher_id'] ?? '') === $viewerId;
+                $hasValidDemoToken = $sandboxToken !== null && $sandboxToken !== ''
+                    && $this->sandbox->resolveVerifiedSandboxDir($catalog, $sandboxToken) !== null;
+                if (!$isPublisher && !$hasValidDemoToken) {
+                    return null;
+                }
             }
             return $catalog;
         }
@@ -368,12 +373,13 @@ class MarketplaceController
     public function resetDemo(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $body = $this->readJsonBody($request);
-        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
         if ($token === '') {
             return $this->jsonError($response, 'Sandbox token is required.', 400);
         }
@@ -397,8 +403,9 @@ class MarketplaceController
         $slug = (string) ($args['slug'] ?? '');
         $token = (string) ($args['token'] ?? '');
         $subPath = (string) ($args['path'] ?? '');
+        $viewerId = $request->getAttribute('userId');
 
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             $response->getBody()->write('Marketplace demo not found.');
             return $response->withStatus(404)->withHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -441,21 +448,52 @@ class MarketplaceController
     public function demoUiEvent(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $body = $this->readJsonBody($request);
-        if (!is_string($body['token'] ?? null)) {
+        if ($token === '') {
             return $this->jsonError($response, 'Sandbox token is required.', 400);
         }
 
         try {
-            $result = $this->sandbox->handleUiEvent($catalog, trim($body['token']), [
-                'type' => is_string($body['type'] ?? null) ? $body['type'] : 'click',
-                'actionId' => is_string($body['actionId'] ?? null) ? $body['actionId'] : '',
-                'value' => $body['value'] ?? '',
-                'inputs' => is_array($body['inputs'] ?? null) ? $body['inputs'] : [],
+            $rawInputs = is_array($body['inputs'] ?? null) ? $body['inputs'] : [];
+            $safeInputs = [];
+            $totalBytes = 0;
+            foreach ($rawInputs as $k => $v) {
+                if (count($safeInputs) >= 64) {
+                    break;
+                }
+                if (!is_string($k) || $k === '' || strlen($k) > 128) {
+                    continue;
+                }
+                if (in_array($k, ['__proto__', 'constructor', 'prototype'], true)) {
+                    continue;
+                }
+                if (is_bool($v) || is_int($v) || is_float($v)) {
+                    $safeInputs[$k] = $v;
+                    $totalBytes += strlen($k) + 16;
+                } elseif (is_string($v)) {
+                    $val = substr($v, 0, 4096);
+                    $totalBytes += strlen($k) + strlen($val);
+                    if ($totalBytes > 16384) {
+                        break;
+                    }
+                    $safeInputs[$k] = $val;
+                }
+            }
+            $rawValue = $body['value'] ?? '';
+            $safeValue = is_bool($rawValue) || is_int($rawValue) || is_float($rawValue)
+                ? $rawValue
+                : (is_string($rawValue) ? substr($rawValue, 0, 4096) : '');
+            $result = $this->sandbox->handleUiEvent($catalog, $token, [
+                'type' => is_string($body['type'] ?? null) ? substr($body['type'], 0, 64) : 'click',
+                'actionId' => is_string($body['actionId'] ?? null) ? substr($body['actionId'], 0, 128) : '',
+                'value' => $safeValue,
+                'inputs' => $safeInputs,
             ]);
             return $this->jsonResponse($response->withHeader('Cache-Control', 'no-store'), $result);
         } catch (RuntimeException $e) {
@@ -471,17 +509,19 @@ class MarketplaceController
     public function demoBackendRequest(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $body = $this->readJsonBody($request);
-        if (!is_string($body['token'] ?? null)) {
+        if ($token === '') {
             return $this->jsonError($response, 'Sandbox token is required.', 400);
         }
 
         try {
-            $result = $this->sandbox->handleBackendRequest($catalog, trim($body['token']), $body);
+            $result = $this->sandbox->handleBackendRequest($catalog, $token, $body);
             if ($result['isRaw']) {
                 $response->getBody()->write((string) $result['body']);
                 return $response
@@ -506,11 +546,12 @@ class MarketplaceController
     public function demoTables(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $token = trim((string) ($request->getQueryParams()['token'] ?? ''));
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $token = trim((string) ($request->getQueryParams()['token'] ?? ''));
         if ($token === '') {
             return $this->jsonError($response, 'Sandbox token is required.', 400);
         }
@@ -529,12 +570,13 @@ class MarketplaceController
     public function demoCreateRecord(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $body = $this->readJsonBody($request);
-        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
         $table = is_string($body['table'] ?? null) ? trim($body['table']) : '';
         $values = is_array($body['values'] ?? null) ? $body['values'] : [];
         if ($token === '' || $table === '') {
@@ -555,12 +597,13 @@ class MarketplaceController
     public function demoUpdateRecord(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
+        $viewerId = $request->getAttribute('userId');
+        $body = $this->readJsonBody($request);
+        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
         if (!$catalog) {
             return $this->jsonError($response, 'Marketplace listing not found', 404);
         }
-        $body = $this->readJsonBody($request);
-        $token = is_string($body['token'] ?? null) ? trim($body['token']) : '';
         $table = is_string($body['table'] ?? null) ? trim($body['table']) : '';
         $id = $body['id'] ?? null;
         $values = is_array($body['values'] ?? null) ? $body['values'] : [];
@@ -582,13 +625,14 @@ class MarketplaceController
     public function demoDeleteRecord(Request $request, Response $response, array $args): Response
     {
         $slug = (string) ($args['slug'] ?? '');
-        $catalog = $this->resolveCatalogForDemo($slug, null, false);
-        if (!$catalog) {
-            return $this->jsonError($response, 'Marketplace listing not found', 404);
-        }
+        $viewerId = $request->getAttribute('userId');
         $body = $this->readJsonBody($request);
         $qp = $request->getQueryParams();
         $token = is_string($body['token'] ?? null) ? trim($body['token']) : trim((string) ($qp['token'] ?? ''));
+        $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, false, $token);
+        if (!$catalog) {
+            return $this->jsonError($response, 'Marketplace listing not found', 404);
+        }
         $table = is_string($body['table'] ?? null) ? trim($body['table']) : trim((string) ($qp['table'] ?? ''));
         $id = $body['id'] ?? ($qp['id'] ?? null);
         if ($token === '' || $table === '' || $id === null || $id === '') {

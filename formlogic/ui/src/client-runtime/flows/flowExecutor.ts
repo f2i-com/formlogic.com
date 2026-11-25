@@ -361,17 +361,20 @@ export async function executeFlow(graph: WorkflowGraph, options: ExecuteFlowOpti
       options.onNodeStatus?.(node.id, 'running');
       let output: unknown;
       try {
+        const nodePromise = executeNode({
+          node,
+          scope,
+          signal: controller.signal,
+          deps: options.deps,
+          capabilities: options.capabilities,
+          flowSlug: options.flowSlug,
+          callStack: options.callStack,
+          runId: options.runId,
+        }).then((value) => ({ value }));
+        // Prevent unhandled rejection if `aborted` wins the race and the in-flight node later rejects.
+        nodePromise.catch(() => {});
         const raced = await Promise.race([
-          executeNode({
-            node,
-            scope,
-            signal: controller.signal,
-            deps: options.deps,
-            capabilities: options.capabilities,
-            flowSlug: options.flowSlug,
-            callStack: options.callStack,
-            runId: options.runId,
-          }).then((value) => ({ value })),
+          nodePromise,
           aborted,
         ]);
         if (raced === 'aborted') {

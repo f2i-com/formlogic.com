@@ -43,9 +43,9 @@ let primed = false;
 export async function fetchOaiyEvents(
   since: number,
 ): Promise<{ envelopes: unknown[]; next: number } | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const token = getOaiyToken();
     const resp = await fetch(
       `${getOaiyBaseUrl()}/api/bridge/events?since=${since}&limit=${EVENT_LIMIT}`,
@@ -57,7 +57,6 @@ export async function fetchOaiyEvents(
         headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       },
     );
-    clearTimeout(timeout);
     if (!resp.ok) return null;
     const body = (await resp.json().catch(() => null)) as
       | { events?: Array<{ seq?: number; envelope?: unknown }>; next?: number }
@@ -67,6 +66,8 @@ export async function fetchOaiyEvents(
     return { envelopes: events.map((e) => e?.envelope), next };
   } catch {
     return null; // transient — retry next tick
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -76,12 +77,12 @@ export async function __tickOaiyEventsForTests(onEnvelope: IngestFn): Promise<vo
   await tick(onEnvelope);
 }
 
-async function tick(onEnvelope: IngestFn): Promise<void> {
+async function tick(onEnvelope: IngestFn, requireRunning = false): Promise<void> {
   // Only poll a runtime we're actually paired with — otherwise the privileged
   // events route 403s and there's nothing to consume.
   if (!oaiyRouteAvailable()) return;
   const res = await fetchOaiyEvents(cursor);
-  if (res === null) return;
+  if (res === null || (requireRunning && !running)) return;
   if (!primed) {
     // Adopt the tail without firing anything — history must not trigger flows.
     cursor = res.next;
@@ -89,6 +90,7 @@ async function tick(onEnvelope: IngestFn): Promise<void> {
     return;
   }
   for (const envelope of res.envelopes) {
+    if (requireRunning && !running) return;
     if (envelope !== undefined) onEnvelope(envelope);
   }
   cursor = res.next;
@@ -99,8 +101,8 @@ function scheduleNext(delay: number): void {
   timer = setTimeout(() => {
     timer = null;
     const fn = ingest;
-    if (!fn) return;
-    void tick(fn).finally(() => scheduleNext(POLL_INTERVAL_MS));
+    if (!running || !fn) return;
+    void tick(fn, true).finally(() => scheduleNext(POLL_INTERVAL_MS));
   }, delay);
 }
 

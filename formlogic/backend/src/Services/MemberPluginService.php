@@ -513,6 +513,7 @@ class MemberPluginService
             'body' => is_array($body) ? $body : (object) [],
             'headers' => (object) [],
             'client_ip' => '127.0.0.1',
+            'rate_key' => 'member-plugin:' . $runtimeAppId . ':' . ($appId ?? 'workspace') . ':' . $userId,
             'photos' => false,
         ];
         $res = $sharedDataDir !== null

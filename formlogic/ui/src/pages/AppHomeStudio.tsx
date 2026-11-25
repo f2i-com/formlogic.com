@@ -99,6 +99,10 @@ function toFiles(cs: CustomScreen): ScreenFile[] {
 
 export default function AppHomeStudio() {
   const { appId } = useParams<{ appId: string }>();
+  return <AppHomeStudioInner key={appId ?? ''} appId={appId} />;
+}
+
+function AppHomeStudioInner({ appId }: { appId: string | undefined }) {
   const navigate = useNavigate();
   const location = useLocation();
   // Platform-admin acting mode: widget previews render no record data.
@@ -129,6 +133,13 @@ export default function AppHomeStudio() {
   const [showAi, setShowAi] = useState(false);
   const { previewOpen, showEditor, previewLabel, togglePreview } = useScreenPreview();
   const previewTimer = useRef<number | undefined>(undefined);
+  const compileSeqRef = useRef(0);
+  const unmountedRef = useRef(false);
+  useEffect(() => () => {
+    unmountedRef.current = true;
+    compileSeqRef.current += 1;
+    window.clearTimeout(previewTimer.current);
+  }, []);
   // The trust the preview runs with. Opening a home is not adopting it, and neither is typing in
   // it: an imported one keeps the trust the server stored for it, so it stays visual-only (its
   // frame can navigate itself, so records() handed to it could leave the browser, and submit()
@@ -225,8 +236,11 @@ export default function AppHomeStudio() {
 
   const rebuild = (nextFiles: ScreenFile[]) => {
     window.clearTimeout(previewTimer.current);
+    const seq = ++compileSeqRef.current;
     previewTimer.current = window.setTimeout(async () => {
-      const r = await bundleScreenFiles(nextFiles);
+      const trust = previewTrust.current;
+      const r = await bundleScreenFiles(nextFiles, undefined, { allowEsmFetch: trust !== 'untrusted' });
+      if (unmountedRef.current || compileSeqRef.current !== seq) return;
       setCompileError(r.error || null);
       setPreview({ enabled: true, _trust: previewTrust.current, files: nextFiles, html: r.html, css: r.css, js: r.error ? '' : r.js });
     }, 450);

@@ -10,6 +10,7 @@ import {
   STATUS_OPTIONS, type ResolvedLink,
 } from '../components/responses/recordFormat';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
+import { useVaultStore } from '../stores/vaultStore';
 import {
   Search,
   Trash2,
@@ -52,7 +53,7 @@ import { useResponseStore } from '../stores/responseStore';
 import { api } from '../lib/api';
 import { isEncryptedEnvelope } from '../lib/crypto/envelope';
 import { useDecryptedResponses, useResetOnVaultGenerationChange, CORRUPT_ROW_CODE } from '../lib/crypto/useDecryptedResponses';
-import { sealResponseForUpdate, openResponsesForForm, getFormPrivacyState } from '../lib/crypto/formCrypto';
+import { cacheCommittedResponse, sealResponseForUpdate, openResponsesForForm, getFormPrivacyState } from '../lib/crypto/formCrypto';
 import { exportPrivateFormCsv } from '../lib/crypto/privateExport';
 import { useFittedColumns } from '../hooks/useFittedColumns';
 import { toast } from '../stores/toastStore';
@@ -198,6 +199,16 @@ function FormResponses() {
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
   const [privateExportProgress, setPrivateExportProgress] = useState<{ fetched: number; decrypted: number; total: number | null; confirmCancel: boolean } | null>(null);
   const privateExportCancelRef = useRef(false);
+  const privateExportLifecycleAbortedRef = useRef(false);
+  const privateExportRunIdRef = useRef(0);
+
+  // Abort any in-flight private CSV export if the user leaves this page or switches forms,
+  // so background decryption cannot drop an unexpected plaintext CSV download onto disk later.
+  useEffect(() => () => {
+    privateExportLifecycleAbortedRef.current = true;
+    privateExportCancelRef.current = true;
+    privateExportRunIdRef.current += 1;
+  }, [formId]);
 
   // Load form and responses
   useEffect(() => {
@@ -430,13 +441,14 @@ function FormResponses() {
       // `option_2` while displaying "Needs a callback", and dates store an ISO string
       // while displaying "28 Jul 2026" — so searching for the words on screen found
       // nothing. Every field is indexed, not just the columns that happen to fit.
+      const safeAnswers = r.answers && typeof r.answers === 'object' && !Array.isArray(r.answers) ? r.answers : {};
       const displayText = (form?.fields ?? [])
-        .map((f) => formatValue(r.answers[f.id], f.type, f.properties?.options, displayTz))
+        .map((f) => formatValue(safeAnswers[f.id], f.type, f.properties?.options, displayTz))
         .join(' ');
       // The raw JSON stays appended so pasting a stored value still matches.
       return {
         r,
-        hay: (displayText + ' ' + JSON.stringify(r.answers) + ' ' + r.id + ' ' + linkText).toLowerCase(),
+        hay: (displayText + ' ' + JSON.stringify(safeAnswers) + ' ' + r.id + ' ' + linkText).toLowerCase(),
       };
     }),
     [viewResponses, form, displayTz]
@@ -507,7 +519,7 @@ function FormResponses() {
     // its answers are empty placeholders and saving would destroy the record.
     if ((response as { _decryptError?: string })._decryptError) return;
     setSelectedResponse(response);
-    setEditedAnswers({ ...response.answers });
+    setEditedAnswers(response.answers && typeof response.answers === 'object' && !Array.isArray(response.answers) ? { ...response.answers } : {});
     setIsEditModalOpen(true);
   };
 
@@ -521,11 +533,12 @@ function FormResponses() {
       const enc = selectedResponse as unknown as { _encrypted?: boolean; _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string } };
       if (isPrivateForm && enc._encrypted) {
         const expectedRev = enc._rev ?? 1;
-        const { envelope } = await sealResponseForUpdate(formId, selectedResponse.id, expectedRev, {
-          v: 1,
+        const inner = {
+          v: 1 as const,
           answers: editedAnswers,
           ...(enc._encMeta ? { meta: enc._encMeta } : {}),
-        });
+        };
+        const { envelope, generation } = await sealResponseForUpdate(formId, selectedResponse.id, expectedRev, inner);
         const res = await api.updateEncryptedResponse(formId, selectedResponse.id, envelope, expectedRev);
         if (!res.ok) {
           const body = (res.body ?? {}) as { code?: string; message?: string };
@@ -535,6 +548,7 @@ function FormResponses() {
           );
           return;
         }
+        await cacheCommittedResponse(formId, envelope, inner, generation);
         // Swap the stored envelope so the row re-decrypts at the new rev.
         setResponses((prev) => prev.map((r) => (r.id === selectedResponse.id ? { ...r, answers: envelope as unknown as Record<string, unknown> } : r)));
         toast.success('Response updated', 'Changes saved successfully');
@@ -643,7 +657,15 @@ function FormResponses() {
   const handleExportPrivateCsv = async () => {
     if (!form) return;
     setExportMenuOpen(false);
+    const runId = ++privateExportRunIdRef.current;
+    const vaultGenAtStart = useVaultStore.getState().generation;
     privateExportCancelRef.current = false;
+    privateExportLifecycleAbortedRef.current = false;
+    const isAbortedByLifecycle = () =>
+      privateExportLifecycleAbortedRef.current
+      || privateExportRunIdRef.current !== runId
+      || useVaultStore.getState().generation !== vaultGenAtStart
+      || useVaultStore.getState().status !== 'unlocked';
     setPrivateExportProgress({ fetched: 0, decrypted: 0, total: null, confirmCancel: false });
     try {
       const result = await exportPrivateFormCsv(
@@ -667,10 +689,15 @@ function FormResponses() {
         {
           fields: form.fields,
           displayTz,
-          onProgress: (p) => setPrivateExportProgress((prev) => ({ ...p, confirmCancel: prev?.confirmCancel ?? false })),
-          shouldCancel: () => privateExportCancelRef.current,
+          onProgress: (p) => {
+            if (!isAbortedByLifecycle()) {
+              setPrivateExportProgress((prev) => ({ ...p, confirmCancel: prev?.confirmCancel ?? false }));
+            }
+          },
+          shouldCancel: () => privateExportCancelRef.current || isAbortedByLifecycle(),
         },
       );
+      if (isAbortedByLifecycle()) return;
       const suffix = result.partial ? '-partial' : '';
       const blob = new Blob(['\ufeff' + result.csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
@@ -681,9 +708,13 @@ function FormResponses() {
       URL.revokeObjectURL(url);
       toast.success(result.partial ? 'Partial export ready' : 'Export ready', `${result.rowCount} record${result.rowCount === 1 ? '' : 's'} decrypted.`);
     } catch (e) {
-      toast.error('Export failed', e instanceof Error ? e.message : 'Could not export responses.');
+      if (!isAbortedByLifecycle()) {
+        toast.error('Export failed', e instanceof Error ? e.message : 'Could not export responses.');
+      }
     } finally {
-      setPrivateExportProgress(null);
+      if (privateExportRunIdRef.current === runId) {
+        setPrivateExportProgress(null);
+      }
     }
   };
 

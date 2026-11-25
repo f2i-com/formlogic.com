@@ -628,11 +628,37 @@ class PackCatalogService
         $fields = [];
         $params = ['id' => $catalogId];
 
-        foreach (['name', 'description', 'icon', 'category', 'visibility'] as $field) {
+        $fieldLimits = [
+            'name' => 255,
+            'description' => 2000,
+            'icon' => 64,
+            'category' => 100,
+        ];
+        foreach ($fieldLimits as $field => $maxLen) {
             if (array_key_exists($field, $metadata)) {
+                $val = $metadata[$field];
+                if ($val !== null && !is_string($val)) {
+                    throw new \RuntimeException("Invalid {$field} value");
+                }
+                if (is_string($val)) {
+                    $val = trim($val);
+                    if ($field === 'name' && $val === '') {
+                        throw new \RuntimeException('Pack name cannot be empty');
+                    }
+                    if (mb_strlen($val) > $maxLen) {
+                        throw new \RuntimeException("Field '{$field}' exceeds maximum length of {$maxLen} characters");
+                    }
+                }
                 $fields[] = "{$field} = :{$field}";
-                $params[$field] = $metadata[$field];
+                $params[$field] = $val;
             }
+        }
+        if (array_key_exists('visibility', $metadata)) {
+            if (!is_string($metadata['visibility']) || !in_array($metadata['visibility'], ['public', 'private', 'unlisted'], true)) {
+                throw new \RuntimeException('Invalid visibility value');
+            }
+            $fields[] = 'visibility = :visibility';
+            $params['visibility'] = $metadata['visibility'];
         }
 
         if (array_key_exists('sourceVisibility', $metadata) && in_array($metadata['sourceVisibility'], self::SOURCE_VISIBILITIES, true)) {

@@ -93,7 +93,7 @@ final class AppLookController
             }
             return $this->sitePage($response, $slug === null ? $this->domainHead($host) : null);
         }
-        $verifiedDomain = null;
+        $verifiedDomain = $host;
         try {
             if ($slug === null) {
                 $resolved = $host !== '' ? $this->domains->resolveAppSlugByHost($host) : null;
@@ -119,7 +119,7 @@ final class AppLookController
         try { $look = $this->look->resolve($app); } catch (\Throwable) { $look = null; }
         if ($look === null) return $this->sitePage($response);
         try {
-            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
             return $this->sitePage($response);
         }
@@ -188,7 +188,7 @@ final class AppLookController
         $host = strtolower(trim(explode(':', $request->getHeaderLine('Host'))[0] ?? ''));
         $app = null;
         $onDomain = false;
-        $verifiedDomain = null;
+        $verifiedDomain = $host;
         try {
             if ($slug === null) {
                 if ($host === '' || $this->domains->isThisSiteHost($host)) {
@@ -221,7 +221,7 @@ final class AppLookController
             return $this->notFound($response);
         }
         try {
-            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
             return $this->notFound($response);
         }
@@ -292,7 +292,8 @@ final class AppLookController
         }
         $body = $request->getParsedBody();
         if (!is_array($body)) {
-            $body = json_decode((string) $request->getBody(), true) ?: [];
+            $decoded = json_decode((string) $request->getBody(), true);
+            $body = is_array($decoded) ? $decoded : [];
         }
         try {
             $next = $this->seo->normalizeSettingsPatch($app, $body);
@@ -395,14 +396,14 @@ final class AppLookController
     /**
      * Resolves browser/crawler SEO head + snapshot for a SoftN app on its custom domain or `/app/{slug}/*`.
      *
-     * @return array{head: array{name: string, description: string, themeColor: ?string}, seo: array<string, mixed>}|null
+     * @return array{head: array{name: string, description: string, themeColor: ?string}|null, seo: array{indexable: bool, robots: string, title: string, description: string, canonicalUrl: string, ogImage: ?string, themeColor: ?string, jsonLd: ?string, snapshotHtml: string, pagePath: string}}|null
      */
     private function resolvePageSeoForBrowser(Request $request, string $host, ?string $slug, string $subpath): ?array
     {
         if ($this->seo === null) return null;
         $app = null;
         $onDomain = false;
-        $verifiedDomain = null;
+        $verifiedDomain = $host;
         try {
             if ($slug === null) {
                 if ($host === '' || $this->domains->isThisSiteHost($host)) return null;
@@ -426,14 +427,19 @@ final class AppLookController
             $look = null;
         }
         try {
-            $base = $onDomain ? $this->domainBase($request, $verifiedDomain ?? $host) : rtrim(AppUrl::frontendBase($request), '/');
+            $base = $onDomain ? $this->domainBase($request, $verifiedDomain) : rtrim(AppUrl::frontendBase($request), '/');
         } catch (\Throwable) {
             return null;
         }
         $seoPage = $this->seo->resolvePage($app, $subpath, $base, $onDomain, $look);
-        // Never leak private/members-only app titles or theme colors via public SEO head injection.
+        // Never leak private/members-only or noindex app titles/theme colors via public SEO head injection,
+        // and still return $seoPage so sitePage() emits noindex, nofollow + X-Robots-Tag without falling through
+        // to domainHead().
         if (!$seoPage['indexable']) {
-            return null;
+            return [
+                'head' => null,
+                'seo' => $seoPage,
+            ];
         }
         $name = $seoPage['title'] !== ''
             ? $seoPage['title']
@@ -544,6 +550,8 @@ final class AppLookController
             if ($resolved === null || ($resolved['mode'] ?? '') !== 'runtime_direct') return null;
             $app = $this->apps->getAppBySlug($resolved['slug']);
             if (!$app || ($app['status'] ?? '') !== 'published' || empty($app['settings']['softnApp'])) return null;
+            if (!$this->look->isPublicApplication($app)) return null;
+            if ($this->seo !== null && $this->seo->assessIndexability($app)['access'] !== 'application') return null;
             $name = trim((string) ($app['name'] ?? ''));
             if ($name === '') return null;
             $look = $this->look->resolve($app);

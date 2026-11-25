@@ -849,74 +849,78 @@ class UpgradeService
         if ($confirm !== 'RESTORE-DATABASE') {
             throw new \RuntimeException("Confirmation phrase mismatch — send confirm: 'RESTORE-DATABASE'");
         }
-        @set_time_limit(600);
-        $dump = $this->backupDirFor($backupId) . '/database.sql.gz';
-        if (!is_file($dump)) {
-            throw new \RuntimeException('This backup has no database export');
-        }
+        return $this->withUpgradeLock(function () use ($backupId, $actingUserId): array {
+            @set_time_limit(600);
+            $dump = $this->backupDirFor($backupId) . '/database.sql.gz';
+            if (!is_file($dump)) {
+                throw new \RuntimeException('This backup has no database export');
+            }
 
-        $maintenanceWasOn = $this->maintenance->enabled();
-        if (!$maintenanceWasOn) {
-            $this->maintenance->enable('We are restoring data — back shortly.', $actingUserId);
-        }
+            $maintenanceWasOn = $this->maintenance->enabled();
+            if (!$maintenanceWasOn) {
+                $this->maintenance->enable('We are restoring data — back shortly.', $actingUserId);
+            }
 
-        $gz = gzopen($dump, 'rb');
-        if ($gz === false) {
-            throw new \RuntimeException('Cannot open the database export');
-        }
-        $statements = 0;
-        try {
-            $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
-            $buffer = '';
-            while (!gzeof($gz)) {
-                $buffer .= gzread($gz, 1 << 20);
-                // Our own dump format: exactly one statement per line, ";"-terminated
-                // (newlines inside values are \n-escaped at dump time).
-                while (($nl = strpos($buffer, "\n")) !== false) {
-                    $line = substr($buffer, 0, $nl);
-                    $buffer = substr($buffer, $nl + 1);
-                    $line = rtrim($line, "\r");
-                    if ($line === '' || str_starts_with($line, '--')) {
-                        continue;
+            $gz = gzopen($dump, 'rb');
+            if ($gz === false) {
+                throw new \RuntimeException('Cannot open the database export');
+            }
+            $statements = 0;
+            try {
+                $this->pdo->exec('SET FOREIGN_KEY_CHECKS=0');
+                $buffer = '';
+                while (!gzeof($gz)) {
+                    $buffer .= gzread($gz, 1 << 20);
+                    // Our own dump format: exactly one statement per line, ";"-terminated
+                    // (newlines inside values are \n-escaped at dump time).
+                    while (($nl = strpos($buffer, "\n")) !== false) {
+                        $line = substr($buffer, 0, $nl);
+                        $buffer = substr($buffer, $nl + 1);
+                        $line = rtrim($line, "\r");
+                        if ($line === '' || str_starts_with($line, '--')) {
+                            continue;
+                        }
+                        $this->pdo->exec($line);
+                        $statements++;
                     }
-                    $this->pdo->exec($line);
+                }
+                if (trim($buffer) !== '' && !str_starts_with(trim($buffer), '--')) {
+                    $this->pdo->exec(trim($buffer));
                     $statements++;
                 }
+            } finally {
+                try {
+                    $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
+                } catch (\Throwable) {
+                }
+                gzclose($gz);
             }
-            if (trim($buffer) !== '' && !str_starts_with(trim($buffer), '--')) {
-                $this->pdo->exec(trim($buffer));
-                $statements++;
-            }
-        } finally {
-            try {
-                $this->pdo->exec('SET FOREIGN_KEY_CHECKS=1');
-            } catch (\Throwable) {
-            }
-            gzclose($gz);
-        }
 
-        $this->appendHistory([
-            'action' => 'restore-database', 'at' => gmdate('c'), 'by' => $actingUserId, 'backupId' => $backupId,
-        ]);
-        if (!$maintenanceWasOn) {
-            $this->maintenance->disable($actingUserId);
-        }
-        return ['ok' => true, 'statements' => $statements];
+            $this->appendHistory([
+                'action' => 'restore-database', 'at' => gmdate('c'), 'by' => $actingUserId, 'backupId' => $backupId,
+            ]);
+            if (!$maintenanceWasOn) {
+                $this->maintenance->disable($actingUserId);
+            }
+            return ['ok' => true, 'statements' => $statements];
+        });
     }
 
     /** On-demand database export (same dumper the automatic pre-upgrade backup uses). */
     public function exportDatabaseBackup(string $actingUserId): array
     {
-        @set_time_limit(600);
-        $backupId = gmdate('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6) . '-manual';
-        $backupDir = $this->backupsDir() . '/' . $backupId;
-        @mkdir($backupDir, 0750, true);
-        $this->dumpDatabase("{$backupDir}/database.sql.gz");
-        file_put_contents("{$backupDir}/backup-info.json", json_encode([
-            'id' => $backupId, 'at' => gmdate('c'), 'version' => $this->currentVersion(), 'by' => $actingUserId, 'manual' => true,
-        ], JSON_PRETTY_PRINT));
-        $this->appendHistory(['action' => 'db-export', 'at' => gmdate('c'), 'by' => $actingUserId, 'backupId' => $backupId]);
-        return ['ok' => true, 'backupId' => $backupId];
+        return $this->withUpgradeLock(function () use ($actingUserId): array {
+            @set_time_limit(600);
+            $backupId = gmdate('Ymd-His') . '-' . substr(bin2hex(random_bytes(3)), 0, 6) . '-manual';
+            $backupDir = $this->backupsDir() . '/' . $backupId;
+            @mkdir($backupDir, 0750, true);
+            $this->dumpDatabase("{$backupDir}/database.sql.gz");
+            file_put_contents("{$backupDir}/backup-info.json", json_encode([
+                'id' => $backupId, 'at' => gmdate('c'), 'version' => $this->currentVersion(), 'by' => $actingUserId, 'manual' => true,
+            ], JSON_PRETTY_PRINT));
+            $this->appendHistory(['action' => 'db-export', 'at' => gmdate('c'), 'by' => $actingUserId, 'backupId' => $backupId]);
+            return ['ok' => true, 'backupId' => $backupId];
+        });
     }
 
     public function listBackups(): array

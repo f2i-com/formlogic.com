@@ -235,6 +235,13 @@ class PackService
                     $navConfig[] = $item;
                 }
 
+                $sanitizedPackLogic = null;
+                if (is_array($packApp['customLogic'] ?? null)) {
+                    $sanitizedPackLogic = CustomLogicSanitizer::sanitize($packApp['customLogic']);
+                    if (!CustomLogicSanitizer::withinSizeCap($sanitizedPackLogic)) {
+                        throw new \RuntimeException("App '{$packApp['packAppId']}' custom logic exceeds size cap");
+                    }
+                }
                 $appData = [
                     'name' => $packApp['name'],
                     'description' => $packApp['description'] ?? null,
@@ -247,7 +254,7 @@ class PackService
                     // remapped) and is bounded by the client sandbox + permission model at runtime.
                     // APP-502: unapproved connector grants are stripped here before persist.
                     'customLogic' => $this->reviewCustomLogicGrants(
-                        is_array($packApp['customLogic'] ?? null) ? $packApp['customLogic'] : null,
+                        $sanitizedPackLogic,
                         $approvedSet,
                         $withheldGrants
                     ),
@@ -1344,7 +1351,7 @@ class PackService
 
         // Workspace policy (pre-commit): reject an unverified/community archive BEFORE the atomic import, so
         // a failed policy check never leaves a committed import behind. Positively-verified (signed) only.
-        if ((($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true')
+        if (filter_var(\FormLogic\Support\Environment::get('REQUIRE_VERIFIED_PACKAGES', 'false'), FILTER_VALIDATE_BOOLEAN)
             && !in_array($trust, ['official', 'local-only'], true)) {
             throw new \RuntimeException('This workspace only allows verified (signed) application packages.');
         }

@@ -21,7 +21,7 @@ import { useLocation } from 'react-router-dom';
 import { DomainNativeApp } from '../components/app-runtime/AppEntryRouter';
 import { api } from '../lib/api';
 import { signInDestination } from '../lib/authRedirect';
-import { LEGAL_PATHS, nameDomainPage, PASSWORD_PATHS, restorePlatformHead, showsAppAt, SIGN_IN_PATHS, SIGN_IN_RETURN_PATH } from '../lib/domainHead';
+import { isPlatformHostUrl, LEGAL_PATHS, nameDomainPage, PASSWORD_PATHS, restorePlatformHead, showsAppAt, SIGN_IN_PATHS, SIGN_IN_RETURN_PATH } from '../lib/domainHead';
 import { lookUpHost, rememberedHost, rememberHost, type LaunchConfig, type SoftnAccess } from '../lib/domainLaunchApi';
 import { DomainSignInContext, finishDomainSignIn, startDomainSignIn } from '../lib/domainSignIn';
 import { AppLaunchPage } from './AppLaunchPage';
@@ -51,7 +51,7 @@ async function askServer(host: string, isDomain: (config: LaunchConfig) => void)
   if (!answered) return null;
   if (!config) return { config, platform };
   // FormLogic's own address can still have an app connected from an older version. Its pages stay.
-  if (!config.platformUrl?.endsWith(`//${host}`)) isDomain(config);
+  if (!isPlatformHostUrl(config.platformUrl, host)) isDomain(config);
   const entry = await Promise.race([
     api.getNativeEntry(config.app.slug),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), ENTRY_TIMEOUT_MS)),

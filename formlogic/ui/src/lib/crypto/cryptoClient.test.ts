@@ -423,6 +423,30 @@ describe('bounded lock (blocker 3)', () => {
     expect(client.isRunning).toBe(false);
     await dangling;
   });
+
+  it('rejects pending calls and detaches when the worker fires an error event', async () => {
+    const errorListeners = new Set<(event: ErrorEvent) => void>();
+    const broken = {
+      postMessage: () => { /* never answers */ },
+      addEventListener: (type: string, listener: unknown) => {
+        if (type === 'error' && typeof listener === 'function') {
+          errorListeners.add(listener as (event: ErrorEvent) => void);
+        }
+      },
+      removeEventListener: (type: string, listener: unknown) => {
+        if (type === 'error' && typeof listener === 'function') {
+          errorListeners.delete(listener as (event: ErrorEvent) => void);
+        }
+      },
+      terminate: vi.fn(),
+    };
+    const client = new CryptoClient(() => broken);
+    const pending = client.status();
+    for (const l of errorListeners) l({ message: 'script failed to load' } as ErrorEvent);
+    await expect(pending).rejects.toMatchObject({ code: 'worker_error' });
+    expect(client.isRunning).toBe(false);
+    expect(broken.terminate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('passphrase strength floor (review 2026-07-22)', () => {

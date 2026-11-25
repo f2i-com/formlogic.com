@@ -83,9 +83,11 @@ class ServiceAuthorizationService
     private const DEFINITION_ID = '/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/';
 
     private PDO $mysql;
+    private MySQLConnection $connection;
 
     public function __construct(MySQLConnection $mysql)
     {
+        $this->connection = $mysql;
         $this->mysql = $mysql->getConnection();
     }
 
@@ -135,10 +137,14 @@ class ServiceAuthorizationService
             return null;
         }
 
+        $inactive = (new PackageActivationService($this->connection))->inactiveInstallationIds($userId);
         $actions = [];
         $installationIds = [];
         foreach ($bindings as $binding) {
             $installationId = (string) $binding['installation_id'];
+            if (isset($inactive[$installationId])) {
+                continue;
+            }
             $slot = (string) $binding['slot'];
             $installationIds[$installationId] = true;
             foreach ($this->declaredActions((string) $binding['receipt_json'], $slot) as $action) {

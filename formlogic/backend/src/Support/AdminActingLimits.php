@@ -156,7 +156,114 @@ final class AdminActingLimits
         $role = ($settings['defaultRoleId'] ?? null) ?: null;
         $roleChanged = $role !== (($stored['defaultRoleId'] ?? null) ?: null) && ($role !== null || !empty($settings['allowSelfRegistration']));
         $approvalDropped = !empty($stored['allowSelfRegistration']) && !empty($stored['requireApproval']) && empty($settings['requireApproval']);
-        return $opened || $roleChanged || $approvalDropped ? 'Who can join an app is the owner\'s to change' : null;
+        if ($opened || $roleChanged || $approvalDropped) {
+            return 'Who can join an app is the owner\'s to change';
+        }
+        if (self::widensExternalApi($settings['externalApi'] ?? null, $stored['externalApi'] ?? null)) {
+            return 'External API access for an app is the owner\'s to configure';
+        }
+        return null;
+    }
+
+    /**
+     * Refuse transitioning an app to `published` while acting-as if its effective external API
+     * policy exposes public routes, if open self-registration immediately admits new members
+     * with a record-viewing role, or if its installed native project allows non-member visitors
+     * (all of which would let an admin read private app records outside the acting-as boundary).
+     *
+     * @param array<string, mixed> $storedApp
+     */
+    public static function appPublishRefusal(
+        mixed $newStatus,
+        array $storedApp,
+        mixed $newSettings = null,
+        bool $openSelfRegShowsRecords = false,
+        ?string $nativeAccess = null,
+    ): ?string {
+        if ($newStatus !== 'published' || ($storedApp['status'] ?? '') === 'published') {
+            return null;
+        }
+        $settings = is_array($newSettings)
+            ? $newSettings
+            : (is_array($storedApp['settings'] ?? null) ? $storedApp['settings'] : []);
+        $ext = \FormLogic\Services\AppService::sanitizeExternalApi($settings['externalApi'] ?? null);
+        if ($ext !== null && !empty($ext['enabled']) && in_array((string) ($ext['authMode'] ?? ''), ['public', 'both'], true)) {
+            return 'Publishing an app with a public external API is the owner\'s to do';
+        }
+        if ($openSelfRegShowsRecords) {
+            return 'Publishing an app with open self-registration is the owner\'s to do';
+        }
+        if ($nativeAccess !== null && $nativeAccess !== 'members') {
+            return 'Publishing a public native app is the owner\'s to do';
+        }
+        return null;
+    }
+
+    private static function widensExternalApi(mixed $incoming, mixed $stored): bool
+    {
+        // Normalize both sides through AppService::sanitizeExternalApi so omitted `enabled`
+        // (which defaults to true on persistence) or omitted `allowedMethods` cannot bypass checks.
+        $new = \FormLogic\Services\AppService::sanitizeExternalApi($incoming);
+        $old = \FormLogic\Services\AppService::sanitizeExternalApi($stored);
+        $newEnabled = $new !== null && !empty($new['enabled']);
+        $oldEnabled = $old !== null && !empty($old['enabled']);
+        if (!$newEnabled) {
+            return false;
+        }
+        if (!$oldEnabled) {
+            return true;
+        }
+        $newMode = strtolower(trim((string) ($new['authMode'] ?? 'api_key')));
+        $oldMode = strtolower(trim((string) ($old['authMode'] ?? 'api_key')));
+        if ($newMode !== $oldMode && in_array($newMode, ['public', 'both'], true)) {
+            return true;
+        }
+        $normList = static function (mixed $v): array {
+            if (!is_array($v)) {
+                return [];
+            }
+            $out = [];
+            foreach ($v as $item) {
+                if (is_string($item) && trim($item) !== '') {
+                    $out[] = trim($item);
+                }
+            }
+            sort($out);
+            return array_values(array_unique($out));
+        };
+        $newMethods = $normList($new['allowedMethods'] ?? null);
+        $oldMethods = $normList($old['allowedMethods'] ?? null);
+        if ($oldMethods !== [] && ($newMethods === [] || array_diff($newMethods, $oldMethods) !== [])) {
+            return true;
+        }
+        $newAllowed = $normList($new['allowedPaths'] ?? null);
+        $oldAllowed = $normList($old['allowedPaths'] ?? null);
+        if ($oldAllowed !== [] && ($newAllowed === [] || array_diff($newAllowed, $oldAllowed) !== [])) {
+            return true;
+        }
+        $newBlocked = $normList($new['blockedPaths'] ?? null);
+        $oldBlocked = $normList($old['blockedPaths'] ?? null);
+        if (array_diff($oldBlocked, $newBlocked) !== []) {
+            return true;
+        }
+        $newCors = $normList($new['corsOrigins'] ?? null);
+        $oldCors = $normList($old['corsOrigins'] ?? null);
+        if (array_diff($newCors, $oldCors) !== []) {
+            return true;
+        }
+        // Changing defaultPrefix can shift public callers onto previously unexposed container routes;
+        // raising rateLimitPerMinute widens public throughput limits.
+        $newPrefix = (string) ($new['defaultPrefix'] ?? '');
+        $oldPrefix = (string) ($old['defaultPrefix'] ?? '');
+        if ($newPrefix !== $oldPrefix) {
+            return true;
+        }
+        $newRate = (int) ($new['rateLimitPerMinute'] ?? 60);
+        $oldRate = (int) ($old['rateLimitPerMinute'] ?? 60);
+        if ($newRate > $oldRate) {
+            return true;
+        }
+        return false;
     }
 
     /**

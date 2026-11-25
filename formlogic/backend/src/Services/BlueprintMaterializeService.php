@@ -36,6 +36,8 @@ class BlueprintMaterializeService
         // site a diagram's flows, triggers and roles were skipped without a word, through the web, MCP and Chat.
         private FlowService $flowService,
         private AppUserService $appUsers,
+        // Wired explicitly in public/index.php; optional for direct integration test fixtures.
+        private ?PlanService $planService = null,
     ) {
         $this->mysql = $mysql->getConnection();
     }
@@ -85,6 +87,42 @@ class BlueprintMaterializeService
                 'title' => trim((string) ($properties['title'] ?? '')) !== '' ? trim((string) $properties['title']) : 'Untitled form',
                 'fields' => $this->fieldDefs(is_array($properties['fields'] ?? null) ? $properties['fields'] : []),
             ];
+        }
+
+        // Enforce plan form quota BEFORE creating any forms (covers both new concept forms and new N:M junction forms).
+        if ($this->planService !== null) {
+            $plannedFormElementIds = [];
+            $newFormCount = 0;
+            foreach ($plans as $plan) {
+                $plannedFormElementIds[(string) $plan['elementId']] = true;
+                if (!isset($plan['existingFormId'])) {
+                    $newFormCount++;
+                }
+            }
+            $seenJunctionStmt = $this->mysql->prepare(
+                'SELECT resource_id FROM blueprint_resource_links WHERE blueprint_id = :b AND element_id = :el'
+            );
+            foreach ($elements as $element) {
+                if (($element['elementType'] ?? null) !== 'edge') {
+                    continue;
+                }
+                $props = is_array($element['properties'] ?? null) ? $element['properties'] : [];
+                if (($props['edgeType'] ?? null) !== 'relation' || ($props['cardinality'] ?? null) !== 'N:M') {
+                    continue;
+                }
+                $srcEl = (string) ($props['sourceId'] ?? '');
+                $tgtEl = (string) ($props['targetId'] ?? '');
+                if (!isset($plannedFormElementIds[$srcEl]) || !isset($plannedFormElementIds[$tgtEl])) {
+                    continue;
+                }
+                $seenJunctionStmt->execute(['b' => $blueprintId, 'el' => (string) $element['id']]);
+                if (!$seenJunctionStmt->fetchColumn()) {
+                    $newFormCount++;
+                }
+            }
+            if ($newFormCount > 0 && !$this->planService->canCreateForms($ownerUserId, $newFormCount)) {
+                throw new BlueprintPlanLimitException('Materialising this diagram would exceed your plan\'s form limit. Free up space or upgrade first.');
+            }
         }
 
         $createdFormIds = [];

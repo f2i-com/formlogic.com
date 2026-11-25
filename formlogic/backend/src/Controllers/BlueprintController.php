@@ -225,6 +225,8 @@ class BlueprintController
         try {
             $result = $this->materializer->materialize((string) $userId, (string) ($args['blueprintId'] ?? ''));
             return $this->jsonResponse($response, $result, 201);
+        } catch (\FormLogic\Services\BlueprintPlanLimitException $e) {
+            return $this->jsonResponse($response, ['error' => true, 'code' => 'form_limit', 'message' => $e->getMessage()], 402);
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }

@@ -16,7 +16,7 @@ function pass(req) {
   let user = who(req);
   if (typeof user != "string" || user.length == 0) return {status:401,body:{error:"Sign in first"}};
   let age = req.body ? req.body.minimumAge : null;
-  if (req.body.confirmed !== true || typeof age != "number" || age != Math.floor(age) || age < 13 || age > 120) {
+  if (!req.body || req.body.confirmed !== true || typeof age != "number" || age != Math.floor(age) || age < 13 || age > 120) {
     return {status:422,body:{error:"Confirm your age to continue"}};
   }
   return {status:200,body:{pass:{kind:"age",value:age,strength:"declared",method:"self_declaration"}}};
@@ -83,7 +83,9 @@ function cameraStart(req) {
   }
   let control = 2 + softn.crypto.randomInt(8);
   let controlAt = 1 + softn.crypto.randomInt(turns.length + 1);
-  softn.sql.execute("INSERT INTO checks(id,user_id,mode,min_value,turns,control,control_at) VALUES(?,?,?,?,?,?,?)",
+  // Prune any abandoned previous check for this user and any expired checks (> 15 min) so the table stays bounded.
+  softn.sql.execute("DELETE FROM checks WHERE user_id = ? OR (created_at > 0 AND created_at < unixepoch() - 900)", [user]);
+  softn.sql.execute("INSERT INTO checks(id,user_id,mode,min_value,turns,control,control_at,created_at) VALUES(?,?,?,?,?,?,?,unixepoch())",
     [body.check, user, mode, body.requirement.min, JSON.stringify(turns), control, controlAt]);
 
   let count = turns.length + 1;
@@ -265,17 +267,19 @@ function facesFound(read, turns) {
 // else looks for these, so an answer that leaves them out did not do the check: never read as "not a screen".
 function looksLive(seen, ageModel) {
   let screens = 0;
-  let held = false;
+  let heldCount = 0;
   for (let image of seen) {
     if (typeof image.screen_or_print != "boolean") return unavailable();
     if (!ageModel && typeof image.held_writing != "boolean") return unavailable();
     if (image.screen_or_print === true) screens = screens + 1;
-    if (image.held_writing === true) held = true;
+    if (image.held_writing === true) heldCount = heldCount + 1;
   }
   if (screens > 0 && screens * 2 >= seen.length) {
     return {outcome: "not_live", message: "Your face looked like it was on a screen or a printed photo in " + screens + " of the " + seen.length + " pictures. Try again with your own face in front of the camera."};
   }
-  if (held && !ageModel) {
+  // When AI alone reads age, any held writing is refused. Even with OAIY's age model, sustained
+  // writing held up across most frames can attempt to prompt-inject the vision model's liveness/same-person verdict.
+  if (heldCount > 0 && (!ageModel || heldCount * 2 >= seen.length)) {
     return {outcome: "not_live", message: "Writing was held up to the camera. Try again with nothing held up in view."};
   }
   return null;

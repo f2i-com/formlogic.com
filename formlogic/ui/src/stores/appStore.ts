@@ -90,7 +90,7 @@ export const useAppStore = create<AppState>()(
             set({ error: e instanceof Error ? e.message : 'Failed to fetch apps' });
           } finally {
             if (inFlightApps?.promise === promise) inFlightApps = null;
-            if (showSpinner) stopLoading();
+            if (showSpinner && isSessionGenerationCurrent(gen)) stopLoading();
           }
         })();
         inFlightApps = { gen, promise };
@@ -98,9 +98,11 @@ export const useAppStore = create<AppState>()(
       },
 
       createApp: async (data) => {
+        const gen = currentSessionGeneration();
         startLoading(); set({ error: null });
         try {
           const result = await api.createApp(data);
+          if (!isSessionGenerationCurrent(gen)) return null;
           if (result.error) {
             set({ error: result.error });
             return null;
@@ -113,17 +115,20 @@ export const useAppStore = create<AppState>()(
           set((s) => ({ apps: [...s.apps, app] }));
           return app;
         } catch (e) {
+          if (!isSessionGenerationCurrent(gen)) return null;
           set({ error: e instanceof Error ? e.message : 'Failed to create app' });
           return null;
         } finally {
-          stopLoading();
+          if (isSessionGenerationCurrent(gen)) stopLoading();
         }
       },
 
       updateApp: async (id, data) => {
+        const gen = currentSessionGeneration();
         startLoading(); set({ error: null });
         try {
           const result = await api.updateApp(id, data);
+          if (!isSessionGenerationCurrent(gen)) return false;
           if (result.error) {
             toast.error('Update failed', result.error);
             return false;
@@ -140,17 +145,20 @@ export const useAppStore = create<AppState>()(
           }
           return true;
         } catch {
+          if (!isSessionGenerationCurrent(gen)) return false;
           toast.error('Update failed', 'Could not update the app. Please try again.');
           return false;
         } finally {
-          stopLoading();
+          if (isSessionGenerationCurrent(gen)) stopLoading();
         }
       },
 
       deleteApp: async (id) => {
+        const gen = currentSessionGeneration();
         startLoading(); set({ error: null });
         try {
           const result = await api.deleteApp(id);
+          if (!isSessionGenerationCurrent(gen)) return;
           if (result.error) {
             toast.error('Delete failed', result.error);
             return;
@@ -163,9 +171,10 @@ export const useAppStore = create<AppState>()(
             toast.success('Moved to the recycle bin', 'You can restore the app from Settings → Recycle bin for 30 days. Its forms stay in your workspace.');
           }
         } catch {
+          if (!isSessionGenerationCurrent(gen)) return;
           toast.error('Delete failed', 'Could not delete the app. Please try again.');
         } finally {
-          stopLoading();
+          if (isSessionGenerationCurrent(gen)) stopLoading();
         }
       },
 

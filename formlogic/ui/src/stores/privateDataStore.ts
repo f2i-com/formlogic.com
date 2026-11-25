@@ -12,6 +12,7 @@ export const DECRYPTED_LRU_CAP = 2000;
 export interface DecryptedRecord {
   recordId: string;
   rev: number;
+  scopeKey?: string;
   inner: InnerPayload;
   /** Monotonic touch counter for LRU eviction. */
   touched: number;
@@ -26,15 +27,20 @@ interface PrivateDataState {
   tick: number;
 
   setGeneration: (generation: number) => void;
-  put: (recordId: string, rev: number, inner: InnerPayload) => void;
-  putError: (recordId: string, error: { code: string; message: string }) => void;
-  get: (recordId: string, rev?: number) => DecryptedRecord | undefined;
+  put: (recordId: string, rev: number, inner: InnerPayload, scopeKey?: string, expectedGeneration?: number) => void;
+  putError: (recordId: string, error: { code: string; message: string }, expectedGeneration?: number) => void;
+  get: (recordId: string, rev?: number, scopeKey?: string) => DecryptedRecord | undefined;
   getError: (recordId: string) => { code: string; message: string } | undefined;
   remove: (recordId: string) => void;
   clear: () => void;
 }
 
-const keyOf = (recordId: string, rev?: number) => (rev === undefined ? recordId : `${recordId}:${rev}`);
+const keyOf = (recordId: string, rev?: number, scopeKey?: string) => {
+  if (scopeKey !== undefined) {
+    return rev === undefined ? `${scopeKey}\0${recordId}` : `${scopeKey}\0${recordId}:${rev}`;
+  }
+  return rev === undefined ? recordId : `${recordId}:${rev}`;
+};
 
 export const usePrivateDataStore = create<PrivateDataState>()((set, get) => ({
   generation: 0,
@@ -48,16 +54,18 @@ export const usePrivateDataStore = create<PrivateDataState>()((set, get) => ({
     set({ generation, records: new Map(), errors: new Map() });
   },
 
-  put: (recordId, rev, inner) => {
-    const { records, errors, tick } = get();
+  put: (recordId, rev, inner, scopeKey, expectedGeneration) => {
+    const state = get();
+    if (expectedGeneration !== undefined && state.generation !== expectedGeneration) return;
+    const { records, errors, tick } = state;
     const nextTick = tick + 1;
     const next = new Map(records);
-    next.set(keyOf(recordId, rev), { recordId, rev, inner, touched: nextTick });
+    next.set(keyOf(recordId, rev, scopeKey), { recordId, rev, scopeKey, inner, touched: nextTick });
     // LRU evict oldest-touched beyond the cap.
     if (next.size > DECRYPTED_LRU_CAP) {
       const sorted = [...next.values()].sort((a, b) => a.touched - b.touched);
       for (const victim of sorted.slice(0, next.size - DECRYPTED_LRU_CAP)) {
-        next.delete(keyOf(victim.recordId, victim.rev));
+        next.delete(keyOf(victim.recordId, victim.rev, victim.scopeKey));
       }
     }
     const nextErrors = new Map(errors);
@@ -65,19 +73,21 @@ export const usePrivateDataStore = create<PrivateDataState>()((set, get) => ({
     set({ records: next, errors: nextErrors, tick: nextTick });
   },
 
-  putError: (recordId, error) => {
-    const next = new Map(get().errors);
+  putError: (recordId, error, expectedGeneration) => {
+    const state = get();
+    if (expectedGeneration !== undefined && state.generation !== expectedGeneration) return;
+    const next = new Map(state.errors);
     next.set(recordId, error);
     set({ errors: next });
   },
 
-  get: (recordId, rev) => {
+  get: (recordId, rev, scopeKey) => {
     const state = get();
-    if (rev !== undefined) {
-      const hit = state.records.get(keyOf(recordId, rev));
-      if (hit) return hit;
+    if (rev !== undefined || scopeKey !== undefined) {
+      // Exact lookup only: never fall back to a different revision or envelope scope.
+      return state.records.get(keyOf(recordId, rev, scopeKey));
     }
-    // rev-agnostic lookup: newest touched entry for the record id.
+    // rev-agnostic lookup (legacy / test helpers): newest touched entry for the record id.
     let best: DecryptedRecord | undefined;
     for (const rec of state.records.values()) {
       if (rec.recordId !== recordId) continue;

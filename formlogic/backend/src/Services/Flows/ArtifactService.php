@@ -69,6 +69,8 @@ class ArtifactService
         if ($size > self::MAX_ARTIFACT_BYTES) {
             throw new \RuntimeException('artifact_too_large: artifact exceeds the ' . self::MAX_ARTIFACT_BYTES . ' byte ceiling');
         }
+        // Validate metadata BEFORE touching disk so invalid requests can never leave orphan files.
+        $validated = $this->validateMeta($meta);
         $this->assertQuota($userId, $size);
 
         $id = $this->newId();
@@ -82,7 +84,12 @@ class ArtifactService
             throw new \RuntimeException('artifact_storage_unavailable: could not write the artifact');
         }
 
-        return $this->insert($userId, $id, $key, $size, hash('sha256', $bytes), 'cloud', null, $meta);
+        try {
+            return $this->insert($userId, $id, $key, $size, hash('sha256', $bytes), 'cloud', null, $validated);
+        } catch (\Throwable $e) {
+            @unlink($path);
+            throw $e;
+        }
     }
 
     /**
@@ -269,6 +276,45 @@ class ArtifactService
 
     // ── internals ───────────────────────────────────────────────────────────────────────────
 
+    /**
+     * Validate and normalize artifact metadata before any disk write or DB insert.
+     *
+     * @param array<string,mixed> $meta
+     * @return array{kind:string,mediaType:string,filename:?string,ttlSeconds:int,runId:?string}
+     */
+    private function validateMeta(array $meta): array
+    {
+        $kind = is_string($meta['kind'] ?? null) && in_array($meta['kind'], self::KINDS, true) ? $meta['kind'] : 'file';
+        $mediaType = is_string($meta['mediaType'] ?? null) && $meta['mediaType'] !== ''
+            ? substr($meta['mediaType'], 0, 190)
+            : 'application/octet-stream';
+        // ~ delimiters: a media type may legally contain '#', which would end a #-delimited pattern.
+        if (preg_match('~^[a-zA-Z0-9][\w!#$&^.+-]*/[a-zA-Z0-9][\w!#$&^.+-]*$~', $mediaType) !== 1) {
+            throw new \RuntimeException('artifact_invalid: mediaType is not a media type');
+        }
+        // A filename is DISPLAY only — it never contributes to the storage key, so a crafted
+        // name cannot escape the artifact directory. Strip control chars, quotes, and path separators.
+        $filename = null;
+        if (is_string($meta['filename'] ?? null) && $meta['filename'] !== '') {
+            $leaf = basename(str_replace('\\', '/', $meta['filename']));
+            $leaf = preg_replace('/[\x00-\x1F\x7F"\\\\]+/', '_', $leaf) ?? '';
+            $leaf = trim($leaf);
+            if ($leaf !== '' && $leaf !== '.' && $leaf !== '..') {
+                $filename = substr($leaf, 0, 190);
+            }
+        }
+        $ttl = (int) ($meta['ttlSeconds'] ?? self::DEFAULT_TTL_SECONDS);
+        $ttl = max(60, min(90 * 24 * 3600, $ttl));
+        $runId = is_string($meta['runId'] ?? null) && $meta['runId'] !== '' ? substr($meta['runId'], 0, 36) : null;
+        return [
+            'kind' => $kind,
+            'mediaType' => $mediaType,
+            'filename' => $filename,
+            'ttlSeconds' => $ttl,
+            'runId' => $runId,
+        ];
+    }
+
     /** @param array<string,mixed> $meta @return array<string,mixed> */
     private function insert(
         string $userId,
@@ -280,28 +326,13 @@ class ArtifactService
         ?string $deviceId,
         array $meta
     ): array {
-        $kind = is_string($meta['kind'] ?? null) && in_array($meta['kind'], self::KINDS, true) ? $meta['kind'] : 'file';
-        $mediaType = is_string($meta['mediaType'] ?? null) && $meta['mediaType'] !== ''
-            ? substr($meta['mediaType'], 0, 190)
-            : 'application/octet-stream';
-        // ~ delimiters: a media type may legally contain '#', which would end a #-delimited pattern.
-        if (preg_match('~^[a-zA-Z0-9][\w!#$&^.+-]*/[a-zA-Z0-9][\w!#$&^.+-]*$~', $mediaType) !== 1) {
-            throw new \RuntimeException('artifact_invalid: mediaType is not a media type');
-        }
-        // A filename is DISPLAY only — it never contributes to the storage key, so a crafted
-        // name cannot escape the artifact directory. Stripped to a leaf regardless.
-        $filename = is_string($meta['filename'] ?? null) && $meta['filename'] !== ''
-            ? substr(basename(str_replace('\\', '/', $meta['filename'])), 0, 190)
-            : null;
-        $ttl = (int) ($meta['ttlSeconds'] ?? self::DEFAULT_TTL_SECONDS);
-        $ttl = max(60, min(90 * 24 * 3600, $ttl));
-        $runId = is_string($meta['runId'] ?? null) && $meta['runId'] !== '' ? substr($meta['runId'], 0, 36) : null;
+        $v = $this->validateMeta($meta);
 
         $this->mysql->prepare('
             INSERT INTO flow_artifacts
                 (id, user_id, run_id, kind, media_type, filename, byte_size, digest, locality, device_id, storage_key, created_at, expires_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL ? SECOND))
-        ')->execute([$id, $userId, $runId, $kind, $mediaType, $filename, $size, $digest, $locality, $deviceId, $storageKey, $ttl]);
+        ')->execute([$id, $userId, $v['runId'], $v['kind'], $v['mediaType'], $v['filename'], $size, $digest, $locality, $deviceId, $storageKey, $v['ttlSeconds']]);
 
         $row = $this->row($userId, $id);
         return $row === null ? [] : $this->toRef($row);
@@ -349,7 +380,7 @@ class ArtifactService
         // never be able to unlink outside the artifact tree.
         $realRoot = realpath($this->root);
         $realPath = realpath($path);
-        if ($realRoot !== false && $realPath !== false && str_starts_with($realPath, $realRoot) && is_file($realPath)) {
+        if ($realRoot !== false && $realPath !== false && str_starts_with($realPath, rtrim($realRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) && is_file($realPath)) {
             @unlink($realPath);
         }
     }

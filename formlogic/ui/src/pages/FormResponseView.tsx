@@ -35,7 +35,7 @@ import { cn, statusBadgeVariant, formatStatusLabel } from '../lib/utils';
 import { useAccountTimezone, formatDateTimeInZone } from '../lib/timezone';
 import { describeUserAgent, primaryLanguage } from '../lib/userAgent';
 import { useDecryptedResponses, useResetOnVaultGenerationChange, CORRUPT_ROW_CODE } from '../lib/crypto/useDecryptedResponses';
-import { sealResponseForUpdate } from '../lib/crypto/formCrypto';
+import { cacheCommittedResponse, sealResponseForUpdate } from '../lib/crypto/formCrypto';
 import type { Form } from '../types/form';
 
 interface RecordData {
@@ -57,10 +57,11 @@ interface RecordData {
 }
 
 /** A human title for the record: its first non-empty simple answer. */
-function recordTitle(form: Form | null, answers: Record<string, unknown>): string {
+function recordTitle(form: Form | null, answers: Record<string, unknown> | null | undefined): string {
+  const safeAnswers = answers && typeof answers === 'object' && !Array.isArray(answers) ? answers : {};
   for (const f of form?.fields ?? []) {
     if (!['short_text', 'email', 'phone', 'url', 'dropdown', 'number'].includes(f.type)) continue;
-    const v = answers[f.id];
+    const v = safeAnswers[f.id];
     if (v != null && v !== '' && typeof v !== 'object') return String(v);
   }
   return 'Record';
@@ -160,7 +161,8 @@ function FormResponseView() {
 
   const startEdit = useCallback(() => {
     if (!viewRecord) return;
-    setDraft({ ...viewRecord.answers });
+    const safeAnswers = viewRecord.answers && typeof viewRecord.answers === 'object' && !Array.isArray(viewRecord.answers) ? viewRecord.answers : {};
+    setDraft({ ...safeAnswers });
     setEditing(true);
   }, [viewRecord]);
 
@@ -171,11 +173,12 @@ function FormResponseView() {
       // PRIVATE record: re-seal the COMPLETE record (rev+1) with an expectedRev CAS.
       if (isPrivateRecord && decRow?._encrypted) {
         const expectedRev = decRow._rev ?? 1;
-        const { envelope } = await sealResponseForUpdate(formId, record.id, expectedRev, {
-          v: 1,
+        const inner = {
+          v: 1 as const,
           answers: draft,
           ...(decRow._encMeta ? { meta: decRow._encMeta } : {}),
-        });
+        };
+        const { envelope, generation } = await sealResponseForUpdate(formId, record.id, expectedRev, inner);
         const res = await api.updateEncryptedResponse(formId, record.id, envelope, expectedRev);
         if (!res.ok) {
           const body = (res.body ?? {}) as { code?: string; message?: string };
@@ -185,6 +188,7 @@ function FormResponseView() {
           );
           return;
         }
+        await cacheCommittedResponse(formId, envelope, inner, generation);
         // Swap the stored envelope so the record re-decrypts at the new rev.
         setRecord((prev) => (prev ? { ...prev, answers: envelope as unknown as Record<string, unknown> } : prev));
         setEditing(false);

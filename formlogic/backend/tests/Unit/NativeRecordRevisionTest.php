@@ -70,4 +70,39 @@ final class NativeRecordRevisionTest extends TestCase
         $db->exec("UPDATE members SET pin = '0000' WHERE id = 1");
         $this->assertNotSame($now, self::read($store)['revision']);
     }
+
+    public function testAKeyedBrowseStampIsNotAnUnkeyedHashAndDeleteManyRequiresIt(): void
+    {
+        $db = self::database();
+        $unkeyedStore = new NativeRecordStore($db);
+        $keyedStore = new NativeRecordStore($db, 'a secret of the installation');
+        $otherKeyStore = new NativeRecordStore($db, 'another secret');
+
+        $unkeyedPage = $unkeyedStore->browse('members');
+        $keyedPage = $keyedStore->browse('members');
+        $otherKeyPage = $otherKeyStore->browse('members');
+
+        $this->assertNotSame($unkeyedPage['stamps'][0], $keyedPage['stamps'][0]);
+        $this->assertNotSame($otherKeyPage['stamps'][0], $keyedPage['stamps'][0]);
+
+        // Unkeyed stamp must be refused by deleteMany on a keyed store.
+        try {
+            $keyedStore->operate([
+                'action' => 'deleteMany',
+                'table' => 'members',
+                'rows' => [['key' => ['id' => '1'], 'stamp' => $unkeyedPage['stamps'][0]]],
+            ]);
+            $this->fail('deleteMany accepted an unkeyed stamp');
+        } catch (\RuntimeException $e) {
+            $this->assertSame(409, $e->getCode());
+        }
+
+        // Valid keyed stamp succeeds.
+        $deleted = $keyedStore->operate([
+            'action' => 'deleteMany',
+            'table' => 'members',
+            'rows' => [['key' => ['id' => '1'], 'stamp' => $keyedPage['stamps'][0]]],
+        ]);
+        $this->assertSame(['saved' => true, 'deleted' => 1], $deleted);
+    }
 }

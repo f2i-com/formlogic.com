@@ -36,7 +36,7 @@ class PackController
     /** Workspace policy: only positively-verified (signed) application packages may be imported. */
     private function requireVerifiedPackages(): bool
     {
-        return (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true');
+        return filter_var(\FormLogic\Support\Environment::get('REQUIRE_VERIFIED_PACKAGES', 'false'), FILTER_VALIDATE_BOOLEAN);
     }
 
     /**

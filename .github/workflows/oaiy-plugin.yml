@@ -28,6 +28,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -38,10 +40,16 @@ jobs:
       - name: Rust toolchain
         id: rust
         working-directory: formlogic/oaiy-plugin
+        env:
+          PLATFORM: ${{ inputs.platform }}
         run: |
+          case "$PLATFORM" in
+            windows-x64|macos) ;;
+            *) echo "Unsupported platform: $PLATFORM" >&2; exit 1 ;;
+          esac
           rustup show active-toolchain
           lock="$(sha256sum Cargo.lock 2>/dev/null || shasum -a 256 Cargo.lock)"
-          echo "cache-key=oaiy-plugin-${{ inputs.platform }}-${lock%% *}" >> "$GITHUB_OUTPUT"
+          echo "cache-key=oaiy-plugin-${PLATFORM}-${lock%% *}" >> "$GITHUB_OUTPUT"
 
       - name: Cargo dependency cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -79,7 +87,14 @@ jobs:
           echo "PROGRAM=formlogic/oaiy-plugin/target/release-universal" >> "$GITHUB_ENV"
 
       - name: Package
-        run: node scripts/package-oaiy-plugin.mjs --platform "${{ inputs.platform }}" --binary "$PROGRAM"
+        env:
+          PLATFORM: ${{ inputs.platform }}
+        run: |
+          case "$PLATFORM" in
+            windows-x64|macos) ;;
+            *) echo "Unsupported platform: $PLATFORM" >&2; exit 1 ;;
+          esac
+          node scripts/package-oaiy-plugin.mjs --platform "$PLATFORM" --binary "$PROGRAM"
 
       - name: Upload the zip
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

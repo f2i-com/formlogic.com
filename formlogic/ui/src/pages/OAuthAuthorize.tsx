@@ -48,7 +48,8 @@ export function OAuthAuthorize() {
   const fetchApps = useAppStore((s) => s.fetchApps);
 
   // The raw OAuth query params, verbatim — the server does ALL validation.
-  const params = useMemo(() => Object.fromEntries(searchParams.entries()), [searchParams]);
+  const searchKey = searchParams.toString();
+  const params = useMemo(() => Object.fromEntries(new URLSearchParams(searchKey).entries()), [searchKey]);
   const missingClientId = !params.client_id;
 
   const [info, setInfo] = useState<OAuthAuthorizeInfo | null>(null);
@@ -58,7 +59,8 @@ export function OAuthAuthorize() {
   const [approving, setApproving] = useState(false);
   const [approveError, setApproveError] = useState<string | null>(null);
   const [denied, setDenied] = useState(false);
-  const requested = useRef(false);
+  const requestedKey = useRef<string | null>(null);
+  const requestSeq = useRef(0);
 
   // Signed-out: send to the login flow with a return-to back to THIS full URL (the same
   // same-origin ?redirect= mechanism AcceptInvite uses; Login validates + navigates to it).
@@ -71,21 +73,66 @@ export function OAuthAuthorize() {
     navigate(`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`, { replace: true });
   }, [user, missingClientId, navigate, location.pathname, location.search]);
 
-  // Signed-in: validate the request server-side (once).
+  // Signed-in: validate the request server-side (once per user + query string).
   useEffect(() => {
-    if (!user || missingClientId || requested.current) return;
-    requested.current = true;
+    if (!user || missingClientId) {
+      requestedKey.current = null;
+      return;
+    }
+    const key = `${user.id}:${searchKey}`;
+    if (requestedKey.current === key) return;
+    requestedKey.current = key;
+    const seq = ++requestSeq.current;
+    setInfo(null);
+    setOauthError(null);
+    setNetworkError(null);
+    setApproveError(null);
+    setDenied(false);
+    setAppId('');
     api.getOAuthAuthorizeInfo(params).then((r) => {
+      if (seq !== requestSeq.current) return;
       if (r.data) setInfo(r.data);
       else if (r.oauthError) setOauthError(r.oauthError);
       else setNetworkError(r.networkError || 'Could not reach the server.');
     });
-  }, [user, missingClientId, params]);
+  }, [user, missingClientId, searchKey, params]);
 
   // Load the user's apps for the optional "limit to one app" picker.
   useEffect(() => {
-    if (user && info) void fetchApps();
+    if (user && info && !user.isDemo) void fetchApps();
   }, [user, info, fetchApps]);
+
+  const isSafeRedirectUrl = (raw: string): string | null => {
+    try {
+      const u = new URL(raw);
+      if (u.hash !== '') return null;
+      const proto = u.protocol.toLowerCase();
+      if (
+        proto === 'javascript:' ||
+        proto === 'data:' ||
+        proto === 'vbscript:' ||
+        proto === 'file:' ||
+        proto === 'blob:' ||
+        proto === 'about:' ||
+        proto === 'filesystem:' ||
+        proto === 'chrome:' ||
+        proto === 'chrome-extension:' ||
+        proto === 'edge:' ||
+        proto === 'moz-extension:'
+      ) {
+        return null;
+      }
+      if (!/^[a-z][a-z0-9+.-]*:$/.test(proto)) return null;
+      if (proto === 'https:' || proto === 'http:') {
+        if (!u.hostname) return null;
+      } else if (!u.host && !u.pathname) {
+        return null;
+      }
+      return u.toString();
+    } catch {
+      return null;
+    }
+  };
 
   const approve = async () => {
     if (info?.appBindingRequired && !appId) {
@@ -96,9 +143,10 @@ export function OAuthAuthorize() {
     setApproveError(null);
     const effectiveAppId = (info?.isDesktopLink || info?.isBackupLink) ? undefined : (appId || undefined);
     const r = await api.approveOAuth(params, effectiveAppId);
-    if (r.data?.redirectTo) {
+    const safeRedirect = r.data?.redirectTo ? isSafeRedirectUrl(r.data.redirectTo) : null;
+    if (safeRedirect) {
       // Keep the button in its loading state while the browser navigates away.
-      window.location.assign(r.data.redirectTo);
+      window.location.assign(safeRedirect);
       return;
     }
     setApproving(false);
@@ -106,23 +154,28 @@ export function OAuthAuthorize() {
   };
 
   const deny = () => {
-    // Redirect with access_denied ONLY when the server validated redirect_uri (info present);
-    // otherwise just tell the user they can close the window.
+    // Redirect with access_denied ONLY when the server validated redirect_uri (info present)
+    // and the URL uses a safe http/https or RFC 8252 native custom scheme; otherwise show close message.
     if (info && params.redirect_uri) {
-      try {
-        const u = new URL(params.redirect_uri);
-        u.searchParams.set('error', 'access_denied');
-        if (params.state) u.searchParams.set('state', params.state);
-        window.location.assign(u.toString());
-        return;
-      } catch { /* malformed URI — fall through to the static message */ }
+      const validated = isSafeRedirectUrl(params.redirect_uri);
+      if (validated) {
+        try {
+          const u = new URL(validated);
+          u.searchParams.set('error', 'access_denied');
+          if (params.state) u.searchParams.set('state', params.state);
+          window.location.assign(u.toString());
+          return;
+        } catch { /* malformed URI — fall through to the static message */ }
+      }
     }
     setDenied(true);
   };
 
   const retry = () => {
+    const seq = ++requestSeq.current;
     setNetworkError(null);
     api.getOAuthAuthorizeInfo(params).then((r) => {
+      if (seq !== requestSeq.current) return;
       if (r.data) setInfo(r.data);
       else if (r.oauthError) setOauthError(r.oauthError);
       else setNetworkError(r.networkError || 'Could not reach the server.');
@@ -244,8 +297,36 @@ export function OAuthAuthorize() {
           </p>
         )}
 
+        {user.isDemo && (
+          <div className="mt-4 rounded-xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-200">
+            {info.isDesktopLink || info.isBackupLink || info.isAokieCompanionLink ? (
+              <>
+                This client cannot link to the shared demo account.{' '}
+                <Link
+                  to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`}
+                  className="font-semibold underline hover:no-underline"
+                >
+                  Sign in to your account
+                </Link>{' '}
+                to continue.
+              </>
+            ) : (
+              <>
+                You are in the shared demo account, which grants <strong>read-only</strong> MCP access.{' '}
+                <Link
+                  to={`/login?redirect=${encodeURIComponent(location.pathname + location.search)}`}
+                  className="font-semibold underline hover:no-underline"
+                >
+                  Sign in to your account
+                </Link>{' '}
+                to connect your own workspace.
+              </>
+            )}
+          </div>
+        )}
+
         {/* Desktop and backup links cover the whole account — the server refuses app narrowing on them. */}
-        {!info.isBackupLink && !info.isDesktopLink && (apps.length > 0 || info.appBindingRequired) && (
+        {!user.isDemo && !info.isBackupLink && !info.isDesktopLink && (apps.length > 0 || info.appBindingRequired) && (
           <div className="mt-5">
             <label htmlFor="oauth-app-limit" className="block text-xs font-medium text-gray-500 dark:text-slate-400 mb-1.5">
               {info.appBindingRequired ? (
@@ -281,7 +362,16 @@ export function OAuthAuthorize() {
         )}
 
         <div className="flex flex-col gap-2 mt-6">
-          <Button onClick={approve} isLoading={approving} disabled={Boolean(info.appBindingRequired && !appId)}>Approve access</Button>
+          <Button
+            onClick={approve}
+            isLoading={approving}
+            disabled={Boolean(
+              (info.appBindingRequired && !appId) ||
+              (user.isDemo && (info.isDesktopLink || info.isBackupLink || info.isAokieCompanionLink))
+            )}
+          >
+            Approve access
+          </Button>
           <Button variant="outline" onClick={deny} disabled={approving}>Deny</Button>
         </div>
 

@@ -225,7 +225,8 @@
         return answered({ status: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Upload requires FormData with a file or JSON { filename, contentBase64 }.' }) });
       }
       const data = await ask('upload', { filename, mimeType, contentBase64, folder });
-      return answered({ status: data && data.status ? data.status : 201, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+      const uploadStatus = data && typeof data.status === 'number' && data.status >= 100 && data.status <= 599 ? data.status : 201;
+      return answered({ status: uploadStatus, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
     }
     const delMatch = cleanPath.match(/^\/api\/_uploads\/([a-zA-Z0-9_-]{4,64})$/);
     if (delMatch && upper === 'DELETE') {
@@ -248,7 +249,17 @@
     }
     const method = (init && init.method) || (request && request.method) || 'GET';
     if (path === '/api/_uploads' || path.startsWith('/api/_uploads?') || path.startsWith('/api/_uploads/')) {
-      const uploadBody = init && 'body' in init ? init.body : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : null;
+      let uploadBody = null;
+      if (init && 'body' in init) {
+        uploadBody = init.body;
+      } else if (request && method !== 'GET' && method !== 'HEAD') {
+        const ct = (request.headers.get('content-type') || '').toLowerCase();
+        if (ct.includes('multipart/form-data') && typeof request.formData === 'function') {
+          uploadBody = await request.clone().formData();
+        } else {
+          uploadBody = await request.clone().text();
+        }
+      }
       try {
         const uploadResp = await handleUploadRoute(method, path, uploadBody);
         if (uploadResp) return uploadResp;

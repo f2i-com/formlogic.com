@@ -1,8 +1,7 @@
-import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, dirname, resolve, relative, isAbsolute } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SHARED_RUNNER = join(__dirname, 'shared-native-runner.mjs');
@@ -29,15 +28,26 @@ function escapeAttr(value) {
 
 function safeCss(css) {
   if (typeof css !== 'string') return '';
-  return css
-    .replace(/<\/style/gi, '')
-    .replace(/@import\b[^;]*;?/gi, '')
-    .replace(/expression\s*\(/gi, 'invalid(')
-    .replace(/url\s*\(\s*["']?\s*(?:javascript|vbscript):/gi, 'url(invalid:');
+  let out = css;
+  for (let i = 0; i < 8; i++) {
+    const prev = out;
+    out = out
+      .replace(/\/\*[\s\S]*?(?:\*\/|$)/g, ' ')
+      .replace(/<\/?\s*style/gi, ' ')
+      .replace(/@import\b[^;]*;?/gi, ' ')
+      .replace(/expression\s*\(/gi, 'invalid(')
+      .replace(/url\s*\(\s*["']?\s*(?:javascript|vbscript):/gi, 'url(invalid:');
+    if (out === prev) break;
+  }
+  return out;
 }
 
-function readSafeFile(appDir, relPath) {
-  if (typeof relPath !== 'string' || relPath === '' || relPath.includes('..') || relPath.startsWith('/')) {
+const MAX_AST_DEPTH = 64;
+const SAFE_IMG_SRC_RE = /^(?:data:image\/(?:png|jpe?g|gif|webp|avif);base64,[A-Za-z0-9+/=\s]+|assets\/[^\s"'<>]+)$/i;
+const SAFE_HREF_RE = /^(?:https?:\/\/|#)/i;
+
+function readSafeFile(appDir, relPath, allowManifest = false) {
+  if (typeof relPath !== 'string' || relPath === '' || relPath.includes('\0') || relPath.includes('..') || relPath.startsWith('/') || relPath.startsWith('\\')) {
     return null;
   }
   const full = resolve(appDir, relPath);
@@ -45,6 +55,15 @@ function readSafeFile(appDir, relPath) {
   const realApp = realpathSync(appDir);
   const realFull = realpathSync(full);
   if (!contained(realApp, realFull)) return null;
+  const normRel = relative(realApp, realFull).replaceAll('\\', '/');
+  if (!allowManifest && /^(?:server|backend|private)(?:\/|$)/i.test(normRel)) {
+    return null;
+  }
+  try {
+    if (!statSync(realFull).isFile()) return null;
+  } catch {
+    return null;
+  }
   return readFileSync(realFull, 'utf8');
 }
 
@@ -138,37 +157,113 @@ function rewriteTopLevelDecls(code) {
   return out;
 }
 
+const ALLOWED_SANDBOX_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+const BLOCKED_SANDBOX_HEADERS = new Set([
+  'host', 'cookie', 'authorization', 'origin', 'referer', 'forwarded',
+  'x-real-ip', 'x-original-url', 'x-rewrite-url', 'x-http-method-override', 'x-method-override',
+]);
+
 function normalizeApiPath(rawUrl) {
   if (typeof rawUrl !== 'string') return null;
   const trimmed = rawUrl.trim();
-  if (trimmed.startsWith('/api/')) return trimmed;
-  if (trimmed.startsWith('api/')) return '/' + trimmed;
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.pathname.startsWith('/api/')) {
-      return parsed.pathname + parsed.search;
+  let candidate = null;
+  if (trimmed.startsWith('/api/')) candidate = trimmed;
+  else if (trimmed.startsWith('api/')) candidate = '/' + trimmed;
+  else {
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname.startsWith('/api/')) {
+        candidate = parsed.pathname + parsed.search;
+      }
+    } catch {
+      return null;
     }
+  }
+  if (!candidate) return null;
+  const hashIdx = candidate.indexOf('#');
+  if (hashIdx !== -1) candidate = candidate.slice(0, hashIdx);
+  const qIdx = candidate.indexOf('?');
+  const rawPath = qIdx === -1 ? candidate : candidate.slice(0, qIdx);
+  const rawQuery = qIdx === -1 ? '' : candidate.slice(qIdx + 1);
+  let decodedPath;
+  try {
+    decodedPath = decodeURIComponent(rawPath);
   } catch {
     return null;
   }
-  return null;
+  if (
+    rawPath.length > 2048 ||
+    decodedPath.length > 2048 ||
+    !rawPath.startsWith('/api/') ||
+    !decodedPath.startsWith('/api/') ||
+    rawPath.includes('\\') ||
+    decodedPath.includes('\\') ||
+    rawPath.includes('//') ||
+    decodedPath.includes('//') ||
+    rawPath.includes(';') ||
+    decodedPath.includes(';') ||
+    /%(?:2e|2f|5c|00|25|3f|23|3b)/i.test(rawPath) ||
+    /%[0-9a-f]{2}/i.test(decodedPath) ||
+    /(?:^|\/)\.\.?(?:\/|$)/.test(rawPath) ||
+    /(?:^|\/)\.\.?(?:\/|$)/.test(decodedPath) ||
+    /[\x00-\x1f\x7f]/.test(rawPath) ||
+    /[\x00-\x1f\x7f]/.test(decodedPath)
+  ) {
+    return null;
+  }
+  if (decodedPath.toLowerCase().startsWith('/api/site/') || decodedPath.toLowerCase() === '/api/site') {
+    return null;
+  }
+  return { pathPart: decodedPath, queryPart: rawQuery };
 }
 
 function invokeSandboxBackend(rootDir, dataDir, runtimeDir, manifest, rawUrl, options) {
-  const apiPathWithQuery = normalizeApiPath(rawUrl);
-  if (!apiPathWithQuery) {
-    return { ok: false, status: 403, body: { error: 'External requests are blocked in the marketplace sandbox.' } };
+  const normalized = normalizeApiPath(rawUrl);
+  if (!normalized) {
+    return { ok: false, status: 403, body: { error: 'External or restricted requests are blocked in the marketplace sandbox.' } };
   }
-  const [pathPart, queryPart] = apiPathWithQuery.split('?', 2);
-  const query = {};
+  const { pathPart, queryPart } = normalized;
+  const query = Object.create(null);
   if (queryPart) {
     const sp = new URLSearchParams(queryPart);
-    for (const [k, v] of sp.entries()) query[k] = v;
+    let qCount = 0;
+    for (const [k, v] of sp.entries()) {
+      if (qCount >= 64) break;
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      query[k] = v;
+      qCount++;
+    }
   }
   const method = String(options?.method || 'GET').toUpperCase();
+  if (!ALLOWED_SANDBOX_METHODS.has(method)) {
+    return { ok: false, status: 405, body: { error: 'HTTP method not allowed in marketplace sandbox.' } };
+  }
   let body = options?.body ?? {};
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch { body = { raw: body }; }
+  }
+  const safeHeaders = Object.create(null);
+  if (options?.headers && typeof options.headers === 'object' && !Array.isArray(options.headers)) {
+    let hCount = 0;
+    for (const [k, v] of Object.entries(options.headers)) {
+      if (hCount >= 32) break;
+      const lk = String(k).trim().toLowerCase();
+      if (
+        !lk ||
+        lk.length > 64 ||
+        !/^[a-z0-9-]+$/.test(lk) ||
+        BLOCKED_SANDBOX_HEADERS.has(lk) ||
+        lk.startsWith('x-formlogic-') ||
+        lk.startsWith('x-forwarded-') ||
+        lk.startsWith('proxy-')
+      ) {
+        continue;
+      }
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        safeHeaders[lk] = String(v).replace(/[\r\n\0]+/g, '').slice(0, 2048);
+        hCount++;
+      }
+    }
   }
   const isContainer = manifest && typeof manifest.backend === 'object' && manifest.backend !== null && !Array.isArray(manifest.backend);
   const payload = isContainer
@@ -184,7 +279,7 @@ function invokeSandboxBackend(rootDir, dataDir, runtimeDir, manifest, rawUrl, op
         path: pathPart,
         query,
         body: body && typeof body === 'object' ? body : {},
-        headers: options?.headers && typeof options.headers === 'object' ? options.headers : {},
+        headers: safeHeaders,
         client_ip: '127.0.0.1',
         photos: false,
       };
@@ -196,6 +291,7 @@ function invokeSandboxBackend(rootDir, dataDir, runtimeDir, manifest, rawUrl, op
     TEMP: process.env.TEMP || '',
     TMP: process.env.TMP || '',
     NODE_NO_WARNINGS: '1',
+    SOFTN_RUNNER_DEADLINE_MS: '7000',
     SOFTN_BACKEND_ROOT: rootDir,
     SOFTN_DATA_ROOT: dataDir,
     SOFTN_RUNTIME_DIR: runtimeDir,
@@ -382,7 +478,7 @@ function tokenizeUi(src) {
 
 function buildAst(tokens) {
   let idx = 0;
-  function parseNodes(stopTags = new Set()) {
+  function parseNodes(stopTags = new Set(), depth = 0) {
     const nodes = [];
     while (idx < tokens.length) {
       const tok = tokens[idx];
@@ -396,26 +492,28 @@ function buildAst(tokens) {
         if (raw.startsWith('#if ')) {
           idx++;
           const cond = raw.slice(4).trim();
-          const consequent = parseNodes(new Set(['__BLOCK_END__']));
+          const consequent = depth < MAX_AST_DEPTH ? parseNodes(new Set(['__BLOCK_END__']), depth + 1) : [];
           let alternate = [];
           if (idx < tokens.length && tokens[idx].type === 'block' && tokens[idx].raw === ':else') {
             idx++;
-            alternate = parseNodes(new Set(['__BLOCK_END__']));
+            alternate = depth < MAX_AST_DEPTH ? parseNodes(new Set(['__BLOCK_END__']), depth + 1) : [];
           }
           if (idx < tokens.length && tokens[idx].type === 'block' && tokens[idx].raw === '/if') {
             idx++;
           }
-          nodes.push({ type: 'if', cond, consequent, alternate });
+          if (depth < MAX_AST_DEPTH) {
+            nodes.push({ type: 'if', cond, consequent, alternate });
+          }
           continue;
         }
         if (raw.startsWith('#each ')) {
           idx++;
           const m = /^#each\s+(.+?)\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)(?:\s*,\s*([a-zA-Z_$][a-zA-Z0-9_$]*))?$/.exec(raw);
-          const body = parseNodes(new Set(['__BLOCK_END__']));
+          const body = depth < MAX_AST_DEPTH ? parseNodes(new Set(['__BLOCK_END__']), depth + 1) : [];
           if (idx < tokens.length && tokens[idx].type === 'block' && tokens[idx].raw === '/each') {
             idx++;
           }
-          if (m) {
+          if (m && depth < MAX_AST_DEPTH) {
             nodes.push({ type: 'each', listExpr: m[1].trim(), itemVar: m[2], indexVar: m[3] || null, body });
           }
           continue;
@@ -435,7 +533,7 @@ function buildAst(tokens) {
       }
       if (tok.type === 'open') {
         idx++;
-        const children = tok.selfClose ? [] : parseNodes(new Set([tok.tag]));
+        const children = tok.selfClose || depth >= MAX_AST_DEPTH ? [] : parseNodes(new Set([tok.tag]), depth + 1);
         nodes.push({ type: 'element', tag: tok.tag, attrs: tok.attrs, children });
         continue;
       }
@@ -446,14 +544,23 @@ function buildAst(tokens) {
   return parseNodes();
 }
 
-function evalExpr(context, expr, locals = {}) {
+const VALID_IDENT_RE = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+const SAFE_ALIGN_VALUES = new Set(['flex-start', 'start', 'center', 'flex-end', 'end', 'stretch', 'baseline']);
+const SAFE_JUSTIFY_VALUES = new Set(['flex-start', 'start', 'center', 'flex-end', 'end', 'space-between', 'space-around', 'space-evenly']);
+
+function evalExpr(engine, expr, locals = {}) {
   try {
-    const keys = Object.keys(locals);
-    if (keys.length === 0) {
-      return vm.runInContext(`(${expr})`, context, { timeout: 300 });
+    const cleanExpr = String(expr ?? '').trim();
+    if (cleanExpr === '' || cleanExpr.length > 8192) return '';
+    const keys = [];
+    const vals = [];
+    for (const [k, v] of Object.entries(locals || {})) {
+      if (VALID_IDENT_RE.test(k)) {
+        keys.push(k);
+        vals.push(v);
+      }
     }
-    const fn = vm.runInContext(`(function(${keys.join(',')}){ return (${expr}); })`, context, { timeout: 300 });
-    return fn(...keys.map(k => locals[k]));
+    return engine.callFunction('__flEvalExpr', [cleanExpr, keys, vals]);
   } catch {
     return '';
   }
@@ -577,36 +684,42 @@ function renderAst(ast, context, actionRegistry, inputRegistry) {
     const extraEventStr = evAttrs.length ? ' ' + evAttrs.join(' ') : '';
     const childrenHtml = renderNodes(node.children || [], locals);
 
-    const gapMap = { xs: '0.25rem', sm: '0.5rem', md: '0.85rem', lg: '1.25rem', xl: '1.75rem' };
-    const padMap = { none: '0', xs: '0.35rem', sm: '0.75rem', md: '1.15rem', lg: '1.65rem', xl: '2.25rem' };
-    const sizeMap = { sm: '560px', md: '780px', lg: '1040px', xl: '1240px', full: '100%' };
+    const gapMap = Object.assign(Object.create(null), { xs: '0.25rem', sm: '0.5rem', md: '0.85rem', lg: '1.25rem', xl: '1.75rem' });
+    const padMap = Object.assign(Object.create(null), { none: '0', xs: '0.35rem', sm: '0.75rem', md: '1.15rem', lg: '1.65rem', xl: '2.25rem' });
+    const sizeMap = Object.assign(Object.create(null), { sm: '560px', md: '780px', lg: '1040px', xl: '1240px', full: '100%' });
+    const lookup = (map, val, fallback) => {
+      const k = typeof val === 'string' ? val : '';
+      return Object.hasOwn(map, k) ? map[k] : fallback;
+    };
 
     switch (tag) {
       case 'App':
         return `<div class="fl-app">${childrenHtml}</div>`;
       case 'Container': {
-        const maxW = sizeMap[String(props.size || 'md')] || '780px';
+        const maxW = lookup(sizeMap, props.size || 'md', '780px');
         return `<div class="fl-container" style="max-width:${maxW}">${childrenHtml}</div>`;
       }
       case 'Stack': {
         const dir = props.direction === 'horizontal' ? 'row' : 'column';
-        const gap = gapMap[String(props.gap || 'md')] || '0.85rem';
-        const pad = props.padding ? (padMap[String(props.padding)] || '1rem') : '0';
-        const align = props.align ? `align-items:${escapeAttr(String(props.align))};` : '';
-        const justify = props.justify ? `justify-content:${escapeAttr(String(props.justify))};` : '';
+        const gap = lookup(gapMap, props.gap || 'md', '0.85rem');
+        const pad = props.padding ? lookup(padMap, props.padding, '1rem') : '0';
+        const rawAlign = typeof props.align === 'string' ? props.align.trim().toLowerCase() : '';
+        const rawJustify = typeof props.justify === 'string' ? props.justify.trim().toLowerCase() : '';
+        const align = SAFE_ALIGN_VALUES.has(rawAlign) ? `align-items:${rawAlign};` : '';
+        const justify = SAFE_JUSTIFY_VALUES.has(rawJustify) ? `justify-content:${rawJustify};` : '';
         return `<div class="fl-stack" style="flex-direction:${dir};gap:${gap};padding:${pad};${align}${justify}">${childrenHtml}</div>`;
       }
       case 'Row': {
-        const gap = gapMap[String(props.gap || 'md')] || '0.85rem';
+        const gap = lookup(gapMap, props.gap || 'md', '0.85rem');
         return `<div class="fl-row" style="gap:${gap}">${childrenHtml}</div>`;
       }
       case 'Column': {
-        const gap = gapMap[String(props.gap || 'md')] || '0.85rem';
+        const gap = lookup(gapMap, props.gap || 'md', '0.85rem');
         return `<div class="fl-col" style="gap:${gap}">${childrenHtml}</div>`;
       }
       case 'Grid': {
-        const cols = Math.max(1, Math.min(6, Number(props.columns || props.cols || 2) || 2));
-        const gap = gapMap[String(props.gap || 'md')] || '1rem';
+        const cols = Math.max(1, Math.min(6, Math.trunc(Number(props.columns || props.cols || 2)) || 2));
+        const gap = lookup(gapMap, props.gap || 'md', '1rem');
         return `<div class="fl-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr));gap:${gap}">${childrenHtml}</div>`;
       }
       case 'Card': {
@@ -614,7 +727,7 @@ function renderAst(ast, context, actionRegistry, inputRegistry) {
         return `<section class="fl-card"${extraEventStr}>${title}${childrenHtml}</section>`;
       }
       case 'Heading': {
-        const level = Math.max(1, Math.min(6, Number(props.level || 2) || 2));
+        const level = Math.max(1, Math.min(6, Math.trunc(Number(props.level || 2)) || 2));
         return `<h${level} class="fl-heading fl-h${level}">${childrenHtml}</h${level}>`;
       }
       case 'Text': {
@@ -653,7 +766,7 @@ function renderAst(ast, context, actionRegistry, inputRegistry) {
         const val = bindVar !== null ? evalExpr(context, bindVar, locals) : (props.value ?? '');
         const label = props.label ? `<label class="fl-label">${escapeHtml(props.label)}</label>` : '';
         const ph = props.placeholder ? ` placeholder="${escapeAttr(String(props.placeholder))}"` : '';
-        const rows = Math.max(2, Math.min(12, Number(props.rows || 3) || 3));
+        const rows = Math.max(2, Math.min(12, Math.trunc(Number(props.rows || 3)) || 3));
         return `<div class="fl-field">${label}<textarea class="fl-textarea" rows="${rows}"${ph}${bindAttr}${extraEventStr}>${escapeHtml(String(val ?? ''))}</textarea></div>`;
       }
       case 'Checkbox':
@@ -677,11 +790,11 @@ function renderAst(ast, context, actionRegistry, inputRegistry) {
       case 'Table':
         return `<div class="fl-table-wrap"><table class="fl-table">${childrenHtml}</table></div>`;
       case 'Link': {
-        const href = typeof props.href === 'string' && /^(?:https?:\/\/|#)/.test(props.href) ? props.href : '#';
+        const href = typeof props.href === 'string' && SAFE_HREF_RE.test(props.href) ? props.href : '#';
         return `<a class="fl-link" href="${escapeAttr(href)}" rel="noopener noreferrer"${extraEventStr}>${childrenHtml}</a>`;
       }
       case 'Image': {
-        const src = typeof props.src === 'string' && /^(?:data:image\/|assets\/)/.test(props.src) ? props.src : '';
+        const src = typeof props.src === 'string' && SAFE_IMG_SRC_RE.test(props.src) ? props.src : '';
         if (!src) return '';
         return `<img class="fl-img" src="${escapeAttr(src)}" alt="${escapeAttr(String(props.alt || ''))}" />`;
       }
@@ -694,15 +807,22 @@ function renderAst(ast, context, actionRegistry, inputRegistry) {
         for (const [k, v] of Object.entries(props)) {
           const lk = k.toLowerCase();
           if (lk.startsWith('on') || lk === 'srcdoc' || lk === 'style') continue;
-          if (lk === 'href' && typeof v === 'string' && !/^(?:https?:\/\/|#)/.test(v)) continue;
-          if (lk === 'src' && typeof v === 'string' && !/^(?:data:image\/|assets\/)/.test(v)) continue;
+          if (lk === 'href') {
+            if (typeof v !== 'string' || !SAFE_HREF_RE.test(v)) continue;
+          }
+          if (lk === 'src') {
+            if (typeof v !== 'string' || !SAFE_IMG_SRC_RE.test(v)) continue;
+          }
           if (['class', 'id', 'type', 'name', 'value', 'placeholder', 'title', 'role', 'aria-label', 'href', 'src', 'alt', 'rows', 'cols', 'disabled', 'checked', 'selected'].includes(lk)) {
             if (typeof v === 'boolean') {
               if (v) safeAttrs.push(lk);
-            } else if (v !== undefined && v !== null) {
+            } else if (typeof v === 'string' || typeof v === 'number') {
               safeAttrs.push(`${lk}="${escapeAttr(String(v))}"`);
             }
           }
+        }
+        if (lower === 'a') {
+          safeAttrs.push('rel="noopener noreferrer"');
         }
         const attrStr = safeAttrs.length ? ' ' + safeAttrs.join(' ') : '';
         if (['input', 'hr', 'br', 'img'].includes(lower)) {
@@ -767,7 +887,7 @@ async function main() {
   const input = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   const { rootDir, appDir, dataDir, runtimeDir, state: prevState, event } = input;
 
-  const manifestRaw = readSafeFile(appDir, 'manifest.json');
+  const manifestRaw = readSafeFile(appDir, 'manifest.json', true);
   if (!manifestRaw) throw new Error('manifest.json missing');
   const manifest = JSON.parse(manifestRaw);
   const mainFile = typeof manifest.main === 'string' ? manifest.main : 'ui/main.ui';
@@ -780,7 +900,7 @@ async function main() {
   const extraLogic = [];
   if (Array.isArray(manifest.files?.logic)) {
     for (const rel of manifest.files.logic) {
-      if (typeof rel === 'string' && !/^(?:server|backend|private)\//i.test(rel)) {
+      if (typeof rel === 'string') {
         const src = readSafeFile(appDir, rel);
         if (src !== null) extraLogic.push(src);
       }
@@ -791,7 +911,7 @@ async function main() {
     ...(Array.isArray(manifest.files?.css) ? manifest.files.css : []),
     ...(Array.isArray(manifest.files?.styles) ? manifest.files.styles : []),
   ]) {
-    if (typeof rel === 'string' && !/^(?:server|backend|private)\//i.test(rel)) {
+    if (typeof rel === 'string') {
       const src = readSafeFile(appDir, rel);
       if (src !== null) extraCss.push(src);
     }
@@ -801,152 +921,233 @@ async function main() {
   const varNames = collectTopLevelVars(combinedLogic);
 
   let backendCalls = 0;
-  const doBackendFetch = (url, opts, cb) => {
-    if (backendCalls >= MAX_BACKEND_CALLS) {
-      const lim = { ok: false, status: 429, body: { error: 'Too many sandbox backend calls in one turn' }, data: null };
-      if (typeof cb === 'function') cb(lim);
-      return Promise.resolve({ ...lim, json: async () => lim.body, text: async () => JSON.stringify(lim.body) });
-    }
-    backendCalls++;
-    const res = invokeSandboxBackend(rootDir, dataDir, runtimeDir, manifest, url, opts || {});
-    const wrapped = {
-      ok: res.ok,
-      status: res.status,
-      body: res.body,
-      data: res.body,
-      json: async () => res.body,
-      text: async () => (typeof res.body === 'string' ? res.body : JSON.stringify(res.body)),
-    };
-    if (typeof cb === 'function') {
-      try { cb(wrapped); } catch {}
-    }
-    return Promise.resolve(wrapped);
-  };
 
-  const sandbox = {
-    Math,
-    Date,
-    JSON,
-    Array,
-    Object,
-    String,
-    Number,
-    Boolean,
-    RegExp,
-    parseInt,
-    parseFloat,
-    isNaN,
-    isFinite,
-    encodeURIComponent,
-    decodeURIComponent,
-    console: { log() {}, warn() {}, error() {}, info() {} },
-    softn: {
-      net: { fetch: doBackendFetch },
-      api: { fetch: doBackendFetch },
-      time: { now: () => new Date().toISOString() },
-    },
-    api: { fetch: doBackendFetch },
-    fetch: (url, opts) => doBackendFetch(url, opts),
-  };
-
-  const context = vm.createContext(sandbox, { codeGeneration: { strings: false, wasm: false } });
-  if (combinedLogic.trim() !== '') {
-    vm.runInContext(combinedLogic, context, { timeout: 1200 });
+  // Execute all publisher `.ui`/`.logic` exclusively inside the bundled ZIPP WASM safe-sandbox
+  // (never Node's `node:vm`, which is not a security boundary and exposes host-realm constructors).
+  const wasmJsPath = join(runtimeDir, 'wasm', 'zipp_wasm.mjs');
+  const wasmBinPath = join(runtimeDir, 'wasm', 'zipp_wasm_bg.wasm');
+  if (!existsSync(wasmJsPath) || !existsSync(wasmBinPath)) {
+    throw new Error('WASM sandbox runtime missing');
+  }
+  const { initSync, Engine, zippProfile } = await import(pathToFileURL(wasmJsPath).href);
+  initSync({ module: readFileSync(wasmBinPath) });
+  if (!JSON.parse(zippProfile()).features.includes('safe-sandbox')) {
+    throw new Error('Sandbox profile missing');
   }
 
-  // Restore visitor's persisted session state variables
-  const hasSavedState = prevState && typeof prevState === 'object' && Object.keys(prevState).length > 0;
-  if (hasSavedState) {
-    for (const [k, v] of Object.entries(prevState)) {
-      if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k) && !['softn', 'api', 'fetch', 'console'].includes(k)) {
-        context[k] = v;
-      }
-    }
-  }
-
-  const ast = buildAst(tokenizeUi(markup));
-
-  // First pass builds the valid server-side action/input registries for the current view
-  const preActions = new Map();
-  const preInputs = new Map();
-  renderAst(ast, context, preActions, preInputs);
-
-  // Sync any browser form field inputs mapped exclusively through opaque server-issued input IDs
-  if (event && event.inputs && typeof event.inputs === 'object') {
-    for (const [inputId, val] of Object.entries(event.inputs)) {
-      const varName = preInputs.get(inputId);
-      if (varName && /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(varName)) {
-        context[varName] = val;
-      }
-    }
-  }
-
-  // Dispatch lifecycle or user interaction strictly via server-registered action ID
-  if (!hasSavedState && (!event || event.type === 'init')) {
-    for (const initFn of ['onMount', 'init', 'loadItems', 'load']) {
-      if (typeof context[initFn] === 'function') {
-        try {
-          const r = context[initFn]();
-          if (r && typeof r.then === 'function') await r;
-        } catch {}
-        break;
-      }
-    }
-  } else if (event && typeof event.actionId === 'string') {
-    const entry = preActions.get(event.actionId);
-    if (entry) {
-      const expr = entry.expr.trim();
-      const locals = entry.locals || {};
-      const keys = Object.keys(locals);
-      const valList = keys.map(k => locals[k]);
-      try {
-        let res;
-        if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(expr) && typeof context[expr] === 'function') {
-          res = context[expr]({ target: { value: event.value ?? '' }, value: event.value ?? '' });
-        } else {
-          const invoker = vm.runInContext(
-            `(function(${[...keys, '$event'].join(',')}){ return (${expr}); })`,
-            context,
-            { timeout: 1000 }
-          );
-          const evObj = { target: { value: event.value ?? '' }, value: event.value ?? '', preventDefault() {} };
-          res = invoker(...valList, evObj);
-          if (typeof res === 'function') {
-            res = res(evObj);
+  const engine = new Engine();
+  try {
+    engine.setInstructionBudget(5_000_000);
+    engine.setSyncHostCapabilities(['db.query']);
+    engine.setDbBridge({
+      query: (op, args) => {
+        if (op === 'time.now') {
+          return new Date().toISOString();
+        }
+        if (op === 'backend.fetch') {
+          const url = Array.isArray(args) ? String(args[0] ?? '') : '';
+          const opts = Array.isArray(args) && args[1] && typeof args[1] === 'object' ? args[1] : {};
+          if (backendCalls >= MAX_BACKEND_CALLS) {
+            return { ok: false, status: 429, body: { error: 'Too many sandbox backend calls in one turn' }, data: null };
           }
+          backendCalls++;
+          const res = invokeSandboxBackend(rootDir, dataDir, runtimeDir, manifest, url, opts);
+          return { ok: res.ok, status: res.status, body: res.body, data: res.body };
         }
-        if (res && typeof res.then === 'function') {
-          await res;
-        }
-      } catch {}
+        return { ok: false, status: 403, body: { error: 'Host operation denied' }, data: null };
+      },
+    });
+
+    const reservedGlobals = new Set([
+      'softn', 'api', 'fetch', 'console', 'db',
+      '__flWrapFetch', '__flDoFetch', '__flEvalExpr', '__flSetGlobal',
+      '__flRestoreState', '__flRunInit', '__flRunAction', '__flSnapshotState',
+    ]);
+    const guestShim = `
+var console = { log: function(){}, warn: function(){}, error: function(){}, info: function(){} };
+function __flWrapFetch(res) {
+  var body = res && typeof res === 'object' ? res.body : null;
+  return {
+    ok: !!(res && res.ok),
+    status: Number((res && res.status) || 500),
+    body: body,
+    data: body,
+    json: function() { return Promise.resolve(body); },
+    text: function() { return Promise.resolve(typeof body === 'string' ? body : JSON.stringify(body)); }
+  };
+}
+function __flDoFetch(url, opts, cb) {
+  var res = db.query('backend.fetch', [String(url || ''), opts && typeof opts === 'object' ? opts : {}]);
+  var wrapped = __flWrapFetch(res || { ok: false, status: 500, body: null });
+  if (typeof cb === 'function') {
+    try { cb(wrapped); } catch (_) {}
+  }
+  return Promise.resolve(wrapped);
+}
+var softn = {
+  net: { fetch: __flDoFetch },
+  api: { fetch: __flDoFetch },
+  time: { now: function() { return db.query('time.now', []); } }
+};
+var api = { fetch: __flDoFetch };
+function fetch(url, opts) { return __flDoFetch(url, opts); }
+function __flEvalExpr(expr, keys, vals) {
+  var kList = Array.isArray(keys) ? keys : [];
+  var vList = Array.isArray(vals) ? vals : [];
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(expr)) {
+    var idx = kList.indexOf(expr);
+    if (idx !== -1) return vList[idx];
+    return globalThis[expr];
+  }
+  var fn = Function.apply(null, kList.concat(['return (' + expr + ');']));
+  return fn.apply(null, vList);
+}
+function __flSetGlobal(name, val) {
+  globalThis[name] = val;
+}
+function __flRestoreState(entries) {
+  if (!Array.isArray(entries)) return;
+  for (var i = 0; i < entries.length; i++) {
+    var pair = entries[i];
+    if (Array.isArray(pair) && typeof pair[0] === 'string') {
+      globalThis[pair[0]] = pair[1];
     }
   }
-
-  // Render updated DOM after event mutation
-  const postActions = new Map();
-  const postInputs = new Map();
-  const html = renderAst(ast, context, postActions, postInputs);
-
-  // Snapshot serializable top-level state variables for the visitor's session
-  const nextState = {};
-  const stateKeys = new Set([...varNames, ...Object.keys(prevState || {})]);
-  for (const k of stateKeys) {
-    if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(k)) continue;
-    const val = context[k];
-    if (typeof val === 'function' || typeof val === 'symbol' || val === undefined) continue;
-    try {
-      nextState[k] = JSON.parse(JSON.stringify(val));
-    } catch {}
+}
+function __flRunInit() {
+  var names = ['onMount', 'init', 'loadItems', 'load'];
+  for (var i = 0; i < names.length; i++) {
+    var fn = globalThis[names[i]];
+    if (typeof fn === 'function') {
+      try { return fn(); } catch (_) { return null; }
+    }
   }
+  return null;
+}
+function __flRunAction(expr, keys, vals, evValue) {
+  var evObj = { target: { value: evValue }, value: evValue, preventDefault: function(){} };
+  if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(expr) && typeof globalThis[expr] === 'function') {
+    try { return globalThis[expr](evObj); } catch (_) { return null; }
+  }
+  var kList = Array.isArray(keys) ? keys : [];
+  var vList = Array.isArray(vals) ? vals : [];
+  try {
+    var fn = Function.apply(null, kList.concat(['$event', 'return (' + expr + ');']));
+    var res = fn.apply(null, vList.concat([evObj]));
+    if (typeof res === 'function') {
+      return res(evObj);
+    }
+    return res;
+  } catch (_) {
+    return null;
+  }
+}
+function __flSnapshotState(keys) {
+  var out = {};
+  if (!Array.isArray(keys)) return out;
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var v = globalThis[k];
+    if (typeof v === 'function' || typeof v === 'symbol' || v === undefined) continue;
+    try { out[k] = JSON.parse(JSON.stringify(v)); } catch (_) {}
+  }
+  return out;
+}
+`;
+    engine.initScript(guestShim + '\n' + combinedLogic);
 
-  const css = DEFAULT_CSS + '\n' + safeCss([...extraCss, ...styleBlocks].join('\n'));
-  process.stdout.write(JSON.stringify({
-    title: typeof manifest.name === 'string' ? manifest.name : 'Marketplace Sandbox',
-    html,
-    css,
-    state: nextState,
-    backendCalls,
-  }));
+    // Restore visitor's persisted session state variables
+    const hasSavedState = prevState && typeof prevState === 'object' && Object.keys(prevState).length > 0;
+    if (hasSavedState) {
+      const restoreEntries = [];
+      for (const [k, v] of Object.entries(prevState)) {
+        if (VALID_IDENT_RE.test(k) && !reservedGlobals.has(k)) {
+          restoreEntries.push([k, v]);
+        }
+      }
+      if (restoreEntries.length > 0) {
+        engine.callFunction('__flRestoreState', [restoreEntries]);
+      }
+    }
+
+    const ast = buildAst(tokenizeUi(markup));
+
+    // First pass builds the valid server-side action/input registries for the current view
+    const preActions = new Map();
+    const preInputs = new Map();
+    renderAst(ast, engine, preActions, preInputs);
+
+    // Sync any browser form field inputs mapped exclusively through opaque server-issued input IDs
+    if (event && event.inputs && typeof event.inputs === 'object' && !Array.isArray(event.inputs)) {
+      let appliedInputs = 0;
+      for (const [inputId, rawVal] of Object.entries(event.inputs)) {
+        if (appliedInputs >= 64) break;
+        if (inputId === '__proto__' || inputId === 'constructor' || inputId === 'prototype') continue;
+        const varName = preInputs.get(inputId);
+        if (!varName || !VALID_IDENT_RE.test(varName) || reservedGlobals.has(varName)) continue;
+        if (typeof rawVal === 'string') {
+          engine.callFunction('__flSetGlobal', [varName, rawVal.slice(0, 4096)]);
+          appliedInputs++;
+        } else if (typeof rawVal === 'boolean' || (typeof rawVal === 'number' && Number.isFinite(rawVal))) {
+          engine.callFunction('__flSetGlobal', [varName, rawVal]);
+          appliedInputs++;
+        }
+      }
+    }
+
+    // Dispatch lifecycle or user interaction strictly via server-registered action ID
+    if (!hasSavedState && (!event || event.type === 'init')) {
+      try {
+        await engine.callFunction('__flRunInit', []);
+      } catch {}
+    } else if (event && typeof event.actionId === 'string') {
+      const entry = preActions.get(event.actionId);
+      if (entry) {
+        const expr = entry.expr.trim();
+        if (expr !== '' && expr.length <= 8192) {
+          const locals = entry.locals || {};
+          const keys = [];
+          const valList = [];
+          for (const [k, v] of Object.entries(locals)) {
+            if (VALID_IDENT_RE.test(k)) {
+              keys.push(k);
+              valList.push(v);
+            }
+          }
+          try {
+            await engine.callFunction('__flRunAction', [expr, keys, valList, event.value ?? '']);
+          } catch {}
+        }
+      }
+    }
+
+    // Render updated DOM after event mutation
+    const postActions = new Map();
+    const postInputs = new Map();
+    const html = renderAst(ast, engine, postActions, postInputs);
+
+    // Snapshot serializable top-level state variables for the visitor's session
+    const stateKeys = [...new Set([...varNames, ...Object.keys(prevState || {})])]
+      .filter(k => VALID_IDENT_RE.test(k) && !reservedGlobals.has(k));
+    let nextState = {};
+    try {
+      const snap = engine.callFunction('__flSnapshotState', [stateKeys]);
+      if (snap && typeof snap === 'object' && !Array.isArray(snap)) {
+        nextState = snap;
+      }
+    } catch {}
+
+    const css = DEFAULT_CSS + '\n' + safeCss([...extraCss, ...styleBlocks].join('\n'));
+    process.stdout.write(JSON.stringify({
+      title: typeof manifest.name === 'string' ? manifest.name : 'Marketplace Sandbox',
+      html,
+      css,
+      state: nextState,
+      backendCalls,
+    }));
+  } finally {
+    try { engine.dispose(); } finally { engine.free(); }
+  }
 }
 
 main().catch(err => {

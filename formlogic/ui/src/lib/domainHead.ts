@@ -12,6 +12,16 @@
 // its app, restorePlatformHead() gives the site's own back, where nothing else has changed it since.
 import type { LaunchConfig, SoftnAccess } from './domainLaunchApi';
 
+/** True when `platformUrl` resolves to the exact same host (case-insensitive) as `host`. */
+export function isPlatformHostUrl(platformUrl: string | null | undefined, host: string): boolean {
+  if (!platformUrl) return false;
+  try {
+    return new URL(platformUrl).host.toLowerCase() === host.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export const SIGN_IN_PATHS = ['/login', '/signup'];
 export const PASSWORD_PATHS = ['/forgot-password', '/reset-password', '/accept-invite'];
 export const LEGAL_PATHS = ['/privacy', '/terms'];
@@ -41,7 +51,7 @@ export function showsAppAt({ config, softnAccess, host, pathname, origin }: {
   if ([...SIGN_IN_PATHS, ...PASSWORD_PATHS, ...LEGAL_PATHS].includes(path)) return false;
   if (signsInElsewhere && path === SIGN_IN_RETURN_PATH) return false;
   // FormLogic's own address, if an older version let an app connect to it.
-  if (config.platformUrl?.endsWith(`//${host}`)) return false;
+  if (isPlatformHostUrl(config.platformUrl, host)) return false;
   if (path.startsWith('/form/')) return false;
   return !(pathname === '/' && config.domain.mode !== 'runtime_direct');
 }

@@ -54,6 +54,8 @@ export interface SiteAppFrameProps {
   backendOrigins?: readonly string[];
   /** The signed-in person's id, or null. */
   userId: string | null;
+  /** True when the signed-in caller may send credentials on runtime upload calls (members or app owner). */
+  allowCredentialedUploads?: boolean;
   /** What the browser refused the app, or an error in it: for the app's owner to be shown. Each is told once. */
   onProblem?: (problem: SiteProblem) => void;
   /** Console debug/log lines emitted by the app for the owner's debug console. */
@@ -214,7 +216,7 @@ function resolveSiteEntryUrl(baseSiteUrl: string, entry: string, initialRoute?: 
   return encodedTarget ? `${siteRoot}${encodedTarget}${query}${hash}` : base;
 }
 
-export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins, userId, onProblem, onConsole, onLost, initialRoute, navigateTo, onRoute, look, className = '' }: SiteAppFrameProps) {
+export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins, userId, allowCredentialedUploads = false, onProblem, onConsole, onLost, initialRoute, navigateTo, onRoute, look, className = '' }: SiteAppFrameProps) {
   const { proof } = site;
   // The address comes under the API's own base, as every address this page is given does: joined
   // to wherever this installation's API is, which need not be where this page is.
@@ -230,7 +232,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
   const losses = useRef({ opened: '', count: 0, at: 0 });
   // Everything a frame is opened for. Any of it changing loads the app afresh in a new frame: a
   // new version has a new address, and a frame opened for one person is never answered as another.
-  const opened = JSON.stringify([slug, appId, userId, url, proof, generation]);
+  const opened = JSON.stringify([slug, appId, userId, allowCredentialedUploads, url, proof, generation]);
   const frameKey = `${opened}#${revival}`;
   const frame = useRef<HTMLIFrameElement>(null);
   const activeLine = useRef<Line | null>(null);
@@ -454,8 +456,9 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
           }
           const mimeType = typeof payload.mimeType === 'string' ? payload.mimeType.slice(0, 128) : undefined;
           const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
+          const anonymousUploads = userId === null && !allowCredentialedUploads;
           uploadsInFlight++;
-          void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, false, userId === null).then((res) => {
+          void api.uploadAppRuntimeFile(slug, { filename, contentBase64, mimeType, folder }, controller.signal, false, anonymousUploads).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
@@ -473,8 +476,9 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
             return;
           }
           const folder = typeof payload.folder === 'string' ? payload.folder.slice(0, 160) : undefined;
+          const anonymousUploads = userId === null && !allowCredentialedUploads;
           uploadOpsInFlight++;
-          void api.listAppRuntimeUploads(slug, folder, controller.signal, false, userId === null).then((res) => {
+          void api.listAppRuntimeUploads(slug, folder, controller.signal, false, anonymousUploads).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
@@ -493,8 +497,9 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
             answer(from, { id, ok: false, error: 'Too many upload requests in progress.' });
             return;
           }
+          const anonymousUploads = userId === null && !allowCredentialedUploads;
           uploadOpsInFlight++;
-          void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, false, userId === null).then((res) => {
+          void api.deleteAppRuntimeUpload(slug, uploadId, controller.signal, false, anonymousUploads).then((res) => {
             if (res.error) answer(from, { id, ok: false, error: res.error });
             else answer(from, { id, ok: true, value: res.data });
           }).catch((err: unknown) => {
@@ -618,7 +623,7 @@ export function SiteAppFrame({ slug, appId, name, version, site, backendOrigins,
       waiting.length = 0;
       if (line) hangUp(line);
     };
-  }, [slug, appId, userId, url, proof, generation, opened, frameKey]);
+  }, [slug, appId, userId, allowCredentialedUploads, url, proof, generation, opened, frameKey]);
 
   return (
     // White whatever this site's theme: a page that sets no background of its own is drawn on the

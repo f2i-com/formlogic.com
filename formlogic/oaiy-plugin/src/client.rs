@@ -172,6 +172,13 @@ pub fn sources(account: &Account) -> Result<Value, Refusal> {
     Ok(answer(sent)?.get("data").cloned().unwrap_or(Value::Null))
 }
 
+/// Server-issued staged backup id: strictly a single safe path segment.
+fn valid_backup_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
 /// Asks FormLogic to seal one app or form to `recipient`. Gives back its id and signed header.
 pub fn create(account: &Account, identity: &NodeIdentity, kind: &str, id: &str, recipient: &str) -> Result<(String, Value), Refusal> {
     let requested_at = now();
@@ -184,12 +191,19 @@ pub fn create(account: &Account, identity: &NodeIdentity, kind: &str, id: &str, 
     });
     let sent = agent(BUILD).post(&url(account, SOURCE_BACKUPS)).set("Authorization", &bearer(account)).send_json(body);
     let answered = answer(sent)?;
-    let backup_id = answered.pointer("/data/backupId").and_then(Value::as_str).ok_or_else(|| Refusal::Failed("FormLogic gave no backup.".to_string()))?;
+    let backup_id = answered
+        .pointer("/data/backupId")
+        .and_then(Value::as_str)
+        .filter(|id| valid_backup_id(id))
+        .ok_or_else(|| Refusal::Failed("FormLogic gave no valid backup id.".to_string()))?;
     Ok((backup_id.to_string(), answered.pointer("/data/header").cloned().unwrap_or(Value::Null)))
 }
 
 /// Streams a staged backup to `destination`, a new file.
 pub fn fetch(account: &Account, backup_id: &str, destination: &Path) -> Result<(), Refusal> {
+    if !valid_backup_id(backup_id) {
+        return Err(Refusal::Failed("FormLogic gave an invalid backup id.".to_string()));
+    }
     let sent = agent(TRANSFER).get(&url(account, &format!("{STAGED}/{backup_id}/payload"))).set("Authorization", &bearer(account)).call();
     let response = match sent {
         Ok(response) if (200..300).contains(&response.status()) => response,
@@ -206,6 +220,9 @@ pub fn fetch(account: &Account, backup_id: &str, destination: &Path) -> Result<(
 
 /// Tells FormLogic it can drop its staged copy. A failure is harmless: it goes within the hour.
 pub fn discard(account: &Account, backup_id: &str) {
+    if !valid_backup_id(backup_id) {
+        return;
+    }
     let _ = agent(QUICK).delete(&url(account, &format!("{STAGED}/{backup_id}"))).set("Authorization", &bearer(account)).call();
 }
 

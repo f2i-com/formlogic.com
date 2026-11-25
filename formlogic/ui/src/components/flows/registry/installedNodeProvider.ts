@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { FlowNodeDefinitionV1 } from '../../../application-package/packageV2';
 import { useInstalledNodeStore } from '../../../stores/installedNodeStore';
+import { subscribeSessionGeneration } from '../../../lib/sessionGeneration';
 import { NODE_CATEGORIES, type NodeCategory, type NodeHandleSpec, type NodePropertySpec, type NodeSpec } from '../editor/nodeCatalog';
 import { flowNodeRegistry } from './FlowNodeRegistry';
 import type { FlowNodeProvider } from './types';
@@ -212,3 +213,8 @@ export const installedNodeProvider: FlowNodeProvider = {
 
 // Register once at module load — the flow editor imports this module for its side effect.
 flowNodeRegistry.register(installedNodeProvider);
+
+// Clear adapted spec cache across session boundaries so prior account specs cannot linger in memory.
+subscribeSessionGeneration(() => {
+  specCache.clear();
+});

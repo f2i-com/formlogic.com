@@ -408,6 +408,43 @@ describe('TOFU pin store', () => {
     expect(retry.ok).toBe(true);
     expect(backend.fetchMock).toHaveBeenCalled();
   });
+
+  it('fails closed with e2e_pin_storage_unavailable when localStorage is unavailable or corrupted', async () => {
+    // Corrupted JSON in localStorage must NOT silently reset TOFU pins.
+    localStorage.setItem('formlogic-desktop-e2e-pins', '{not-json');
+    expect(() => readDesktopE2ePins()).toThrow();
+
+    mockTunnelBackend(DESKTOP, () => []);
+    const corruptedRes = await chatViaTunnel({
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      instanceId: INSTANCE,
+    });
+    expect(corruptedRes.ok).toBe(false);
+    if (!corruptedRes.ok) {
+      expect(corruptedRes.error.code).toBe('e2e_pin_storage_unavailable');
+    }
+
+    // Missing localStorage also fails closed.
+    delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
+    const missingRes = await chatViaTunnel({
+      providerId: 'openai-codex-agent',
+      messages: [{ role: 'user', content: 'hi' }],
+      instanceId: INSTANCE,
+    });
+    expect(missingRes.ok).toBe(false);
+    if (!missingRes.ok) {
+      expect(missingRes.error.code).toBe('e2e_pin_storage_unavailable');
+    }
+  });
+
+  it('zeroes session shared key on destroy() so subsequent decryptions fail', () => {
+    const session = TunnelSession.create(INSTANCE, DESKTOP.keyPair.publicKey);
+    const eph = bytesToBase64(session.ephemeralPublicKey);
+    const frame = decodeTunnelEnvelope(JSON.parse(DESKTOP.sealOutFrame(eph, { v: 1, type: 'delta', text: 'secret' }, 0)).envelope)!;
+    session.destroy();
+    expect(() => session.openIncoming(frame)).toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------

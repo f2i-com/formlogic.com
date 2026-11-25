@@ -67,8 +67,11 @@ export function validateManifestStructure(m: FormEncryptionManifest): void {
   if (spk.length !== 32) throw new ManifestError('manifest_invalid', 'signerPk must be 32 bytes');
   const sig = fromB64(m.sig);
   if (sig.length !== 64) throw new ManifestError('manifest_invalid', 'sig must be 64 bytes');
-  if (m.expiresAt !== null && new Date(m.expiresAt).getTime() <= Date.now()) {
-    throw new ManifestError('manifest_expired', 'the form encryption manifest has expired');
+  if (m.expiresAt !== null) {
+    const expiresMs = parseServerDate(m.expiresAt).getTime();
+    if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+      throw new ManifestError('manifest_expired', 'the form encryption manifest has expired');
+    }
   }
 }
 
@@ -133,7 +136,8 @@ export function manifestAcceptsEnvelope(
   if (key.state !== 'active' && key.state !== 'retiring') return false;
   if (key.state === 'retiring') {
     if (!key.acceptUntil) return false;
-    if (now >= parseServerDate(key.acceptUntil).getTime()) return false;
+    const acceptMs = parseServerDate(key.acceptUntil).getTime();
+    if (!Number.isFinite(acceptMs) || now >= acceptMs) return false;
   }
   return manifests.some(
     (m) => m.keyId === tuple.keyId

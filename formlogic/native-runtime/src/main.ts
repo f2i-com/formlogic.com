@@ -45,10 +45,17 @@ const LAST_BOOT_KEY = "fl.lastBootAt";
 // Matches DEEP_LINK_HOME in lib.rs: routes the runtime back to its placeholder.
 const HOME_SENTINEL = "\0home";
 
-/** Only http/https URLs are ever navigated to — never javascript:/file:/data:, which
- *  would execute in this privileged shell origin. */
+/** Only http/https URLs outside the bundled shell host are ever navigated to — never
+ *  javascript:/file:/data: or tauri.localhost, which would execute in the privileged shell origin. */
 function isOpenable(url: string): boolean {
-  return /^https?:\/\//i.test(url.trim());
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    const host = parsed.hostname.toLowerCase().replace(/\.+$/, "");
+    return host !== "tauri.localhost" && !host.endsWith(".tauri.localhost");
+  } catch {
+    return false;
+  }
 }
 
 /** Whether the runtime knows the server `url` is on, so the app may be remembered and

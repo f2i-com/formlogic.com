@@ -1556,7 +1556,30 @@ class CloudFlowRunner
         }
         $method = strtoupper(trim($this->interpolateTemplate(is_string($data['method'] ?? null) ? $data['method'] : 'GET', $ctx)));
         $path = trim($this->interpolateTemplate(is_string($data['path'] ?? null) ? $data['path'] : '', $ctx));
-        if ($path === '' || !str_starts_with($path, '/') || str_contains($path, '..') || str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) {
+        $decodedPath = rawurldecode($path);
+        if (
+            $path === ''
+            || !str_starts_with($path, '/')
+            || !str_starts_with($decodedPath, '/')
+            || strlen($path) > 2048
+            || strlen($decodedPath) > 2048
+            || str_contains($path, '\\')
+            || str_contains($decodedPath, '\\')
+            || str_contains($path, '//')
+            || str_contains($decodedPath, '//')
+            || strpbrk($path, '?#;') !== false
+            || strpbrk($decodedPath, '?#;') !== false
+            || preg_match('/%(?:2e|2f|5c|00|25|3f|23|3b)/i', $path) === 1
+            || preg_match('/%[0-9a-f]{2}/i', $decodedPath) === 1
+            || preg_match('#(?:^|/)\.\.?(?:/|$)#', $path) === 1
+            || preg_match('#(?:^|/)\.\.?(?:/|$)#', $decodedPath) === 1
+            || preg_match('/[\x00-\x1f\x7f]/', $path) === 1
+            || preg_match('/[\x00-\x1f\x7f]/', $decodedPath) === 1
+        ) {
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': invalid backend path '{$path}'", $node['id']);
+        }
+        $path = $decodedPath;
+        if (str_starts_with(strtolower($path), PluginService::SITE_ROUTE_PREFIX)) {
             throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': invalid backend path '{$path}'", $node['id']);
         }
         $query = array_key_exists('query', $data) ? $this->resolveDeep($data['query'], $scope) : [];

@@ -232,7 +232,7 @@ fn hex_encode(data: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    if !s.is_ascii() || !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len() / 2)
@@ -242,18 +242,16 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 
 const KEY_FILE: &str = "sync-queue.key";
 
-/// Write the queue key so that only its owner can read it from the moment the file exists:
-/// created with mode 0600 on unix, never written first and narrowed after. A file already
-/// there (a malformed key being replaced) is removed first, because a mode given when
-/// opening applies only to a file being created. On Windows the file takes the app data
-/// folder's permissions, which are the user's own.
+/// Write the queue key atomically so that only its owner can read it from the moment the file
+/// exists: created with mode 0600 on unix in a sibling temp file, fsynced, then renamed over
+/// `path`. On Windows the file takes the app data folder's permissions, which are the user's own.
 fn write_key_file(path: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
-    }
+    let mut rand = [0u8; 8];
+    getrandom::fill(&mut rand).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let mut tmp_name = path.as_os_str().to_owned();
+    tmp_name.push(format!(".tmp-{}", hex_encode(&rand)));
+    let tmp = PathBuf::from(tmp_name);
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -261,9 +259,42 @@ fn write_key_file(path: &Path, text: &str) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path)?;
-    file.write_all(text.as_bytes())?;
-    file.sync_all()
+    let write_res = (|| -> std::io::Result<()> {
+        let mut file = options.open(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    })();
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Collision-safe quarantine path `<path>.corrupt-<ts>[-N]` so repeated corruptions never
+/// overwrite an earlier preserved copy.
+fn aside_path(path: &Path, ts: u64) -> PathBuf {
+    let base = path.as_os_str();
+    let candidate = |suffix: String| {
+        let mut out = base.to_owned();
+        out.push(suffix);
+        PathBuf::from(out)
+    };
+    let first = candidate(format!(".corrupt-{ts}"));
+    if !first.exists() {
+        return first;
+    }
+    for n in 2..=1000u32 {
+        let next = candidate(format!(".corrupt-{ts}-{n}"));
+        if !next.exists() {
+            return next;
+        }
+    }
+    first
 }
 
 pub struct QueueCrypto {
@@ -279,25 +310,44 @@ impl QueueCrypto {
 
     /// Load (or mint) the per-install queue key from `<dir>/sync-queue.key`.
     /// `None` = no usable key — the queue then refuses to persist rather
-    /// than falling back to plaintext.
+    /// than falling back to plaintext or silently rotating an unread key file.
     pub fn open(dir: &Path) -> Option<Self> {
         let path = dir.join(KEY_FILE);
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Some(bytes) = hex_decode(text.trim()) {
-                if let Ok(key) = <[u8; 32]>::try_from(bytes.as_slice()) {
-                    return Some(Self::from_key(key));
+        match std::fs::read(&path) {
+            Ok(raw) => {
+                if let Ok(text) = std::str::from_utf8(&raw) {
+                    if let Some(bytes) = hex_decode(text.trim()) {
+                        if let Ok(mut key) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                            let crypto = Self::from_key(key);
+                            key.fill(0);
+                            return Some(crypto);
+                        }
+                    }
                 }
+                eprintln!("[formlogic] sync-queue.key is malformed — rotating it");
             }
-            eprintln!("[formlogic] sync-queue.key is malformed — rotating it");
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                // Transient I/O or permission error (e.g. AV scanner lock): fail closed
+                // instead of rotating the key and rendering existing encrypted items unreadable.
+                eprintln!("[formlogic] sync-queue.key could not be read ({e}) — refusing to rotate");
+                return None;
+            }
         }
         let mut key = [0u8; 32];
         getrandom::fill(&mut key).ok()?;
         let _ = std::fs::create_dir_all(dir);
-        if let Err(e) = write_key_file(&path, &hex_encode(&key)) {
-            eprintln!("[formlogic] sync-queue.key could not be written: {e}");
-            return None;
-        }
-        Some(Self::from_key(key))
+        let encoded = hex_encode(&key);
+        let write_res = write_key_file(&path, &encoded);
+        let crypto = match write_res {
+            Ok(()) => Some(Self::from_key(key)),
+            Err(e) => {
+                eprintln!("[formlogic] sync-queue.key could not be written: {e}");
+                None
+            }
+        };
+        key.fill(0);
+        crypto
     }
 
     fn seal(&self, plaintext: &[u8]) -> Option<String> {
@@ -330,6 +380,9 @@ pub struct PartitionedSyncQueue {
     /// `None` = key provisioning failed → every persist fails closed (the
     /// web layer then uses its browser queue).
     crypto: Option<QueueCrypto>,
+    /// `false` when an existing queue file could not be opened/quarantined at startup —
+    /// fail closed on every persist so we never overwrite unread queued submissions.
+    writable: bool,
     items: Mutex<Vec<SyncItem>>,
     /// Set when a corrupt queue file was quarantined at load — surfaced to
     /// the operator via the flush() result.
@@ -339,46 +392,72 @@ pub struct PartitionedSyncQueue {
 impl PartitionedSyncQueue {
     /// Load the queue: v2 sealed file → decrypt; legacy v1 plaintext array
     /// → migrate (re-persisted sealed on the next successful mutation);
-    /// anything unreadable → quarantine aside and start empty.
+    /// non-NotFound I/O error → fail closed (refuse to overwrite);
+    /// corrupt bytes → quarantine aside and start empty.
     pub fn load(path: PathBuf, key_dir: &Path) -> Self {
         let crypto = QueueCrypto::open(key_dir);
         let mut recovered = None;
-        let items: Vec<SyncItem> = match std::fs::read_to_string(&path) {
-            Err(_) => Vec::new(), // missing = first run
-            Ok(text) => {
-                let parsed: Option<Vec<SyncItem>> = (|| {
-                    let v: Value = serde_json::from_str(&text).ok()?;
-                    if v.get("v").and_then(Value::as_u64) == Some(2) {
-                        let sealed = v.get("sealed")?.as_str()?;
-                        let pt = crypto.as_ref()?.open_sealed(sealed)?;
-                        serde_json::from_slice(&pt).ok()
-                    } else if v.is_array() {
-                        // Legacy v1 plaintext queue — adopt as-is; rows have
-                        // no partition and are adopted by slug on first use.
-                        serde_json::from_value(v).ok()
-                    } else {
-                        None
-                    }
-                })();
-                match parsed {
-                    Some(items) => items,
-                    None => {
-                        // Unreadable ≠ empty: quarantine the bytes for the
-                        // operator instead of silently discarding them.
-                        let ts = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        let mut q = path.as_os_str().to_owned();
-                        q.push(format!(".corrupt-{ts}"));
-                        let q = PathBuf::from(q);
-                        let note = match std::fs::rename(&path, &q) {
-                            Ok(()) => format!("corrupt queue quarantined to {}", q.display()),
-                            Err(e) => format!("corrupt queue could not be quarantined: {e}"),
-                        };
-                        eprintln!("[formlogic] {note}");
-                        recovered = Some(note);
-                        Vec::new()
+        let mut writable = true;
+        let items: Vec<SyncItem> = match std::fs::read(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(), // missing = first run
+            Err(e) => {
+                // Transient I/O / sharing / permission failure: DO NOT treat as empty and
+                // DO NOT overwrite on the next enqueue.
+                writable = false;
+                let note = format!("queue file could not be read at startup ({e}) — refusing to overwrite");
+                eprintln!("[formlogic] {note}");
+                recovered = Some(note);
+                Vec::new()
+            }
+            Ok(raw) => {
+                let parsed_json = std::str::from_utf8(&raw)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok());
+                // If the file is a valid v2 envelope but the key couldn't be loaded (e.g. transient
+                // key read failure), do NOT quarantine the encrypted queue — leave it intact and fail closed.
+                if crypto.is_none()
+                    && parsed_json
+                        .as_ref()
+                        .is_some_and(|v| v.get("v").and_then(Value::as_u64) == Some(2))
+                {
+                    writable = false;
+                    Vec::new()
+                } else {
+                    let parsed: Option<Vec<SyncItem>> = (|| {
+                        let v = parsed_json?;
+                        if v.get("v").and_then(Value::as_u64) == Some(2) {
+                            let sealed = v.get("sealed")?.as_str()?;
+                            let pt = crypto.as_ref()?.open_sealed(sealed)?;
+                            serde_json::from_slice(&pt).ok()
+                        } else if v.is_array() {
+                            // Legacy v1 plaintext queue — adopt as-is; rows have
+                            // no partition and are adopted by slug on first use.
+                            serde_json::from_value(v).ok()
+                        } else {
+                            None
+                        }
+                    })();
+                    match parsed {
+                        Some(items) => items,
+                        None => {
+                            // Unreadable/corrupt (including non-UTF-8 bytes): quarantine aside
+                            // using a collision-safe name instead of silently discarding them.
+                            let ts = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let q = aside_path(&path, ts);
+                            let note = match std::fs::rename(&path, &q) {
+                                Ok(()) => format!("corrupt queue quarantined to {}", q.display()),
+                                Err(e) => {
+                                    writable = false;
+                                    format!("corrupt queue could not be quarantined: {e}")
+                                }
+                            };
+                            eprintln!("[formlogic] {note}");
+                            recovered = Some(note);
+                            Vec::new()
+                        }
                     }
                 }
             }
@@ -386,6 +465,7 @@ impl PartitionedSyncQueue {
         let queue = PartitionedSyncQueue {
             path,
             crypto,
+            writable,
             items: Mutex::new(items),
             recovered_corruption: recovered,
         };
@@ -425,6 +505,7 @@ impl PartitionedSyncQueue {
         PartitionedSyncQueue {
             path,
             crypto: None,
+            writable: true,
             items: Mutex::new(Vec::new()),
             recovered_corruption: None,
         }
@@ -433,6 +514,9 @@ impl PartitionedSyncQueue {
     /// Seal + durably write the full item list (tmp + fsync + rename).
     /// An error means NOTHING was recorded — callers roll back memory.
     fn persist(&self, items: &[SyncItem]) -> Result<(), String> {
+        if !self.writable {
+            return Err("queue file could not be read at startup — refusing to overwrite it".into());
+        }
         let crypto = self
             .crypto
             .as_ref()
@@ -441,14 +525,31 @@ impl PartitionedSyncQueue {
             serde_json::to_vec(items).map_err(|e| format!("queue serialize failed: {e}"))?;
         let sealed = crypto.seal(&plaintext).ok_or("queue seal failed")?;
         let body = json!({ "v": 2, "sealed": sealed }).to_string();
-        let tmp = self.path.with_extension("json.tmp");
+        let mut rand = [0u8; 8];
+        getrandom::fill(&mut rand).map_err(|e| format!("queue temp name failed: {e}"))?;
+        let mut tmp_name = self.path.as_os_str().to_owned();
+        tmp_name.push(format!(".tmp-{}", hex_encode(&rand)));
+        let tmp = PathBuf::from(tmp_name);
         {
             use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts
+                .open(&tmp)
                 .map_err(|e| format!("queue write failed (create): {e}"))?;
-            f.write_all(body.as_bytes())
-                .map_err(|e| format!("queue write failed: {e}"))?;
-            f.sync_data().map_err(|e| format!("queue fsync failed: {e}"))?;
+            if let Err(e) = f.write_all(body.as_bytes()) {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("queue write failed: {e}"));
+            }
+            if let Err(e) = f.sync_data() {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!("queue fsync failed: {e}"));
+            }
         }
         std::fs::rename(&tmp, &self.path).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
@@ -713,12 +814,12 @@ mod tests {
         assert_eq!(flushed_b["pending"][0]["appSlug"], "beta");
 
         // …cannot ACK them (steal-complete)…
-        let res = q.ack(&b, &[id_a.clone()]).unwrap();
+        let res = q.ack(&b, std::slice::from_ref(&id_a)).unwrap();
         assert_eq!(res["acked"], 0);
         assert_eq!(q.get_queue(&a).len(), 1, "app A's item survives app B's ack");
 
         // …and cannot FAIL them (burn attempts / terminal-kill).
-        q.fail(&b, &[id_a.clone()], "sabotage", true).unwrap();
+        q.fail(&b, std::slice::from_ref(&id_a), "sabotage", true).unwrap();
         let a_items = q.get_queue(&a);
         assert_eq!(a_items[0].status, "pending");
         assert_eq!(a_items[0].attempts, 0);
@@ -786,7 +887,7 @@ mod tests {
         let p = part("https://x.example", "a", "app", "slug");
         let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
         let long = "é".repeat(1024 * 1024);
-        q.fail(&p, &[id.clone()], &long, false).unwrap();
+        q.fail(&p, std::slice::from_ref(&id), &long, false).unwrap();
         let kept = q.get_queue(&p)[0].last_error.clone().unwrap();
         assert!(kept.len() <= MAX_LAST_ERROR_BYTES, "kept {} bytes", kept.len());
         assert!(kept.starts_with("ééé"));
@@ -806,7 +907,7 @@ mod tests {
                 .enqueue(&p, &json!({ "formId": "f", "answers": {}, "attempts": claimed }))
                 .unwrap();
             // One more failure ends the item; it does not wrap round to a fresh one.
-            q.fail(&p, &[id.clone()], "boom", false).unwrap();
+            q.fail(&p, std::slice::from_ref(&id), "boom", false).unwrap();
             let item = q.get_queue(&p).into_iter().find(|i| i.id == id).unwrap();
             assert_eq!(item.status, "failed", "attempts claimed as {claimed}");
             assert!(item.attempts >= MAX_SYNC_ATTEMPTS, "attempts claimed as {claimed}");
@@ -907,10 +1008,10 @@ mod tests {
         let q = load(&dir);
         let p = part("https://x.example", "a", "app", "slug");
         let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
-        q.fail(&p, &[id.clone()], "boom", false).unwrap();
+        q.fail(&p, std::slice::from_ref(&id), "boom", false).unwrap();
         assert_eq!(q.get_queue(&p)[0].failed_at, 0, "still pending: no failure time");
         let before = now_secs();
-        q.fail(&p, &[id.clone()], "conflict", true).unwrap();
+        q.fail(&p, std::slice::from_ref(&id), "conflict", true).unwrap();
         let item = q.get_queue(&p).remove(0);
         assert_eq!(item.status, "failed");
         assert!(item.failed_at >= before, "stamped when it failed");
@@ -930,7 +1031,7 @@ mod tests {
         let waiting = q.enqueue(&p, &json!({ "formId": "f", "answers": { "v": 3 }, "createdAt": "2020-01-01T00:00:00Z" })).unwrap();
         let elsewhere = q.enqueue(&other, &json!({ "formId": "f", "answers": { "v": 4 } })).unwrap();
         q.fail(&p, &[old.clone(), young.clone()], "conflict", true).unwrap();
-        q.fail(&other, &[elsewhere.clone()], "conflict", true).unwrap();
+        q.fail(&other, std::slice::from_ref(&elsewhere), "conflict", true).unwrap();
         {
             let mut items = q.items.lock().unwrap();
             let now = now_secs();
@@ -995,7 +1096,7 @@ mod tests {
         let id = q
             .enqueue(&p, &json!({ "formId": "f", "idempotencyKey": "k1", "answers": { "v": 1 }, "createdAt": "2026-10-01T09:30:00Z" }))
             .unwrap();
-        q.fail(&p, &[id.clone()], "conflict", true).unwrap();
+        q.fail(&p, std::slice::from_ref(&id), "conflict", true).unwrap();
         let fresh = q
             .enqueue(&p, &json!({ "formId": "f", "idempotencyKey": "k1", "answers": { "v": 1 }, "attempts": 0, "createdAt": "2026-10-01T09:30:00Z" }))
             .unwrap();
@@ -1063,7 +1164,7 @@ mod tests {
         let p = part("https://x.example", "a", "app", "slug");
         let id = q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).unwrap();
         for _ in 0..7 {
-            q.fail(&p, &[id.clone()], "HTTP 500", false).unwrap();
+            q.fail(&p, std::slice::from_ref(&id), "HTTP 500", false).unwrap();
         }
         assert_eq!(q.get_queue(&p)[0].status, "pending", "seven failures leave it waiting");
         q.fail(&p, &[id], "HTTP 500", false).unwrap();
@@ -1122,20 +1223,44 @@ mod tests {
 
         // Retryable failures burn attempts; the cap promotes to terminal.
         for i in 1..MAX_SYNC_ATTEMPTS {
-            q.fail(&p, &[id.clone()], "boom", false).unwrap();
+            q.fail(&p, std::slice::from_ref(&id), "boom", false).unwrap();
             assert_eq!(q.get_queue(&p)[0].attempts, i);
             assert_eq!(q.get_queue(&p)[0].status, "pending");
         }
-        q.fail(&p, &[id.clone()], "boom", false).unwrap();
+        q.fail(&p, std::slice::from_ref(&id), "boom", false).unwrap();
         assert_eq!(q.get_queue(&p)[0].status, "failed");
         assert_eq!(q.flush(&p)["pending"].as_array().unwrap().len(), 0);
 
         // Terminal fail marks immediately.
         let id2 = q.enqueue(&p, &json!({ "formId": "f2", "answers": {} })).unwrap();
-        q.fail(&p, &[id2.clone()], "conflict", true).unwrap();
+        q.fail(&p, std::slice::from_ref(&id2), "conflict", true).unwrap();
         let it = q.get_queue(&p).into_iter().find(|i| i.id == id2).unwrap();
         assert_eq!(it.status, "failed");
         assert_eq!(it.attempts, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_utf8_corrupt_queue_is_quarantined_and_surfaced() {
+        let dir = tmp("non-utf8");
+        let path = dir.join("sync-queue.json");
+        std::fs::write(&path, [0xffu8, 0xfe, 0xfd, 0x00]).unwrap();
+        let q = PartitionedSyncQueue::load(path.clone(), &dir);
+        assert!(q.recovered_corruption.is_some(), "non-UTF-8 queue must be quarantined, not treated as missing");
+        assert!(!path.exists(), "corrupt file was renamed aside");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unreadable_queue_path_fails_closed_without_overwriting() {
+        let dir = tmp("unreadable-dir");
+        // Put a directory where sync-queue.json belongs so std::fs::read returns a non-NotFound error.
+        let path = dir.join("sync-queue.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let q = PartitionedSyncQueue::load(path.clone(), &dir);
+        let p = part("https://x.example", "a", "app", "slug");
+        assert!(q.enqueue(&p, &json!({ "formId": "f", "answers": {} })).is_err());
+        assert!(path.is_dir(), "unreadable path must never be overwritten or removed");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

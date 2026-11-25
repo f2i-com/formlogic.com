@@ -10,6 +10,7 @@
 // This is the analogue of desktopPairing.ts for OAIY. The token it stores via
 // setOaiyToken() is what oaiyRuntime.ts / desktopConnector.ts then use.
 import { getOaiyBaseUrl, setOaiyToken } from './oaiyRuntime';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../../lib/sessionGeneration';
 
 const POLL_INTERVAL_MS = 1500;
 /** A user who is going to approve does so within a couple of minutes; past this
@@ -60,7 +61,12 @@ export async function requestOaiyPairing(product: string, label?: string): Promi
  * setOaiyToken() and returned. A transport error resolves to `pending` (a blip
  * should not abandon the wait); a 404 resolves to `expired` (OAIY forgot it).
  */
-export async function pollOaiyPairing(pairingId: string): Promise<PairingResult> {
+export async function pollOaiyPairing(
+  pairingId: string,
+  opts: { signal?: AbortSignal; sessionGeneration?: number } = {},
+): Promise<PairingResult> {
+  const sessionGen = opts.sessionGeneration ?? currentSessionGeneration();
+  if (opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen)) return { state: 'expired' };
   let resp: Response;
   try {
     resp = await fetch(`${getOaiyBaseUrl()}/api/bridge/pairing/${encodeURIComponent(pairingId)}`, {
@@ -68,15 +74,18 @@ export async function pollOaiyPairing(pairingId: string): Promise<PairingResult>
       credentials: 'omit',
       cache: 'no-store',
       headers: { Accept: 'application/json' },
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
   } catch {
-    return { state: 'pending' };
+    return opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen) ? { state: 'expired' } : { state: 'pending' };
   }
+  if (opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen)) return { state: 'expired' };
   if (resp.status === 404) return { state: 'expired' };
   if (!resp.ok) return { state: 'pending' };
   const body = (await resp.json().catch(() => null)) as
     | { status?: PairingState; token?: string | null }
     | null;
+  if (opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen)) return { state: 'expired' };
   const state = (body?.status ?? 'pending') as PairingState;
   if (state === 'approved' && body?.token) {
     setOaiyToken(body.token);
@@ -106,13 +115,15 @@ export async function pairWithOaiy(
   label: string | undefined,
   opts: PairOptions = {},
 ): Promise<PairingResult> {
+  const sessionGen = currentSessionGeneration();
   const handle = await requestOaiyPairing(product, label);
+  if (opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen)) return { state: 'expired' };
   opts.onPending?.(handle);
 
   const deadline = Date.now() + (opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   for (;;) {
-    if (opts.signal?.aborted) return { state: 'expired' };
-    const res = await pollOaiyPairing(handle.pairingId);
+    if (opts.signal?.aborted || !isSessionGenerationCurrent(sessionGen)) return { state: 'expired' };
+    const res = await pollOaiyPairing(handle.pairingId, { signal: opts.signal, sessionGeneration: sessionGen });
     if (res.state === 'approved' || res.state === 'denied' || res.state === 'expired') {
       return res;
     }
@@ -122,8 +133,13 @@ export async function pairWithOaiy(
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+    const onAbort = () => { clearTimeout(t); resolve(); };
+    const t = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }

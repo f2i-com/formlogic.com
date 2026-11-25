@@ -432,15 +432,26 @@ class ConnectorCommandController
     /** GET /api/app/{slug}/connector-commands/{id} — member reads the outcome. */
     public function getCommand(Request $request, Response $response, array $args): Response
     {
-        [$app, , $error] = $this->resolveMember($request, $response, (string) ($args['slug'] ?? ''));
+        [$app, $userId, $error] = $this->resolveMember($request, $response, (string) ($args['slug'] ?? ''));
         if ($error) {
             return $error;
         }
-        // Commands are owned by the app owner (whose desktop services them); a member may read any
-        // command for THIS app.
+        // Commands are owned by the app owner (whose desktop services them); restrict reads to
+        // the app owner, the original requester, or a member holding the connector grant.
         $command = $this->commands->get((string) ($args['id'] ?? ''), $app['ownerId']);
         if (!$command || ($command['appId'] ?? null) !== $app['id']) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Command not found'], 404);
+        }
+        $isOwner = (string) ($app['ownerId'] ?? '') === $userId;
+        $isRequester = (string) ($command['requestedByUserId'] ?? '') === $userId;
+        $canRelay = $this->memberCanRelay(
+            (string) $app['id'],
+            (string) $userId,
+            (string) ($command['connectorId'] ?? ''),
+            (string) ($command['command'] ?? '')
+        );
+        if (!$isOwner && !$isRequester && !$canRelay) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
         // ROUTE-001: name the machine(s) involved so the UI can show "handled by
         // <device>" instead of an opaque instance id.

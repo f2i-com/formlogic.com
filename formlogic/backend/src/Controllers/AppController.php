@@ -170,17 +170,46 @@ class AppController
                 unset($data['settings'][$serverKey]);
             }
         }
-        if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null)) !== null) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        if (AdminActingLimits::acting($request)) {
+            if (($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null)) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+            }
+            if (($refusal = AdminActingLimits::appPublishRefusal($data['status'] ?? null, [], $data['settings'] ?? null)) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+            }
         }
         if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data)) !== null) {
             return $this->jsonResponse($response, $codeRefusal, 403);
         }
 
+        if (isset($data['customScreen'])) {
+            if (!is_array($data['customScreen'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be an object'], 400);
+            }
+            if (($data['customScreen']['kind'] ?? '') === 'dashboard' && is_array($data['customScreen']['dashboard'] ?? null) && $this->reportValidator !== null) {
+                $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboard($data['customScreen']['dashboard'], []);
+            }
+            $screenJson = json_encode($data['customScreen']);
+            if ($screenJson !== false && strlen($screenJson) > 2097152) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 2MB or smaller'], 400);
+            }
+        }
+
+        if (isset($data['customLogic'])) {
+            if (!is_array($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic must be an object'], 400);
+            }
+            try {
+                $data['customLogic'] = \FormLogic\Helpers\CustomLogicSanitizer::sanitize($data['customLogic']);
+            } catch (\InvalidArgumentException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
+            }
+            if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 400);
+            }
+        }
+
         try {
-            // A script language outside javascript | python is refused here as on update
-            // (formlogic-python/1); createApp stores a body's customLogic as given.
-            \FormLogic\Helpers\CustomLogicSanitizer::assertSupportedLanguages($data['customLogic'] ?? null);
             $app = $this->appService->createApp($data, $userId);
             $this->audit($request, 'app.create', 'app', $app['id'] ?? '');
             return $this->jsonResponse($response, ['app' => $app], 201);
@@ -338,8 +367,26 @@ class AppController
         if (array_key_exists('name', $data) && trim((string)($data['name'] ?? '')) === '') {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'App name is required'], 400);
         }
-        if (AdminActingLimits::acting($request) && ($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null, $app['settings'] ?? [])) !== null) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+        if (AdminActingLimits::acting($request)) {
+            if (($refusal = AdminActingLimits::appSettingsRefusal($data['settings'] ?? null, $app['settings'] ?? [])) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $refusal], 403);
+            }
+            $effectiveSettings = is_array($data['settings'] ?? null)
+                ? $data['settings']
+                : (is_array($app['settings'] ?? null) ? $app['settings'] : []);
+            $openSelfReg = $this->appUserService !== null
+                ? $this->appUserService->openSelfRegistrationShowsRecords($app, $effectiveSettings)
+                : (!empty($effectiveSettings['allowSelfRegistration']) && empty($effectiveSettings['requireApproval']));
+            $nativeAccess = null;
+            try {
+                $glance = $this->native?->glance((string) $app['id']);
+                $nativeAccess = is_array($glance) && is_string($glance['access'] ?? null) ? $glance['access'] : null;
+            } catch (\Throwable) {
+                $nativeAccess = !empty($effectiveSettings['softnApp']) ? 'application' : null;
+            }
+            if (($pubRefusal = AdminActingLimits::appPublishRefusal($data['status'] ?? null, $app, $data['settings'] ?? null, $openSelfReg, $nativeAccess)) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => $pubRefusal], 403);
+            }
         }
         if (($codeRefusal = AdminActingLimits::codeRefusal($request, $data, $app)) !== null) {
             return $this->jsonResponse($response, $codeRefusal, 403);
@@ -600,9 +647,27 @@ class AppController
         if (!$this->appService->isFormOwnedByUser($data['formId'], $userId)) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Form not found or access denied'], 404);
         }
-        // A grant across the whole app covers every form attached later.
-        if (AdminActingLimits::acting($request) && ($this->appUserService?->membersSeeEveryForm($args['id']) ?? true)) {
-            return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Members of this app can see every form in it, so adding one is the owner\'s to do'], 403);
+        // A grant across the whole app, open self-registration with a record-viewing role, or
+        // unified SQLite copying into a public app/API would expose this form's existing responses.
+        if (AdminActingLimits::acting($request)) {
+            $appSettings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $membersSeeAll = $this->appUserService?->membersSeeEveryForm($args['id']) ?? true;
+            $openSelfReg = $this->appUserService !== null
+                ? $this->appUserService->openSelfRegistrationShowsRecords($app)
+                : (!empty($appSettings['allowSelfRegistration']) && empty($appSettings['requireApproval']));
+            $ext = AppService::sanitizeExternalApi($appSettings['externalApi'] ?? null);
+            $hasPublicExtApi = $ext !== null && !empty($ext['enabled']) && in_array((string) ($ext['authMode'] ?? ''), ['public', 'both'], true);
+            $nativePublic = false;
+            try {
+                $glance = $this->native?->glance((string) $app['id']);
+                $nativePublic = is_array($glance) && (($glance['access'] ?? 'members') !== 'members');
+            } catch (\Throwable) {
+                $nativePublic = !empty($appSettings['softnApp']);
+            }
+            $unifiedExposesRecords = !empty($appSettings['unifiedSqlite']) && ($hasPublicExtApi || $nativePublic);
+            if ($membersSeeAll || $openSelfReg || $unifiedExposesRecords) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => AdminActingLimits::CODE, 'message' => 'Adding a form to this app could expose its responses to members or visitors, so it is the owner\'s to do'], 403);
+            }
         }
 
         try {

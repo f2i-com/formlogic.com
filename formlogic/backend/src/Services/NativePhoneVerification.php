@@ -328,10 +328,13 @@ final class NativePhoneVerification
     {
         $plugin = $ready['plugin'];
         try {
+            $scopeKey = is_string($input['challenge'] ?? null) && $input['challenge'] !== ''
+                ? $input['challenge']
+                : (is_string($input['phone'] ?? null) && $input['phone'] !== '' ? hash('sha256', $input['phone']) : 'site');
             return $this->network->call($plugin, $plugin['granted'], $plugin['granted']['signInCodes'][$route], $input + [
                 'appSettings' => (object) $ready['values'],
                 'settings' => (object) $plugin['settings'],
-            ], $ready['secrets']);
+            ], $ready['secrets'], 'verify:' . $appId . ':' . $scopeKey);
         } catch (\RuntimeException | \JsonException $error) {
             // Said in the log without anything the request carried: the reason is the site's own words.
             error_log('Sign-in codes for app ' . $appId . ' through ' . $plugin['manifestId'] . ': ' . $error->getMessage());

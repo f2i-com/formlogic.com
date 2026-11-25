@@ -624,6 +624,7 @@ export function FlowsWorkspace() {
                   <FlowRunHistory flowId={selectedFlow.id} flow={selectedFlow} />
                 ) : (
                   <TestRunDrawer
+                    key={selectedFlow.id}
                     flow={selectedFlow}
                     inputValue={testInputs[selectedFlow.id]}
                     onInputChange={(value) => setTestInputs((drafts) => ({ ...drafts, [selectedFlow.id]: value }))}

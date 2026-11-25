@@ -69,7 +69,9 @@
     var signsInElsewhere = !!config.platformUrl && config.platformUrl !== location.origin;
     if (['/login', '/signup', '/forgot-password', '/reset-password', '/accept-invite', '/privacy', '/terms'].indexOf(path) >= 0) return;
     if (signsInElsewhere && path === '/sign-in/complete') return;
-    if (typeof config.platformUrl === 'string' && config.platformUrl.slice(-(host.length + 2)) === '//' + host) return;
+    if (typeof config.platformUrl === 'string') {
+      try { if (new URL(config.platformUrl).host.toLowerCase() === host) return; } catch (e) { /* invalid platformUrl */ }
+    }
     if (path.indexOf('/form/') === 0) return;
     if (pathname === '/' && config.domain.mode !== 'runtime_direct') return;
 

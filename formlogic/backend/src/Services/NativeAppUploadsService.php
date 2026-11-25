@@ -728,7 +728,10 @@ class NativeAppUploadsService
         }
         $htaccess = $this->storageDir . DIRECTORY_SEPARATOR . '.htaccess';
         if (!is_file($htaccess)) {
-            @file_put_contents($htaccess, "Require all denied\nDeny from all\n<IfModule mod_php.c>\nphp_flag engine off\n</IfModule>\n");
+            @file_put_contents(
+                $htaccess,
+                "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n<IfModule mod_php.c>\nphp_flag engine off\n</IfModule>\n"
+            );
         }
         $dir = $this->appDir($appId);
         if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {

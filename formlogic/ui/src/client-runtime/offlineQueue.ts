@@ -5,8 +5,30 @@
 // queued item carries a stable idempotencyKey, so the server's payload-hash-aware ledger dedupes a
 // replay (see AppPublicController::processSubmission). This backs the SDK's useOfflineQueue status.
 import { api, newIdempotencyKey } from '../lib/api';
-import { currentSessionOwner } from '../lib/sessionGeneration';
+import * as sessionGeneration from '../lib/sessionGeneration';
 import { discardBackgroundSyncCopies } from '../lib/swQueue';
+
+const currentSessionOwner = (): string | null => sessionGeneration.currentSessionOwner();
+const readSessionGen = (): number | null => {
+  try {
+    return typeof sessionGeneration.currentSessionGeneration === 'function'
+      ? sessionGeneration.currentSessionGeneration()
+      : null;
+  } catch {
+    return null;
+  }
+};
+const isSessionStillCurrent = (gen: number | null, owner: string | null): boolean => {
+  if (currentSessionOwner() !== owner) return false;
+  if (gen === null) return true;
+  try {
+    return typeof sessionGeneration.isSessionGenerationCurrent === 'function'
+      ? sessionGeneration.isSessionGenerationCurrent(gen)
+      : true;
+  } catch {
+    return true;
+  }
+};
 
 /**
  * Queue-item lifecycle:
@@ -225,10 +247,16 @@ function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequ
   return openDb().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const transaction = db.transaction(STORE, mode);
-        const req = fn(transaction.objectStore(STORE));
-        transaction.oncomplete = () => resolve(req.result);
-        transaction.onabort = () => reject(transaction.error ?? new Error(NOT_SAVED));
+        try {
+          const transaction = db.transaction(STORE, mode);
+          const req = fn(transaction.objectStore(STORE));
+          transaction.oncomplete = () => { db.close?.(); resolve(req.result); };
+          transaction.onabort = () => { db.close?.(); reject(transaction.error ?? new Error(NOT_SAVED)); };
+          transaction.onerror = () => { db.close?.(); reject(transaction.error ?? new Error(NOT_SAVED)); };
+        } catch (err) {
+          db.close?.();
+          reject(err);
+        }
       })
   );
 }
@@ -242,16 +270,22 @@ function updateRow(id: string, change: (row: QueuedSubmission) => QueuedSubmissi
   return openDb().then(
     (db) =>
       new Promise<QueuedSubmission | null>((resolve, reject) => {
-        const transaction = db.transaction(STORE, 'readwrite');
-        const store = transaction.objectStore(STORE);
-        const read = store.get(id) as IDBRequest<QueuedSubmission | undefined>;
-        let next: QueuedSubmission | null = null;
-        read.onsuccess = () => {
-          next = read.result ? change(read.result) : null;
-          if (next) store.put(next);
-        };
-        transaction.oncomplete = () => resolve(next);
-        transaction.onabort = () => reject(transaction.error ?? new Error(NOT_SAVED));
+        try {
+          const transaction = db.transaction(STORE, 'readwrite');
+          const store = transaction.objectStore(STORE);
+          const read = store.get(id) as IDBRequest<QueuedSubmission | undefined>;
+          let next: QueuedSubmission | null = null;
+          read.onsuccess = () => {
+            next = read.result ? change(read.result) : null;
+            if (next) store.put(next);
+          };
+          transaction.oncomplete = () => { db.close?.(); resolve(next); };
+          transaction.onabort = () => { db.close?.(); reject(transaction.error ?? new Error(NOT_SAVED)); };
+          transaction.onerror = () => { db.close?.(); reject(transaction.error ?? new Error(NOT_SAVED)); };
+        } catch (err) {
+          db.close?.();
+          reject(err);
+        }
       })
   );
 }
@@ -516,7 +550,10 @@ async function runPass(): Promise<{ flushed: number; failed: number }> {
   let flushed = 0;
   let failed = 0;
   try {
+    const sessionGen = readSessionGen();
+    const sessionOwner = currentSessionOwner();
     for (const listed of await listQueue()) {
+      if (!isSessionStillCurrent(sessionGen, sessionOwner)) break;
       // Ownership partition (audit FL-09): another user's rows stay PARKED — they are
       // never delivered through this session's cookies. They resume when their owner
       // signs back in.
@@ -526,6 +563,10 @@ async function runPass(): Promise<{ flushed: number; failed: number }> {
       // Failed rows are left alone: only the person sends one again.
       const item = await updateRow(listed.id, (row) => (row.status === 'failed' ? null : { ...row, status: 'syncing' }));
       if (!item) continue;
+      if (!isSessionStillCurrent(sessionGen, sessionOwner)) {
+        await updateRow(item.id, (row) => (row.status === 'syncing' ? { ...row, status: 'pending' } : row));
+        break;
+      }
       notify();
       let classification: DeliveryClassification;
       try {
@@ -536,6 +577,16 @@ async function runPass(): Promise<{ flushed: number; failed: number }> {
         classification = { outcome: 'retry', error: e instanceof Error ? e.message : String(e) };
       }
       const { outcome, error } = classification;
+      if (!isSessionStillCurrent(sessionGen, sessionOwner)) {
+        // Session changed while delivery was in flight: delete only if the server confirmed delivery;
+        // otherwise return the row to pending without mutating state for the new session.
+        if (outcome === 'delivered') {
+          await run('readwrite', (s) => s.delete(item.id));
+        } else {
+          await updateRow(item.id, (row) => (row.status === 'syncing' ? { ...row, status: 'pending' } : row));
+        }
+        break;
+      }
       // Each result is written onto the row as it is NOW, and only if it is still there (a
       // Discard while the request was out stays a discard).
       const settle = (patch: Partial<QueuedSubmission>) => updateRow(item.id, (row) => ({ ...row, ...patch }));
@@ -594,6 +645,7 @@ export const flushBrowserQueue = flushQueue;
 // flush too, spaced apart: flushQueuesWhenDue in nativeOfflineQueue.ts, which knows both queues.)
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
+    if (typeof api.isDemoMode === 'function' && api.isDemoMode()) return;
     void flushQueue();
   });
 }

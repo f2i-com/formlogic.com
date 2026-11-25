@@ -212,6 +212,15 @@ export interface DesktopE2ePin {
   firstTrustedAt: string;
 }
 
+/** Pin store could not be read or persisted — fail closed rather than accepting a key change. */
+export class DesktopPinStorageError extends Error {
+  readonly code = 'e2e_pin_storage_unavailable';
+  constructor(message: string) {
+    super(message);
+    this.name = 'DesktopPinStorageError';
+  }
+}
+
 function pinStorage(): Storage | null {
   try {
     return typeof localStorage === 'undefined' ? null : localStorage;
@@ -220,45 +229,63 @@ function pinStorage(): Storage | null {
   }
 }
 
-export function readDesktopE2ePins(): Record<string, DesktopE2ePin> {
+function requirePinStorage(): Storage {
   const storage = pinStorage();
-  if (!storage) return {};
+  if (!storage) {
+    throw new DesktopPinStorageError('Browser storage is unavailable — the desktop encryption key cannot be pinned.');
+  }
+  return storage;
+}
+
+export function readDesktopE2ePins(): Record<string, DesktopE2ePin> {
+  const storage = requirePinStorage();
+  let raw: string | null;
   try {
-    const raw = storage.getItem(PINS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const pins: Record<string, DesktopE2ePin> = {};
-    for (const [instanceId, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const v = value as Partial<DesktopE2ePin> | null;
-      if (v && typeof v.pubkey === 'string' && typeof v.fingerprint === 'string') {
-        pins[instanceId] = {
-          pubkey: v.pubkey,
-          deviceName: typeof v.deviceName === 'string' ? v.deviceName : 'FormLogic Desktop',
-          fingerprint: v.fingerprint,
-          firstTrustedAt: typeof v.firstTrustedAt === 'string' ? v.firstTrustedAt : '',
-        };
-      }
-    }
-    return pins;
+    raw = storage.getItem(PINS_STORAGE_KEY);
   } catch (e) {
     logger.warn('[desktop-tunnel] unreadable E2E pin store:', e);
-    return {};
+    throw new DesktopPinStorageError('Could not read the desktop encryption key pin store.');
   }
+  const pins: Record<string, DesktopE2ePin> = Object.create(null);
+  if (!raw) return pins;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    logger.warn('[desktop-tunnel] corrupted E2E pin store:', e);
+    throw new DesktopPinStorageError('The desktop encryption key pin store is corrupted.');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new DesktopPinStorageError('The desktop encryption key pin store is corrupted.');
+  }
+  for (const [instanceId, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (instanceId === '__proto__' || instanceId === 'constructor' || instanceId === 'prototype') continue;
+    const v = value as Partial<DesktopE2ePin> | null;
+    if (v && typeof v.pubkey === 'string' && typeof v.fingerprint === 'string') {
+      pins[instanceId] = {
+        pubkey: v.pubkey,
+        deviceName: typeof v.deviceName === 'string' ? v.deviceName : 'FormLogic Desktop',
+        fingerprint: v.fingerprint,
+        firstTrustedAt: typeof v.firstTrustedAt === 'string' ? v.firstTrustedAt : '',
+      };
+    }
+  }
+  return pins;
 }
 
 function writeDesktopE2ePins(pins: Record<string, DesktopE2ePin>): void {
-  const storage = pinStorage();
-  if (!storage) return;
+  const storage = requirePinStorage();
   try {
     storage.setItem(PINS_STORAGE_KEY, JSON.stringify(pins));
   } catch (e) {
     logger.warn('[desktop-tunnel] could not persist the E2E pin store:', e);
+    throw new DesktopPinStorageError('Could not persist the desktop encryption key pin — browser storage is unavailable.');
   }
 }
 
 export function getDesktopE2ePin(instanceId: string): DesktopE2ePin | null {
-  return readDesktopE2ePins()[instanceId] ?? null;
+  const pins = readDesktopE2ePins();
+  return Object.prototype.hasOwnProperty.call(pins, instanceId) ? pins[instanceId] : null;
 }
 
 /**
@@ -275,11 +302,12 @@ export function trustDesktopE2eKey(instanceId: string, pubkey: string, deviceNam
   }
   if (bytes.length !== BOX_PUBLIC_KEY_LENGTH) return null;
   const pins = readDesktopE2ePins();
+  const existing = Object.prototype.hasOwnProperty.call(pins, instanceId) ? pins[instanceId] : undefined;
   const pin: DesktopE2ePin = {
     pubkey,
     deviceName,
     fingerprint: keyFingerprint(bytes),
-    firstTrustedAt: pins[instanceId]?.firstTrustedAt || new Date().toISOString(),
+    firstTrustedAt: existing?.firstTrustedAt || new Date().toISOString(),
   };
   pins[instanceId] = pin;
   writeDesktopE2ePins(pins);
@@ -289,7 +317,7 @@ export function trustDesktopE2eKey(instanceId: string, pubkey: string, deviceNam
 /** Drop a pin entirely (e.g. the desktop was unlinked); the next use is a fresh first trust. */
 export function forgetDesktopE2ePin(instanceId: string): void {
   const pins = readDesktopE2ePins();
-  if (instanceId in pins) {
+  if (Object.prototype.hasOwnProperty.call(pins, instanceId)) {
     delete pins[instanceId];
     writeDesktopE2ePins(pins);
   }
@@ -405,7 +433,16 @@ export class TunnelSession {
 
   static create(instanceId: string, desktopPublicKey: Uint8Array): TunnelSession {
     const pair = nacl.box.keyPair(); // per-thread ephemeral — never persisted (plan §5.1)
-    return new TunnelSession(instanceId, pair.publicKey, nacl.box.before(desktopPublicKey, pair.secretKey));
+    try {
+      return new TunnelSession(instanceId, pair.publicKey, nacl.box.before(desktopPublicKey, pair.secretKey));
+    } finally {
+      pair.secretKey.fill(0);
+    }
+  }
+
+  /** Zero the derived shared session key once this request/run completes. */
+  destroy(): void {
+    this.sharedKey.fill(0);
   }
 
   private sealJson(body: Record<string, unknown>, counter: number): DesktopAiSealedEnvelope {
@@ -518,7 +555,15 @@ async function resolveDesktopKey(
     return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
   }
 
-  const pin = getDesktopE2ePin(resolvedInstance);
+  let pin: DesktopE2ePin | null;
+  try {
+    pin = getDesktopE2ePin(resolvedInstance);
+  } catch (e) {
+    if (e instanceof DesktopPinStorageError) {
+      return failure({ code: e.code, message: e.message });
+    }
+    throw e;
+  }
   if (pin && pin.pubkey !== pubkeyB64) {
     // Key rotation: NEVER trusted silently (plan §5.1/§7). The caller must surface the
     // fingerprints and get an explicit re-trust decision via trustDesktopE2eKey().
@@ -539,19 +584,26 @@ async function resolveDesktopKey(
   }
 
   let firstTrust = false;
-  if (!pin) {
-    firstTrust = true;
-    const recorded = trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
-    if (!recorded) {
-      return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
+  try {
+    if (!pin) {
+      firstTrust = true;
+      const recorded = trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+      if (!recorded) {
+        return failure({ code: 'e2e_key_unknown', message: 'The desktop published an invalid encryption key.' });
+      }
+      onTrustEstablished?.(recorded, true);
+    } else {
+      if (pin.deviceName !== deviceName) {
+        // Benign: same key, refreshed device name.
+        trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+      }
+      onTrustEstablished?.({ ...pin, deviceName }, false);
     }
-    onTrustEstablished?.(recorded, true);
-  } else {
-    if (pin.deviceName !== deviceName) {
-      // Benign: same key, refreshed device name.
-      trustDesktopE2eKey(resolvedInstance, pubkeyB64, deviceName);
+  } catch (e) {
+    if (e instanceof DesktopPinStorageError) {
+      return failure({ code: e.code, message: e.message });
     }
-    onTrustEstablished?.({ ...pin, deviceName }, false);
+    throw e;
   }
   return { ok: true, data: { instanceId: resolvedInstance, publicKey, deviceName, firstTrust } };
 }
@@ -740,59 +792,60 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
 
   // 2. Per-thread ephemeral session + sealed request envelope (counter 0, direction 0x00).
   const session = TunnelSession.create(instanceId, publicKey);
-  const sealedBody: Record<string, unknown> = {
-    v: 1,
-    kind: params.kind,
-    providerId: params.providerId,
-    threadId: params.threadId,
-    clientSeq: params.clientSeq,
-  };
-  if (params.model) sealedBody.model = params.model;
-  if (params.messages) sealedBody.messages = params.messages;
-  if (params.maxTokens) sealedBody.maxTokens = params.maxTokens;
-  if (params.reasoning) sealedBody.reasoning = params.reasoning;
-  // Chat tool use (§5.1/§5.4): the tool mode + per-turn grant ride INSIDE the sealed
-  // body — the backend must never see the grant token in plaintext.
-  if (params.toolMode) sealedBody.toolMode = params.toolMode;
-  if (params.toolGrant) sealedBody.toolGrant = params.toolGrant;
-  let envelope: DesktopAiSealedEnvelope;
+  let requestId: string | undefined;
   try {
-    envelope = session.sealRequest(sealedBody);
-  } catch (e) {
-    return fail({ code: 'sealed_envelope_invalid', message: errorMessage(e) });
-  }
-
-  // 3. Enqueue onto the desktop's FIFO lane (§5.2). The backend never sees the plaintext.
-  const enqueueBody: DesktopAiEnqueueBody = {
-    targetInstanceId: instanceId,
-    kind: params.kind,
-    providerId: params.providerId,
-    ephPub: bytesToBase64(session.ephemeralPublicKey),
-    envelope: encodeTunnelEnvelope(envelope),
-    idempotencyKey: generateId(),
-  };
-  // Stopped while the key was read: nothing has gone out yet, and once queued it runs.
-  if (params.signal?.aborted) return fail({ code: 'stopped', message: 'Stopped before it was sent.' });
-  const enqueueRes = await api.enqueueDesktopAiRequest(enqueueBody);
-  if (enqueueRes.error) {
-    if (!enqueueRes.status) {
-      // Network failure at enqueue: the request MAY have landed — honest `uncertain` (§5.8),
-      // never a silent retry that could double-run the turn.
-      return fail({
-        code: 'uncertain',
-        message: `The request may or may not have reached the queue (${enqueueRes.error}). Check the request list before retrying.`,
-      });
+    const sealedBody: Record<string, unknown> = {
+      v: 1,
+      kind: params.kind,
+      providerId: params.providerId,
+      threadId: params.threadId,
+      clientSeq: params.clientSeq,
+    };
+    if (params.model) sealedBody.model = params.model;
+    if (params.messages) sealedBody.messages = params.messages;
+    if (params.maxTokens) sealedBody.maxTokens = params.maxTokens;
+    if (params.reasoning) sealedBody.reasoning = params.reasoning;
+    // Chat tool use (§5.1/§5.4): the tool mode + per-turn grant ride INSIDE the sealed
+    // body — the backend must never see the grant token in plaintext.
+    if (params.toolMode) sealedBody.toolMode = params.toolMode;
+    if (params.toolGrant) sealedBody.toolGrant = params.toolGrant;
+    let envelope: DesktopAiSealedEnvelope;
+    try {
+      envelope = session.sealRequest(sealedBody);
+    } catch (e) {
+      return fail({ code: 'sealed_envelope_invalid', message: errorMessage(e) });
     }
-    return fail({ code: enqueueRes.code ?? 'request_failed', message: enqueueRes.error, status: enqueueRes.status });
-  }
-  const enqueued = asRecord(enqueueRes.data) ?? {};
-  const requestId = firstString(enqueued.requestId, enqueued.id);
-  if (!requestId) {
-    return fail({ code: 'request_failed', message: 'The queue accepted the request but returned no request id.' });
-  }
-  activeSessions.set(requestId, session);
 
-  try {
+    // 3. Enqueue onto the desktop's FIFO lane (§5.2). The backend never sees the plaintext.
+    const enqueueBody: DesktopAiEnqueueBody = {
+      targetInstanceId: instanceId,
+      kind: params.kind,
+      providerId: params.providerId,
+      ephPub: bytesToBase64(session.ephemeralPublicKey),
+      envelope: encodeTunnelEnvelope(envelope),
+      idempotencyKey: generateId(),
+    };
+    // Stopped while the key was read: nothing has gone out yet, and once queued it runs.
+    if (params.signal?.aborted) return fail({ code: 'stopped', message: 'Stopped before it was sent.' });
+    const enqueueRes = await api.enqueueDesktopAiRequest(enqueueBody);
+    if (enqueueRes.error) {
+      if (!enqueueRes.status) {
+        // Network failure at enqueue: the request MAY have landed — honest `uncertain` (§5.8),
+        // never a silent retry that could double-run the turn.
+        return fail({
+          code: 'uncertain',
+          message: `The request may or may not have reached the queue (${enqueueRes.error}). Check the request list before retrying.`,
+        });
+      }
+      return fail({ code: enqueueRes.code ?? 'request_failed', message: enqueueRes.error, status: enqueueRes.status });
+    }
+    const enqueued = asRecord(enqueueRes.data) ?? {};
+    requestId = firstString(enqueued.requestId, enqueued.id);
+    if (!requestId) {
+      return fail({ code: 'request_failed', message: 'The queue accepted the request but returned no request id.' });
+    }
+    activeSessions.set(requestId, session);
+
     const queuePos = typeof enqueued.queuePos === 'number' ? enqueued.queuePos : 0;
     safeCall(() => onState({ state: 'queued', position: queuePos }));
 
@@ -832,10 +885,12 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
       case 'failed':
         return fail({ code: terminal.code, message: terminal.message ?? 'The desktop reported a failure.' });
       case 'uncertain':
+      default:
         return fail({ code: 'uncertain', message: terminal.message }, { state: 'uncertain', message: terminal.message });
     }
   } finally {
-    activeSessions.delete(requestId);
+    if (requestId) activeSessions.delete(requestId);
+    session.destroy();
   }
 }
 
@@ -1136,6 +1191,9 @@ async function streamTunnelResponses(
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
+          if (buffer.length > MAX_SSE_EVENT_CHARS * 2) {
+            throw new TunnelCryptoError('stream line exceeded the browser limit');
+          }
           let nl: number;
           while ((nl = buffer.indexOf('\n')) !== -1) {
             const line = buffer.slice(0, nl).replace(/\r$/, '');
@@ -1163,6 +1221,9 @@ async function streamTunnelResponses(
           const terminal = await dispatchData(dataLines.join('\n'));
           if (terminal) return terminal;
         }
+      } catch (err) {
+        await reader.cancel().catch(() => undefined);
+        throw err;
       } finally {
         reader.releaseLock();
       }

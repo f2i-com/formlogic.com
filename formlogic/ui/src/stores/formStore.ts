@@ -427,6 +427,9 @@ export const useFormStore = create<FormState>()(
           } as Partial<Form>);
         }
         if (result.error) {
+          if (result.code === 'manifest_invalid' && encryptionSchema) {
+            import('../lib/crypto/formCrypto').then((fc) => fc.forgetFormKeys(formId)).catch(() => {});
+          }
           logger.error(`Failed to save form ${part} to server:`, result.error);
           toast.error('Failed to save changes', typeof result.error === 'string' ? result.error : 'Your changes may not be saved. Please try again.');
           recordSaveResult(formId, part, false);
@@ -436,6 +439,12 @@ export const useFormStore = create<FormState>()(
             set((s) => ({ forms: s.forms.map((f) => (f.id === formId ? { ...f, fieldsRevision: undefined } : f)) }));
           }
           return false;
+        }
+        // A newly signed manifest was committed server-side — drop cached manifest history so
+        // subsequent edits increment from the new version and new submissions decrypt cleanly.
+        if (encryptionSchema) {
+          const fc = await import('../lib/crypto/formCrypto');
+          fc.forgetFormKeys(formId);
         }
         if (part === 'fields') keepFieldsRevision(formId, result.data?.form);
         recordSaveResult(formId, part, true);
@@ -539,16 +548,13 @@ export const useFormStore = create<FormState>()(
         try {
           // Check if API is available
           const healthResult = await api.healthCheck();
+          if (!isSessionGenerationCurrent(gen)) return;
           const apiAvailable = !healthResult.error && healthResult.data?.status === 'ok';
 
           if (apiAvailable && state.storageMode === 'api') {
             // Load ALL forms from API (paged) so My Forms' per-app grouping sees every form.
             const forms = await fetchAllForms();
-            if (!isSessionGenerationCurrent(gen)) {
-              // Never write the stale result; just unwind the loading flag.
-              set({ isLoading: false });
-              return;
-            }
+            if (!isSessionGenerationCurrent(gen)) return;
             if (forms !== null) {
               // Keep any demo-created (browser-only) forms alongside the server's seeded forms.
               set({
@@ -573,6 +579,7 @@ export const useFormStore = create<FormState>()(
           // road, and an owner would be shown the new-account screen.
           set({ isLoading: false, isInitialized: true, ...(state.storageMode === 'api' ? { error: 'Failed to load forms' } : {}) });
         } catch (error) {
+          if (!isSessionGenerationCurrent(gen)) return;
           logger.error('Failed to initialize form store:', error);
           toast.error('Loading Error', 'Failed to load forms. Using local storage.');
           set({
@@ -597,9 +604,11 @@ export const useFormStore = create<FormState>()(
         // mirror), regardless of the admin's own storage mode.
         if (state.storageMode !== 'api' && !acting) return;
 
+        const gen = currentSessionGeneration();
         set({ isLoading: true });
         try {
           const forms = await fetchAllForms();
+          if (!isSessionGenerationCurrent(gen)) return;
           if (forms !== null) {
             const fetched = acting
               ? forms.map((f) => ({ ...f, _adminForeign: true } as Form))
@@ -612,6 +621,7 @@ export const useFormStore = create<FormState>()(
             set({ error: 'Failed to load forms', isLoading: false });
           }
         } catch (error) {
+          if (!isSessionGenerationCurrent(gen)) return;
           logger.error('Failed to refresh forms:', error);
           toast.error('Refresh Failed', 'Could not refresh forms from server.');
           set({ error: 'Failed to load forms', isLoading: false });
@@ -653,8 +663,10 @@ export const useFormStore = create<FormState>()(
         // If syncing to a server (cloud mode or admin acting on an owner's account,
         // never the demo overlay), also create there.
         if (cloudSync() && !demo) {
+          const gen = currentSessionGeneration();
           try {
             const result = await api.createForm(form);
+            if (!isSessionGenerationCurrent(gen)) return null;
             if (result.error) {
               // Rollback optimistic update
               set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
@@ -674,6 +686,7 @@ export const useFormStore = create<FormState>()(
               return created;
             }
           } catch (error) {
+            if (!isSessionGenerationCurrent(gen)) return null;
             // Rollback optimistic update
             set((s) => ({ forms: s.forms.filter((f) => f.id !== form.id) }));
             logger.error('Failed to create form on server:', error);
@@ -803,8 +816,10 @@ export const useFormStore = create<FormState>()(
 
         // If syncing to a server (cloud mode or admin acting), also delete there
         if (state.storageMode === 'api' || api.isAdminActing()) {
+          const gen = currentSessionGeneration();
           try {
             const result = await api.deleteForm(id);
+            if (!isSessionGenerationCurrent(gen)) return;
             if (result.error && formToDelete) {
               // Rollback: restore the form
               set((s) => ({ forms: [...s.forms, formToDelete] }));
@@ -814,8 +829,10 @@ export const useFormStore = create<FormState>()(
                 action: {
                   label: 'Delete without a copy',
                   onClick: () => {
+                    if (!isSessionGenerationCurrent(gen)) return;
                     if (!window.confirm(`Delete "${formToDelete.title}" without a copy? Its responses will be gone for good, with nothing in the Recycle bin.`)) return;
                     void api.deleteForm(id, { withoutCopy: true }).then((again) => {
+                      if (!isSessionGenerationCurrent(gen)) return;
                       if (again.error) toast.error('Failed to delete form', typeof again.error === 'string' ? again.error : 'Please try again');
                       else set((s) => ({ forms: s.forms.filter((f) => f.id !== id) }));
                     }, () => toast.error('Failed to delete form', 'Please try again'));
@@ -827,6 +844,7 @@ export const useFormStore = create<FormState>()(
               toast.success('Moved to the recycle bin', 'You can restore it from Settings → Recycle bin for 30 days.');
             }
           } catch (error) {
+            if (!isSessionGenerationCurrent(gen)) return;
             // Rollback: restore the form
             if (formToDelete) {
               set((s) => ({ forms: [...s.forms, formToDelete] }));
@@ -884,8 +902,10 @@ export const useFormStore = create<FormState>()(
 
         // If syncing to a server (cloud mode or admin acting, not the demo overlay), duplicate there
         if (cloudSync() && !demo) {
+          const gen = currentSessionGeneration();
           try {
             const result = await api.duplicateForm(id);
+            if (!isSessionGenerationCurrent(gen)) return null;
             if (result.error) {
               set((s) => ({ forms: s.forms.filter((f) => f.id !== newForm.id) }));
               toast.error('Failed to duplicate form', typeof result.error === 'string' ? result.error : 'Please try again');
@@ -903,6 +923,7 @@ export const useFormStore = create<FormState>()(
               return duplicated;
             }
           } catch (error) {
+            if (!isSessionGenerationCurrent(gen)) return null;
             set((s) => ({ forms: s.forms.filter((f) => f.id !== newForm.id) }));
             logger.error('Failed to duplicate form on server:', error);
             toast.error('Failed to duplicate form', 'Please try again');
@@ -942,8 +963,10 @@ export const useFormStore = create<FormState>()(
         }
 
         // Fetch full form (with fields) from API
+        const gen = currentSessionGeneration();
         try {
           const result = await api.getForm(id);
+          if (!isSessionGenerationCurrent(gen)) return undefined;
           if (!result.error && result.data?.form) {
             if (opts?.onlyIf && !opts.onlyIf()) return get().forms.find((f) => f.id === id);
             const fullForm = {

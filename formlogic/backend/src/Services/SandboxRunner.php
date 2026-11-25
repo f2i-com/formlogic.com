@@ -380,8 +380,14 @@ class SandboxRunner
     /** Direct argv, also allowing child-protocol tests to use a native fixture executable. */
     protected function command(): array
     {
-        return [$this->binary, '--prelude', $this->prelude,
-            '--heap-mb', (string) max(1, intdiv($this->memoryLimitKb, 1024))];
+        $heapMb = max(1, intdiv($this->memoryLimitKb, 1024));
+        $memoryMb = max(256, min(512, $heapMb * 4));
+        return [
+            $this->binary,
+            '--prelude', $this->prelude,
+            '--heap-mb', (string) $heapMb,
+            '--memory-mb', (string) $memoryMb,
+        ];
     }
 
     /**
@@ -520,7 +526,9 @@ class SandboxRunner
         if (PHP_OS_FAMILY === 'Windows') {
             return $this->spawnWindowsWatchdog($pid, $secs);
         }
-        $cmd = 'sleep ' . $secs . '; kill -9 ' . $pid . ' 2>/dev/null';
+        // POSIX watchdog: trap TERM so stopping/pausing kills the child `sleep` cleanly instead of
+        // leaving an orphaned sleep process per host call.
+        $cmd = 'trap \'kill $p 2>/dev/null; exit 0\' TERM INT; sleep ' . $secs . ' & p=$!; wait $p && kill -9 ' . $pid . ' 2>/dev/null';
         $spec = [0 => ['pipe', 'r'], 1 => ['file', '/dev/null', 'w'], 2 => ['file', '/dev/null', 'w']];
         $wd = @proc_open($cmd, $spec, $wpipes);
         if (!is_resource($wd)) {
@@ -558,7 +566,14 @@ class SandboxRunner
         catch (\Throwable) { @rmdir($directory); @unlink($marker); return null; }
         array_push($cmd, '-TargetPid', (string) $pid, '-AckPath', $ack);
         $spec = [0 => ['pipe', 'r'], 1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']];
-        $process = @proc_open($cmd, $spec, $pipes, null, null, ['bypass_shell' => true]);
+        $watchdogEnv = [];
+        foreach (['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'COMSPEC', 'PATH', 'PATHEXT', 'PSModulePath'] as $envKey) {
+            $val = getenv($envKey);
+            if ($val !== false && $val !== '') {
+                $watchdogEnv[$envKey] = $val;
+            }
+        }
+        $process = @proc_open($cmd, $spec, $pipes, null, $watchdogEnv, ['bypass_shell' => true]);
         if (!is_resource($process)) { @rmdir($directory); @unlink($marker); return null; }
         $state = ['process' => $process, 'input' => $pipes[0] ?? null,
             'marker' => $marker, 'directory' => $directory, 'ack' => $ack, 'nonce' => $nonce,

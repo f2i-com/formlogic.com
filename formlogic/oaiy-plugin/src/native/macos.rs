@@ -74,7 +74,7 @@ pub fn save_as(prompt: &str, name: &str) -> Result<Option<PathBuf>, String> {
     if !finished(&output)? {
         return Ok(None);
     }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).to_string();
     Ok((!path.is_empty()).then(|| PathBuf::from(path)))
 }
 
@@ -83,12 +83,12 @@ pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
     if !finished(&output)? {
         return Ok(None);
     }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let path = String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).to_string();
     Ok((!path.is_empty()).then(|| PathBuf::from(path)))
 }
 
 pub fn open_url(url: &str) -> Result<(), String> {
-    let opened = Command::new("/usr/bin/open").arg(url).status().map_err(|e| format!("Could not open your browser: {e}"))?;
+    let opened = Command::new("/usr/bin/open").args(["--", url]).status().map_err(|e| format!("Could not open your browser: {e}"))?;
     if opened.success() {
         Ok(())
     } else {
@@ -96,14 +96,30 @@ pub fn open_url(url: &str) -> Result<(), String> {
     }
 }
 
+fn normalize_computer_name(raw: &str) -> String {
+    let trimmed = raw.trim_end_matches(['\r', '\n']);
+    trimmed.strip_suffix(".local").unwrap_or(trimmed).to_string()
+}
+
 pub fn computer_name() -> Option<String> {
     let output = Command::new("/bin/hostname").output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim_end_matches(".local\n").to_string())
+    output
+        .status
+        .success()
+        .then(|| normalize_computer_name(&String::from_utf8_lossy(&output.stdout)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn computer_name_trims_newlines_and_local_suffix() {
+        assert_eq!(normalize_computer_name("workstation\n"), "workstation");
+        assert_eq!(normalize_computer_name("macbook.local\n"), "macbook");
+        assert_eq!(normalize_computer_name("macbook.local\r\n"), "macbook");
+        assert_eq!(normalize_computer_name("plain"), "plain");
+    }
 
     #[test]
     fn a_name_cannot_end_the_string_it_is_put_in() {

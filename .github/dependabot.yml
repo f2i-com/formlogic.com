@@ -96,3 +96,13 @@ updates:
     groups:
       wasmtime:
         patterns: [wasmtime, wasmtime-wasi]
+
+  # OAIY backup plugin — formlogic/oaiy-plugin
+  - package-ecosystem: cargo
+    directory: /formlogic/oaiy-plugin
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      oaiy-plugin-minor-patch:
+        update-types: [minor, patch]

@@ -497,6 +497,13 @@ class AppPublicController
 
         $data = $request->getParsedBody() ?? [];
         if ($request->getAttribute('demoSandboxVerified') === true) {
+            if (!$this->isFormBoundToDemoSandbox($formId, $request)) {
+                return $this->jsonResponse($response, [
+                    'error' => true,
+                    'code' => 'demo_readonly',
+                    'message' => 'This is a shared live demo — your changes stay in your browser and aren\'t saved to the server.',
+                ], 403);
+            }
             // Visitor sandbox writes live solely in their ephemeral SQLite copy; never write MySQL ledger rows.
             unset($data['idempotencyKey']);
         }
@@ -1199,6 +1206,14 @@ class AppPublicController
         }
 
         // Ownership check: users can only edit their own responses unless they have VIEW_ALL_RESPONSES
+        if ($request->getAttribute('demoSandboxVerified') === true && !$this->isFormBoundToDemoSandbox($formId, $request)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'demo_readonly',
+                'message' => 'This is a shared live demo — your changes stay in your browser and aren\'t saved to the server.',
+            ], 403);
+        }
+
         $existingResp = $this->appResponseService->getResponse($formId, $responseId);
         if (!$existingResp) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);
@@ -1333,8 +1348,31 @@ class AppPublicController
         ) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }
+        if ($request->getAttribute('demoSandboxVerified') === true) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'demo_readonly',
+                'message' => 'Bulk clearing responses is disabled in the live demo.',
+            ], 403);
+        }
         $deleted = $this->appResponseService->deleteAllResponses($formId);
         return $this->jsonResponse($response, ['success' => true, 'deleted' => $deleted]);
+    }
+
+    /** True only when `$formId` binds directly to the request's verified ephemeral demo sandbox app. */
+    private function isFormBoundToDemoSandbox(string $formId, Request $request): bool
+    {
+        $sandboxAppId = $request->getAttribute('demoSandboxAppId');
+        if (!is_string($sandboxAppId) || $sandboxAppId === '') {
+            return false;
+        }
+        $form = $this->formService->getForm($formId);
+        if (!is_array($form)) {
+            return false;
+        }
+        $settings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+        $binding = is_array($settings['nativeTableBinding'] ?? null) ? $settings['nativeTableBinding'] : null;
+        return is_array($binding) && is_string($binding['appId'] ?? null) && trim($binding['appId']) === $sandboxAppId;
     }
 
     public function deleteResponseById(Request $request, Response $response, array $args): Response
@@ -1365,6 +1403,14 @@ class AppPublicController
         }
 
         // Ownership check: users can only delete their own responses unless they have VIEW_ALL_RESPONSES
+        if ($request->getAttribute('demoSandboxVerified') === true && !$this->isFormBoundToDemoSandbox($formId, $request)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'demo_readonly',
+                'message' => 'This is a shared live demo — your changes stay in your browser and aren\'t saved to the server.',
+            ], 403);
+        }
+
         $existingResp = $this->appResponseService->getResponse($formId, $responseId);
         if (!$existingResp) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Response not found'], 404);

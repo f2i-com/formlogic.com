@@ -25,10 +25,12 @@ const DOMAIN_RESERVED_EXACT = new Set([
   '/robots.txt',
   '/sitemap.xml',
   '/manifest.json',
+  '/screen-host.html',
 ]);
 
 const DOMAIN_RESERVED_PREFIXES = [
   '/api/',
+  '/app/',
   '/form/',
   '/assets/',
   '/hosted-runtime/',
@@ -36,6 +38,7 @@ const DOMAIN_RESERVED_PREFIXES = [
   '/zipp/',
   '/oauth/',
   '/plugins/',
+  '/.well-known/',
 ];
 
 /** Subroutes under `/app/:slug` that belong to FormLogic Form Apps rather than SoftN app pages. */
@@ -61,10 +64,18 @@ const FORM_APP_RESERVED_PREFIXES = [
   '/profile/',
 ];
 
+function hasControlOrBackslash(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f || code === 0x5c) return true;
+  }
+  return false;
+}
+
 export function isValidAppPlace(value: unknown): value is string {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_PLACE_LENGTH) return false;
   if (!/^\/(?!\/)/.test(value)) return false;
-  if (/[\x00-\x1f\x7f\\]/.test(value)) return false;
+  if (hasControlOrBackslash(value)) return false;
   const pathPart = value.split(/[?#]/, 1)[0];
   if (/(?:^|\/)\.{1,2}(?:\/|$)/.test(pathPart)) return false;
   if (/%2e|%2f|%5c/i.test(pathPart)) return false;
@@ -169,7 +180,12 @@ export function readAppPlace(opts: {
   if (onDomain) {
     const normalized = pathname || '/';
     if (normalized === '/' || isDomainReservedPath(normalized)) {
-      return fromHash;
+      if (fromHash) return fromHash;
+      if (normalized === '/' && appSearch) {
+        const rootCandidate = `/${appSearch}`;
+        return isValidAppPlace(rootCandidate) ? rootCandidate : null;
+      }
+      return null;
     }
     const candidate = `${normalized}${appSearch}${hash}`;
     return isValidAppPlace(candidate) ? candidate : fromHash;
@@ -179,7 +195,12 @@ export function readAppPlace(opts: {
   if (base === null) return fromHash;
   const rest = pathname.slice(base.length);
   if (!rest || rest === '/') {
-    return fromHash;
+    if (fromHash) return fromHash;
+    if (appSearch) {
+      const rootCandidate = `/${appSearch}`;
+      return isValidAppPlace(rootCandidate) ? rootCandidate : null;
+    }
+    return null;
   }
   // Never misinterpret a reserved Form App subroute as a SoftN page when at `/app/<slug>`.
   if (!base.toLowerCase().endsWith('/native') && isFormAppSubroute(rest)) {

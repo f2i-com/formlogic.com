@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import { toast } from '../../stores/toastStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -21,19 +21,27 @@ import type { AppRuntimeForm } from '../../types/app';
 const APP_SDK_SHIM = `
 (function(){
   var pending = {}, seq = 0;
+  var port = typeof window.__flClaimPort === 'function' ? window.__flClaimPort() : null;
   function call(action, payload){
     return new Promise(function(resolve, reject){
+      if (!port) { reject(new Error('Screen bridge unavailable.')); return; }
       var id = ++seq; pending[id] = { resolve: resolve, reject: reject };
-      parent.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} }, '*');
+      port.postMessage({ __fl: true, gen: window.__flGen, id: id, action: action, payload: payload || {} });
     });
   }
-  window.addEventListener('message', function(e){
-    if (e.source !== parent) return; // only the host answers: a sibling frame could forge a reply
-    var m = e.data;
-    if (!m || !m.__flReply || !pending[m.id]) return;
-    var p = pending[m.id]; delete pending[m.id];
-    if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
-  });
+  if (port) {
+    port.onmessage = function(e){
+      var m = e.data;
+      if (m && m.__flTheme) {
+        document.documentElement.classList.toggle('fl-dark', m.__flTheme === 'dark');
+        return;
+      }
+      if (!m || !m.__flReply || !pending[m.id]) return;
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(new Error(m.error)); else p.resolve(m.result);
+    };
+    port.start();
+  }
   window.FormLogic = {
     /** { appName, forms: [{ formId, displayName, fields }] } */
     context: function(){ return call('context'); },
@@ -112,7 +120,7 @@ export function AppCustomScreenRuntime({
   const srcDoc = useMemo(() => {
     const css = assets.css || '';
     const html = assets.html || '';
-    const js = (assets.js || '').replace(/<\/script>/gi, '<\\/script>');
+    const js = (assets.js || '').replace(/<\/script(?=[\s/>])/gi, '<\\/script');
     // The document keeps its initial palette; later theme changes use postMessage.
     const dark = initialScheme === 'dark';
     const palette = screenPaletteCss(accentColor, readableForegroundColor(accentColor));
@@ -142,68 +150,104 @@ export function AppCustomScreenRuntime({
   const docSentRef = useRef(false);
   const loadCountRef = useRef(0);
   const escapedRef = useRef(false);
-  useEffect(() => {
-    docSentRef.current = false;
-    loadCountRef.current = 0;
-    escapedRef.current = false;
-  }, [generation]);
+  const portRef = useRef<MessagePort | null>(null);
+  const rpcHandlerRef = useRef<((e: MessageEvent, requestPort: MessagePort) => Promise<void>) | null>(null);
+  const closeActivePort = useCallback(() => {
+    if (portRef.current) {
+      portRef.current.onmessage = null;
+      try { portRef.current.close(); } catch { /* ignore */ }
+      portRef.current = null;
+    }
+  }, []);
+  const frameGenRef = useRef(generation);
+  const ensureCurrentFrameRefs = useCallback(() => {
+    if (frameGenRef.current !== generation) {
+      frameGenRef.current = generation;
+      docSentRef.current = false;
+      loadCountRef.current = 0;
+      escapedRef.current = false;
+      closeActivePort();
+    }
+  }, [generation, closeActivePort]);
+  useLayoutEffect(() => {
+    ensureCurrentFrameRefs();
+  }, [ensureCurrentFrameRefs]);
 
   const sendDocOnce = useCallback(() => {
+    ensureCurrentFrameRefs();
     if (docSentRef.current || escapedRef.current) return;
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     docSentRef.current = true;
-    win.postMessage({ __flScreenDoc: srcDoc }, '*');
-  }, [srcDoc]);
+    closeActivePort();
+    const channel = new MessageChannel();
+    const hostPort = channel.port1;
+    portRef.current = hostPort;
+    hostPort.onmessage = (e: MessageEvent) => {
+      if (e.data && (e.data as { __flScreenClosed?: boolean }).__flScreenClosed) {
+        escapedRef.current = true;
+        closeActivePort();
+        return;
+      }
+      void rpcHandlerRef.current?.(e, hostPort);
+    };
+    hostPort.start();
+    win.postMessage({ __flScreenDoc: srcDoc }, '*', [channel.port2]);
+    if (schemeRef.current !== initialScheme) {
+      hostPort.postMessage({ __flTheme: schemeRef.current });
+    }
+  }, [ensureCurrentFrameRefs, closeActivePort, srcDoc, initialScheme]);
 
   const handleIframeLoad = useCallback(() => {
+    ensureCurrentFrameRefs();
     loadCountRef.current += 1;
     if (loadCountRef.current === 1) {
       sendDocOnce();
     } else {
+      // screen-host.html hydrates in place without document.open()/close(), so any second load
+      // unconditionally indicates an unexpected navigation away from the initialized sandbox document.
       escapedRef.current = true;
+      closeActivePort();
     }
-  }, [sendDocOnce]);
+  }, [ensureCurrentFrameRefs, sendDocOnce, closeActivePort]);
 
   useEffect(() => {
     const onReady = (e: MessageEvent) => {
       if (!e.data || !(e.data as { __flScreenHostReady?: boolean }).__flScreenHostReady) return;
       if (!iframeRef.current || e.source !== iframeRef.current.contentWindow) return;
       if (e.origin !== 'null') return;
-      sendDocOnce();
+      if (loadCountRef.current === 1) {
+        sendDocOnce();
+      }
     };
     window.addEventListener('message', onReady);
     return () => window.removeEventListener('message', onReady);
   }, [sendDocOnce]);
 
-  // Push theme changes into the already-loaded iframe (instant, no reload).
+  // Push theme changes into the already-loaded iframe over its private MessagePort (instant, no reload).
   useEffect(() => {
-    iframeRef.current?.contentWindow?.postMessage({ __flTheme: colorScheme }, '*');
+    if (escapedRef.current || !portRef.current) return;
+    portRef.current.postMessage({ __flTheme: colorScheme });
   }, [colorScheme]);
+
+  useEffect(() => () => closeActivePort(), [srcDoc, closeActivePort]);
 
   useEffect(() => {
     const formIds = new Set(forms.map((f) => f.formId));
     const ctxForms = forms.map((f) => ({ formId: f.formId, displayName: f.displayName, fields: f.fields }));
 
-    const handler = async (e: MessageEvent) => {
+    const handler = async (e: MessageEvent, requestPort: MessagePort) => {
       const m = e.data;
-      if (!m || !m.__fl || escapedRef.current || !iframeRef.current || e.source !== iframeRef.current.contentWindow || e.origin !== 'null') return;
-      const requestWindow = iframeRef.current.contentWindow;
-      // Only the CURRENT document generation may act (audit FL-15): the WindowProxy
-      // survives a srcdoc swap, so the dying predecessor can still post — executing
-      // its requests against the new screen's forms/trust would be a stale-document
-      // confused-deputy. Refuse with an honest error instead.
+      if (!m || !m.__fl || escapedRef.current || portRef.current !== requestPort) return;
+      // Only the CURRENT document generation may act (audit FL-15).
       if (m.gen !== generation) {
-        iframeRef.current.contentWindow?.postMessage(
-          { __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' },
-          '*'
-        );
+        requestPort.postMessage({ __flReply: true, id: m.id, error: 'This screen was reloaded — request ignored.' });
         return;
       }
       let result: unknown;
       let error: string | undefined;
       if (!rateRef.current(String(m.action))) {
-        iframeRef.current.contentWindow?.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' }, '*');
+        requestPort.postMessage({ __flReply: true, id: m.id, error: 'Too many requests — slow down.' });
         return;
       }
       const requireForm = (id: unknown): string => {
@@ -260,12 +304,14 @@ export function AppCustomScreenRuntime({
       } catch (err) {
         error = err instanceof Error ? err.message : 'Request failed';
       }
-      // An awaited API request belongs to its original document, even after reload.
-      if (iframeRef.current?.contentWindow !== requestWindow) return;
-      requestWindow?.postMessage({ __flReply: true, id: m.id, result, error }, '*');
+      // An awaited API request belongs to its original document; never deliver to a replacement or escaped navigation.
+      if (escapedRef.current || portRef.current !== requestPort) return;
+      requestPort.postMessage({ __flReply: true, id: m.id, result, error });
     };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
+    rpcHandlerRef.current = handler;
+    return () => {
+      if (rpcHandlerRef.current === handler) rpcHandlerRef.current = null;
+    };
   }, [appSlug, appName, forms, user, onNavigate, accentColor, screen._trust, generation]);
 
   return (

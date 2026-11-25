@@ -272,7 +272,7 @@ final class NativeRecordStore
      *
      * @return array{0: list<mixed>, 1: array<int, true>, 2: string}
      */
-    private static function previews(string $table, array $values, int $count): array
+    private static function previews(string $table, array $values, int $count, ?string $revisionKey = null): array
     {
         $shown = $cut = [];
         $parts = [$table];
@@ -286,7 +286,11 @@ final class NativeRecordStore
             $parts[] = $value;
             $shown[] = $type === 'blob' ? '[binary]' : $value;
         }
-        return [$shown, $cut, hash('sha256', serialize($parts))];
+        $payload = serialize($parts);
+        $stamp = $revisionKey !== null
+            ? hash_hmac('sha256', 'stamp|' . $payload, $revisionKey)
+            : hash('sha256', $payload);
+        return [$shown, $cut, $stamp];
     }
 
     /**
@@ -333,7 +337,7 @@ final class NativeRecordStore
         $end = !$more ? 'end' : ($effective + $limit > self::OFFSET_LIMIT ? 'limit' : 'more');
         $rows = $keys = $stamps = $cut = [];
         foreach (array_slice($found, 0, $limit) as $index => $values) {
-            [$shown, $clipped, $stamp] = self::previews($table, $values, count($stamped));
+            [$shown, $clipped, $stamp] = self::previews($table, $values, count($stamped), $this->revisionKey);
             $row = [];
             foreach ($visible as $i => $name) {
                 $value = $shown[$i];
@@ -692,7 +696,7 @@ final class NativeRecordStore
             $keys = self::locate($schema, $row['key'])[1];
             $look->execute($keys);
             $found = $look->fetchAll(PDO::FETCH_NUM);
-            if (count($found) !== 1 || !hash_equals(self::previews($table, $found[0], count($stamped))[2], $row['stamp'])) { $stale++; continue; }
+            if (count($found) !== 1 || !hash_equals(self::previews($table, $found[0], count($stamped), $this->revisionKey)[2], $row['stamp'])) { $stale++; continue; }
             // Under the key the database gives the row, so two spellings of one key ('7', '07') are one target.
             $targets[serialize(array_slice($found[0], 2 * count($stamped)))] = $keys;
         }

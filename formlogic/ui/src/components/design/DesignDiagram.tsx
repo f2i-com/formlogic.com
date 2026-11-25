@@ -6,7 +6,7 @@
 // says "each of these belongs to one of those", and a tap opens the table. On a phone the same
 // design can be read as a list.
 import { useEffect, useRef, useState } from 'react';
-import { Background, ConnectionMode, Controls, Handle, Position, ReactFlow, ReactFlowProvider, applyNodeChanges, useReactFlow, type Connection, type Edge, type Node, type NodeChange, type NodePositionChange, type NodeProps } from '@xyflow/react';
+import { Background, ConnectionMode, Controls, Handle, NodeChangeset, Position, ReactFlow, ReactFlowProvider, useReactFlow, type Connection, type Edge, type Node, type NodeProps, type OnNodesChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './DesignDiagram.css';
 import dagre from 'dagre';
@@ -188,14 +188,15 @@ function Canvas({ design, problems, selected, onSelect, onChange, narrow, readOn
       });
     });
   }
-  const onNodesChange = (changes: NodeChange<Node<TableData>>[]) => {
-    setNodes(current => applyNodeChanges(changes.filter(change => change.type !== 'select' && change.type !== 'remove'), current));
+  const onNodesChange: OnNodesChange<Node<TableData>> = (changes) => {
+    const applied = new NodeChangeset<Node<TableData>>(changes.toArray().filter(change => change.type !== 'select' && change.type !== 'remove'));
+    if (!applied.isEmpty()) setNodes(current => applied.applyTo(current));
     if (readOnly) return;
     // A card chosen from the keyboard (Tab to it, Enter) opens as a click does.
-    const chosen = changes.filter(change => change.type === 'select' && change.selected).pop();
-    if (chosen && chosen.type === 'select') onSelect(chosen.id);
+    const chosen = changes.getByType('select').filter(change => change.selected).pop();
+    if (chosen) onSelect(chosen.id);
     // A card moved with the arrow keys is kept where it went, as a dragged one is.
-    const moved = changes.filter((change): change is NodePositionChange => change.type === 'position' && !!change.position && !change.dragging);
+    const moved = changes.getByType('position').filter(change => !!change.position && !change.dragging);
     if (moved.length) onChange({ ...design, tables: design.tables.map(table => {
       const position = moved.find(change => change.id === table.id)?.position;
       return position ? { ...table, at: { x: Math.round(position.x), y: Math.round(position.y) } } : table;

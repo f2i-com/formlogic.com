@@ -1,5 +1,5 @@
 // Build the shared app engine once, then serve it as static, unprivileged frame assets.
-import { cp, access, writeFile, readFile, realpath, lstat, mkdtemp, rm } from 'node:fs/promises';
+import { cp, access, writeFile, readFile, realpath, lstat, mkdtemp, rename, rm } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, basename, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -49,8 +49,28 @@ try {
   // runtime FormLogic would mount a 404 from the moment an owner chose host-js.
   await checkEntryDocuments(staged);
   await checkRuntimeArtifact(staged, source);
-  await rm(outputPath, { recursive: true, force: true });
-  await installRuntimeArtifact(staged, outputPath, source);
+  // Install into a sibling staging target first, then swap atomically with rollback so a copy
+  // or rename error never leaves public/hosted-runtime deleted or half-written.
+  const nextDir = `${outputPath}.next-${process.pid}-${Date.now()}`;
+  const backupDir = `${outputPath}.prev-${process.pid}-${Date.now()}`;
+  let movedPrevious = false;
+  try {
+    await installRuntimeArtifact(staged, nextDir, source);
+    if (previous) {
+      await rename(outputPath, backupDir);
+      movedPrevious = true;
+    }
+    await rename(nextDir, outputPath);
+    if (movedPrevious) {
+      await rm(backupDir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    await rm(nextDir, { recursive: true, force: true }).catch(() => {});
+    if (movedPrevious) {
+      await rename(backupDir, outputPath).catch(() => {});
+    }
+    throw err;
+  }
 } finally {
   await rm(staged, { recursive: true, force: true });
 }

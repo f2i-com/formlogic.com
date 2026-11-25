@@ -109,6 +109,9 @@ class PackCatalogController
         }
 
         $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
         $packData = $body['pack'] ?? null;
 
         if (!$packData || !is_array($packData)) {
@@ -201,6 +204,9 @@ class PackCatalogController
         }
 
         $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
         $packData = $body['pack'] ?? null;
         $version = $body['version'] ?? null;
 
@@ -245,6 +251,9 @@ class PackCatalogController
         }
 
         $body = $request->getParsedBody();
+        if (!is_array($body)) {
+            return $this->jsonResponse($response, ['error' => true, 'message' => 'Invalid request body'], 400);
+        }
 
         try {
             $this->catalogService->updatePackMeta($catalog['id'], $body, $userId);

@@ -37,18 +37,29 @@ class TotpService
      */
     public function verify(string $secret, string $code, int $window = 1, ?int $now = null): bool
     {
+        return $this->verifyStep($secret, $code, $window, $now) !== null;
+    }
+
+    /**
+     * Verify a submitted TOTP code and return the matched 30-second counter step
+     * (so callers can reject replayed codes for the same or earlier time step),
+     * or null when no step in ±$window matched.
+     */
+    public function verifyStep(string $secret, string $code, int $window = 1, ?int $now = null): ?int
+    {
         $code = preg_replace('/\s+/', '', $code) ?? '';
         if (preg_match('/^\d{' . self::DIGITS . '}$/', $code) !== 1) {
-            return false;
+            return null;
         }
         $now ??= time();
         $counter = intdiv($now, self::PERIOD);
         for ($i = -$window; $i <= $window; $i++) {
-            if (hash_equals($this->code($secret, $counter + $i), $code)) {
-                return true;
+            $step = $counter + $i;
+            if (hash_equals($this->code($secret, $step), $code)) {
+                return $step;
             }
         }
-        return false;
+        return null;
     }
 
     /** The 6-digit code for one specific time counter (exposed for tests + verify). */

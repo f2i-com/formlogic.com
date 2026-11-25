@@ -509,36 +509,42 @@ final class FormEncryptionService
             $reasons[] = 'has_flow_bindings';
         }
 
+        // Escape SQL LIKE wildcards (`!`, `%`, `_`) with a non-backslash escape character so the
+        // query behaves identically across MySQL (including NO_BACKSLASH_ESCAPES) and SQLite.
+        $escapedFormId = str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $formId);
+        $needle = '%' . $escapedFormId . '%';
+
         // No flow NODES referencing the form either (§9.1 item 5): a trigger-less
         // flow can still read/write the form via formlogic_* nodes (the form id
-        // lives inside flow_json) or via binding output actions. LIKE over the
-        // owner's flows is sufficient — the id is a UUID, false positives are
-        // practically impossible, and enable is a rare operation.
+        // lives inside flow_json) or via binding output actions.
         $stmt = $this->mysql->prepare("
             SELECT COUNT(*) FROM flow_definitions
-            WHERE owner_user_id = :u AND flow_json LIKE :needle
+            WHERE owner_user_id = :u AND flow_json LIKE :needle ESCAPE '!'
         ");
-        $stmt->execute(['u' => $userId, 'needle' => '%' . $formId . '%']);
+        $stmt->execute(['u' => $userId, 'needle' => $needle]);
         if ((int) $stmt->fetchColumn() > 0) {
             $reasons[] = 'has_flow_nodes';
         }
         $stmt = $this->mysql->prepare("
-            SELECT COUNT(*) FROM app_flow_bindings
-            WHERE output_actions_json LIKE :needle OR input_map_json LIKE :needle2
+            SELECT COUNT(*) FROM app_flow_bindings b
+            JOIN flow_definitions f ON f.id = b.flow_id
+            WHERE f.owner_user_id = :u
+              AND (b.output_actions_json LIKE :needle ESCAPE '!' OR b.input_map_json LIKE :needle2 ESCAPE '!')
         ");
-        $stmt->execute(['needle' => '%' . $formId . '%', 'needle2' => '%' . $formId . '%']);
+        $stmt->execute(['u' => $userId, 'needle' => $needle, 'needle2' => $needle]);
         if ((int) $stmt->fetchColumn() > 0) {
             $reasons[] = 'has_flow_nodes';
         }
 
         // No report/widget specs referencing the form (§9.1 item 5): app-level
-        // reports/dashboards aggregate answers. apps.reports / apps.custom_screen
-        // are JSON blobs — LIKE on the form id (same argument as flow_json).
+        // reports/dashboards aggregate answers. Scoped strictly to the owner's apps
+        // so another tenant cannot DoS Private Encryption enablement.
         $stmt = $this->mysql->prepare("
             SELECT COUNT(*) FROM apps
-            WHERE (reports LIKE :needle OR custom_screen LIKE :needle2)
+            WHERE owner_id = :u
+              AND (reports LIKE :needle ESCAPE '!' OR custom_screen LIKE :needle2 ESCAPE '!')
         ");
-        $stmt->execute(['needle' => '%' . $formId . '%', 'needle2' => '%' . $formId . '%']);
+        $stmt->execute(['u' => $userId, 'needle' => $needle, 'needle2' => $needle]);
         if ((int) $stmt->fetchColumn() > 0) {
             $reasons[] = 'has_report_specs';
         }

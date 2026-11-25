@@ -38,7 +38,7 @@ class PackageInstallPlanController
     /** Workspace policy: only positively-verified (signed) application packages may install. */
     private function requireVerifiedPackages(): bool
     {
-        return (($_ENV['REQUIRE_VERIFIED_PACKAGES'] ?? getenv('REQUIRE_VERIFIED_PACKAGES')) === 'true');
+        return filter_var(\FormLogic\Support\Environment::get('REQUIRE_VERIFIED_PACKAGES', 'false'), FILTER_VALIDATE_BOOLEAN);
     }
 
     /**
@@ -121,6 +121,14 @@ class PackageInstallPlanController
                     ], 403);
                 }
                 $plan = $this->plans->propose($aggregate, (string) $userId, (string) $parsed['trust'], 'archive', PackCapabilities::describeV2($aggregate));
+                if ($this->requireVerifiedPackages() && $this->hasUnverifiedPlannedDependency($plan)) {
+                    $this->plans->cancel((string) $plan['planId'], (string) $userId);
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'code' => 'unverified_package',
+                        'message' => 'This workspace only allows verified (signed) application packages and dependencies.',
+                    ], 403);
+                }
                 return $this->jsonResponse($response, array_merge(['formatVersion' => 2], $plan), 201);
             } catch (\RuntimeException $e) {
                 return $this->jsonResponse($response, ['error' => true, 'code' => 'invalid_package', 'message' => $e->getMessage()], 400);
@@ -182,6 +190,14 @@ class PackageInstallPlanController
         } catch (\Exception $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Failed to propose the install plan'], 500);
         }
+        if ($this->requireVerifiedPackages() && $this->hasUnverifiedPlannedDependency($plan)) {
+            $this->plans->cancel((string) $plan['planId'], (string) $userId);
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'code' => 'unverified_package',
+                'message' => 'This workspace only allows verified (signed) application packages and dependencies.',
+            ], 403);
+        }
         return $this->jsonResponse($response, array_merge(['formatVersion' => 2], $plan), 201);
     }
 
@@ -232,18 +248,31 @@ class PackageInstallPlanController
         if ($plan === null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Install plan not found'], 404);
         }
-        if ($this->requireVerifiedPackages() && !in_array($plan['trust'], ['official', 'local-only'], true)) {
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'code' => 'unverified_package',
-                'message' => 'This workspace only allows verified (signed) application packages.',
-            ], 403);
+        if ($this->requireVerifiedPackages()) {
+            $allTrusts = [(string) $plan['trust']];
+            foreach (is_array($plan['plannedInstalls'] ?? null) ? $plan['plannedInstalls'] : [] as $dep) {
+                if (is_array($dep) && isset($dep['trust'])) {
+                    $allTrusts[] = (string) $dep['trust'];
+                }
+            }
+            foreach ($allTrusts as $t) {
+                if (!in_array($t, ['official', 'local-only'], true)) {
+                    return $this->jsonResponse($response, [
+                        'error' => true,
+                        'code' => 'unverified_package',
+                        'message' => 'This workspace only allows verified (signed) application packages.',
+                    ], 403);
+                }
+            }
         }
 
         try {
             $result = $this->plans->confirm($planId, (string) $userId, $planDigest, $approved);
         } catch (\RuntimeException $e) {
             $msg = $e->getMessage();
+            if (str_starts_with($msg, 'unverified_package')) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => 'unverified_package', 'message' => $msg], 403);
+            }
             $conflict = str_starts_with($msg, 'plan_not_confirmable') || str_starts_with($msg, 'plan_digest_mismatch');
             return $this->jsonResponse($response, ['error' => true, 'message' => $msg], $conflict ? 409 : 400);
         } catch (\Exception $e) {
@@ -304,5 +333,20 @@ class PackageInstallPlanController
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Install plan not found or not cancellable'], 404);
         }
         return $this->jsonResponse($response, ['success' => true]);
+    }
+
+    /** @param array<string,mixed> $plan */
+    private function hasUnverifiedPlannedDependency(array $plan): bool
+    {
+        foreach (is_array($plan['plannedInstalls'] ?? null) ? $plan['plannedInstalls'] : [] as $dep) {
+            if (!is_array($dep)) {
+                continue;
+            }
+            $trust = (string) ($dep['trust'] ?? 'community');
+            if (!in_array($trust, ['official', 'local-only'], true)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

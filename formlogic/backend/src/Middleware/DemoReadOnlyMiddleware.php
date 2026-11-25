@@ -75,12 +75,17 @@ class DemoReadOnlyMiddleware implements MiddlewareInterface
 
         $path = $request->getUri()->getPath();
         // Live Demo Sandbox bridge: when a request carries an HMAC-verified X-Demo-Sandbox-Token
-        // bound to the visitor's own ephemeral SQLite sandbox, allow response CRUD through so
-        // the real FormLogic Form App and its companion SoftN App share the exact same live
-        // ephemeral SQLite copy without ever mutating the shared Demo database.
+        // bound to the visitor's own ephemeral SQLite sandbox, allow single-record response CRUD
+        // (POST create, PUT/PATCH/DELETE by id) so the real FormLogic Form App and its companion
+        // SoftN App share the exact same live ephemeral SQLite copy without ever mutating the
+        // shared Demo database. Bulk DELETE .../responses is never allowed.
+        $method = strtoupper($request->getMethod());
         if (
             $request->getAttribute('demoSandboxVerified') === true
-            && preg_match('#^/api/app/[^/]+/forms/[^/]+/responses(?:/[^/]+)?$#', $path) === 1
+            && (
+                ($method === 'POST' && preg_match('#^/api/app/[^/]+/forms/[^/]+/responses$#', $path) === 1)
+                || (in_array($method, ['PUT', 'PATCH', 'DELETE'], true) && preg_match('#^/api/app/[^/]+/forms/[^/]+/responses/[^/]+$#', $path) === 1)
+            )
         ) {
             return $handler->handle($request);
         }

@@ -33,12 +33,33 @@ use FormLogic\Services\FormService;
 use FormLogic\Services\ResponseService;
 use Psr\Log\NullLogger;
 
+if (PHP_SAPI !== 'cli') {
+    return;
+}
+
+$listWithExt = static function (string $dir, string $ext): array {
+    if (!is_dir($dir)) return [];
+    $entries = @scandir($dir);
+    if (!is_array($entries)) return [];
+    $out = [];
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..' || !str_ends_with($entry, $ext)) continue;
+        $full = $dir . DIRECTORY_SEPARATOR . $entry;
+        if (is_file($full)) $out[] = $full;
+    }
+    sort($out);
+    return $out;
+};
+
 $folder = rtrim((string) ($argv[1] ?? ''), '/\\');
-if ($folder === '' || !is_dir($folder . '/accounts')) {
+$accountsDir = $folder . DIRECTORY_SEPARATOR . 'accounts';
+if ($folder === '' || !is_dir($accountsDir)) {
     fwrite(STDERR, "Usage: php backend/bin/restore-app-storage.php <scheduled backup folder>\n");
     exit(2);
 }
-if ((glob($folder . '/accounts/*.zip') ?: []) === [] && (glob($folder . '/accounts/*.flbk') ?: []) !== []) {
+$zipFiles = $listWithExt($accountsDir, '.zip');
+$sealedFiles = $listWithExt($accountsDir, '.flbk');
+if ($zipFiles === [] && $sealedFiles !== []) {
     fwrite(STDERR, "This backup is sealed. Open it first: php backend/bin/open-backup.php {$folder} --secret-key-file=<your secret key file>\n");
     exit(2);
 }
@@ -46,6 +67,7 @@ if ((glob($folder . '/accounts/*.zip') ?: []) === [] && (glob($folder . '/accoun
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 $settings = $config['settings'];
 
@@ -68,7 +90,7 @@ $backup = new AccountBackupService(
 );
 
 $failed = 0;
-foreach (glob($folder . '/accounts/*.zip') ?: [] as $zip) {
+foreach ($zipFiles as $zip) {
     try {
         $result = $backup->restoreAppStorage($zip);
         printf(

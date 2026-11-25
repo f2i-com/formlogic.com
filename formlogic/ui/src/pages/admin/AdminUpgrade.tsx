@@ -44,8 +44,8 @@ export function AdminUpgrade() {
     setJournal(null);
     const r = await api.adminUpgradeUpload(file);
     setUploading(false);
-    if (r.error) toast.error('Package rejected', r.error);
-    else toast.success(`Package v${r.data!.staged.version} staged`, r.data!.staged.integrity === 'signed' ? 'Release signature and every file checksum verified.' : 'Unsigned development package — allowed only by the local override.');
+    if (r.error || !r.data?.staged) toast.error('Package rejected', r.error || 'Unexpected empty server response.');
+    else toast.success(`Package v${r.data.staged.version} staged`, r.data.staged.integrity === 'signed' ? 'Release signature and every file checksum verified.' : 'Unsigned development package — allowed only by the local override.');
     load();
   };
 
@@ -54,11 +54,11 @@ export function AdminUpgrade() {
     setReleaseError(null);
     const result = await api.adminUpgradeLatest();
     setChecking(false);
-    if (result.error) {
+    if (result.error || !result.data) {
       setRelease(undefined);
-      setReleaseError(result.error);
+      setReleaseError(result.error || 'Unexpected empty server response.');
     } else {
-      setRelease(result.data!.release);
+      setRelease(result.data.release);
     }
   };
 
@@ -69,8 +69,8 @@ export function AdminUpgrade() {
     setReleaseError(null);
     const result = await api.adminUpgradeDownload(release);
     setUploading(false);
-    if (result.error) setReleaseError(result.error);
-    else toast.success(`Version ${result.data!.staged.version} is ready`, 'Official GitHub release and every file checksum verified. Review it below before installing.');
+    if (result.error || !result.data?.staged) setReleaseError(result.error || 'Unexpected empty server response.');
+    else toast.success(`Version ${result.data.staged.version} is ready`, 'Official GitHub release and every file checksum verified. Review it below before installing.');
     load();
   };
 
@@ -84,12 +84,12 @@ export function AdminUpgrade() {
     // concurrent re-stage 409s instead of silently applying other bytes.
     const r = await api.adminUpgradeApply(staged.packageId, staged.digest, false, staged.isDowngrade);
     setApplying(false);
-    if (r.error) {
-      toast.error('Upgrade failed', r.error);
+    if (r.error || !r.data) {
+      toast.error('Upgrade failed', r.error || 'Unexpected empty server response.');
     } else {
-      setJournal(r.data!.journal);
-      setUpgradedTo(r.data!.toVersion);
-      toast.success(`Upgraded to v${r.data!.toVersion}`, 'Reload to load the new interface cleanly.');
+      setJournal(r.data.journal);
+      setUpgradedTo(r.data.toVersion);
+      toast.success(`Upgraded to v${r.data.toVersion}`, 'Reload to load the new interface cleanly.');
     }
     load();
   };
@@ -100,10 +100,10 @@ export function AdminUpgrade() {
     setRollbackId(null);
     // Confirmed only when the dialog said what it would break.
     const r = await api.adminUpgradeRollback(id, !!status?.backups.find((b) => b.id === id)?.rollbackWarning);
-    if (r.error) toast.error('Rollback failed', r.error);
+    if (r.error || !r.data) toast.error('Rollback failed', r.error || 'Unexpected empty server response.');
     else {
-      setJournal(r.data!.journal);
-      toast.success(`Rolled back to v${r.data!.restoredVersion}`);
+      setJournal(r.data.journal);
+      toast.success(`Rolled back to v${r.data.restoredVersion}`);
     }
     load();
   };
@@ -113,8 +113,8 @@ export function AdminUpgrade() {
     const id = restoreDbId;
     setRestoreDbId(null);
     const r = await api.adminUpgradeRestoreDb(id);
-    if (r.error) toast.error('Database restore failed', r.error);
-    else toast.success('Database restored', `${r.data!.statements.toLocaleString()} statements executed.`);
+    if (r.error || !r.data) toast.error('Database restore failed', r.error || 'Unexpected empty server response.');
+    else toast.success('Database restored', `${r.data.statements.toLocaleString()} statements executed.`);
     load();
   };
 
@@ -238,8 +238,8 @@ export function AdminUpgrade() {
           <Button size="sm" variant="outline" leftIcon={<DownloadCloud className="h-4 w-4" />}
             onClick={async () => {
               const r = await api.adminUpgradeExportDb();
-              if (r.error) toast.error('Export failed', r.error);
-              else toast.success('Database exported', `Backup ${r.data!.backupId} created.`);
+              if (r.error || !r.data) toast.error('Export failed', r.error || 'Unexpected empty server response.');
+              else toast.success('Database exported', `Backup ${r.data.backupId} created.`);
               load();
             }}>
             Export database now

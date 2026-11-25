@@ -126,11 +126,25 @@ try {
     fwrite(STDERR, sprintf("[%s] backup run FAILED: %s\n", date('c'), $e->getMessage()));
 }
 
-// The purges below delete files. A backup reads an account's files when it closes that account's
-// zip, so a file deleted under it fails the whole account for the night. Beside another run they
-// wait: this job, if that is what's running, does them when it finishes; the admin panel's run
-// doesn't, and tomorrow night's does. Their failures are reported, and don't fail the run.
+// The purges below delete files. Acquire the same MySQL advisory lock as ScheduledBackupService
+// so destructive purges can never overlap a concurrent backup started from the admin panel or cron.
 if (!$anotherRunning) {
+    $pdo = $mysql->getConnection();
+    $purgeLockName = null;
+    $purgeLockHeld = false;
+    try {
+        $dbName = (string) $pdo->query('SELECT DATABASE()')->fetchColumn();
+        $purgeLockName = 'formlogic.scheduled_backup.' . $dbName;
+        $lockStmt = $pdo->prepare('SELECT GET_LOCK(?, 0)');
+        $lockStmt->execute([$purgeLockName]);
+        $purgeLockHeld = (int) $lockStmt->fetchColumn() === 1;
+    } catch (\Throwable $e) {
+        fwrite(STDERR, sprintf("[%s] skipping purges: could not acquire backup lock: %s\n", date('c'), $e->getMessage()));
+    }
+    if (!$purgeLockHeld) {
+        fwrite(STDERR, sprintf("[%s] skipping purges: another backup is currently running\n", date('c')));
+    } else {
+        try {
     // Nightly maintenance shares this job: purge recycle-bin items past their
     // 30-day window (trash.retentionDays) + sweep orphaned snapshot zips.
     try {
@@ -192,6 +206,16 @@ if (!$anotherRunning) {
         printf("[%s] retention: %d expired record(s)\n", date('c'), $expired);
     } catch (\Throwable $e) {
         fwrite(STDERR, sprintf("[%s] retention FAILED: %s\n", date('c'), $e->getMessage()));
+    }
+        } finally {
+            if ($purgeLockName !== null) {
+                try {
+                    $relStmt = $pdo->prepare('SELECT RELEASE_LOCK(?)');
+                    $relStmt->execute([$purgeLockName]);
+                    $relStmt->fetchColumn();
+                } catch (\Throwable) {}
+            }
+        }
     }
 }
 

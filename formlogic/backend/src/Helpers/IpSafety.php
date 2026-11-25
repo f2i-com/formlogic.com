@@ -155,7 +155,8 @@ class IpSafety
             return null;
         }
         $port = $parts['port'] ?? (strtolower($parts['scheme'] ?? 'https') === 'https' ? 443 : 80);
-        return "{$host}:{$port}:{$ip}";
+        $formattedIp = str_contains($ip, ':') && !str_starts_with($ip, '[') ? "[{$ip}]" : $ip;
+        return "{$host}:{$port}:{$formattedIp}";
     }
 
     /**

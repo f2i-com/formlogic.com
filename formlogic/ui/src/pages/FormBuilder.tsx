@@ -1181,6 +1181,7 @@ export default function FormBuilder() {
       fc.forgetFormKeys(form.id);
       const fieldsRevision = (res.body?.form as { fieldsRevision?: string } | undefined)?.fieldsRevision;
       useFormStore.getState().setFormLocal(form.id, { status: 'published', fieldsRevision });
+      void loadFullForm(form.id, { force: true });
     } else {
       await updateForm(form.id, { status: 'published' });
       // FL-SAVE-001: updateForm only SCHEDULES the server write - flush it and
@@ -1847,7 +1848,10 @@ export default function FormBuilder() {
         formId={form.id}
         onSave={(settings) => updateForm(form.id, { settings })}
         isPrivate={storageMode === 'api' && !acting ? isPrivateForm : undefined}
-        onEncryptionEnabled={() => setPrivacy({ formId: form.id, private: true })}
+        onEncryptionEnabled={() => {
+          setPrivacy({ formId: form.id, private: true });
+          void loadFullForm(form.id, { force: true });
+        }}
       />
 
       {/* Version History */}

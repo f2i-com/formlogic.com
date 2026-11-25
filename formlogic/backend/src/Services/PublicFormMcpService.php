@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FormLogic\Services;
 
 use FormLogic\Controllers\ResponseController;
+use FormLogic\Helpers\AppUrl;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Psr7\Response as SlimResponse;
 
@@ -256,7 +257,7 @@ class PublicFormMcpService
                         ? array_values(array_filter($args['scopes'], 'is_string'))
                         : null;
                     $appId = is_string($args['appId'] ?? null) ? $args['appId'] : null;
-                    $origin = McpOAuthService::publicOrigin($request);
+                    $origin = $this->trustedFrontendOrigin($request);
                     $started = $this->deviceAuth->startLogin($clientName, $scopes, $appId, $origin);
                     $started['instructions'] = "Ask the user to open {$started['verificationUriComplete']} in their browser, sign in to FormLogic (or create an account), verify code {$started['userCode']}, and click Approve. Once they approve, call complete_mcp_login with the deviceCode.";
                     return $this->toolOk($started);
@@ -317,7 +318,7 @@ class PublicFormMcpService
             'sections' => $structured['sections'],
             'fields' => $structured['fields'],
             'fillingGuidance' => $isPrivate
-                ? 'This is an end-to-end encrypted private form. Collect answers section by section, validate with validate_form_answers, then call save_form_draft and give the user resumeUrl so their browser encrypts and submits securely.'
+                ? 'This is an end-to-end encrypted private form. Answers must never be sent to server-side validation or drafts — direct the user to open the form link in their browser so their browser encrypts and submits directly.'
                 : 'Walk through the form section by section with the user. Use validate_form_answers to check partial progress and save_form_draft at any point to give the user a resumeUrl or downloadable .json backup. Once complete and confirmed by the user, call submit_public_form with confirmSubmit: true (or let the user review and sign at resumeUrl).',
         ];
     }
@@ -333,6 +334,9 @@ class PublicFormMcpService
         $loaded = $this->loadPublicForm($formId);
         if (!$loaded['ok']) {
             throw new \RuntimeException($loaded['error']);
+        }
+        if ($this->isPrivateForm($formId)) {
+            throw new \RuntimeException('This form is end-to-end encrypted. Plaintext answers cannot be sent to server-side MCP validation.');
         }
         $form = $loaded['form'];
         $fields = is_array($form['fields'] ?? null) ? $form['fields'] : [];
@@ -408,6 +412,9 @@ class PublicFormMcpService
         if (!$loaded['ok']) {
             throw new \RuntimeException($loaded['error']);
         }
+        if ($this->isPrivateForm($formId)) {
+            throw new \RuntimeException('This form is end-to-end encrypted. Plaintext drafts cannot be saved on the server — fill and submit directly in the browser.');
+        }
         $form = $loaded['form'];
         $fields = is_array($form['fields'] ?? null) ? $form['fields'] : [];
 
@@ -416,7 +423,7 @@ class PublicFormMcpService
         $saved = $this->drafts->saveDraft($formId, $normalized, $currentSectionIndex, $existingToken, $label, 'mcp');
         $validation = $this->validateAnswersPayload($formId, $normalized);
 
-        $origin = McpOAuthService::publicOrigin($request);
+        $origin = $this->trustedFrontendOrigin($request);
         $resumeUrl = $origin . '/form/' . rawurlencode($formId) . '?draft=' . rawurlencode($saved['draftToken']);
 
         return [
@@ -445,12 +452,15 @@ class PublicFormMcpService
         if (!$loaded['ok']) {
             throw new \RuntimeException($loaded['error']);
         }
+        if ($this->isPrivateForm($formId)) {
+            throw new \RuntimeException('This form is end-to-end encrypted and does not support server-side drafts.');
+        }
         $draft = $this->drafts->getDraft($formId, $draftToken);
         if ($draft === null) {
             throw new \RuntimeException('Draft not found or expired.');
         }
         $validation = $this->validateAnswersPayload($formId, $draft['answers']);
-        $origin = McpOAuthService::publicOrigin($request);
+        $origin = $this->trustedFrontendOrigin($request);
         return [
             'formId' => $formId,
             'label' => $draft['label'],
@@ -463,6 +473,30 @@ class PublicFormMcpService
             'missingRequired' => $validation['missingRequired'],
             'sectionProgress' => $validation['sectionProgress'],
         ];
+    }
+
+    /**
+     * Resolve the server-trusted frontend origin for user-facing login and draft resume URLs,
+     * preventing split-origin 404s and Host-header link poisoning.
+     */
+    private function trustedFrontendOrigin(Request $request): string
+    {
+        try {
+            $base = AppUrl::frontendBase($request);
+            $parts = parse_url($base);
+            $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+            $host = strtolower((string) ($parts['host'] ?? ''));
+            $isDev = strtolower((string) (getenv('APP_ENV') ?: ($_ENV['APP_ENV'] ?? ''))) === 'development';
+            $isLoopback = $host === 'localhost' || str_ends_with($host, '.localhost')
+                || $host === '[::1]' || $host === '::1' || preg_match('/^127(\.\d{1,3}){3}$/D', $host) === 1;
+            if ($host !== '' && ($scheme === 'https' || ($scheme === 'http' && ($isDev || $isLoopback)))) {
+                $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+                return $scheme . '://' . $host . $port;
+            }
+        } catch (\Throwable) {
+            // Fall back to request origin only when no configured frontend base is set.
+        }
+        return McpOAuthService::publicOrigin($request);
     }
 
     /**
@@ -484,7 +518,7 @@ class PublicFormMcpService
         }
         if ($this->isPrivateForm($formId)) {
             throw new \RuntimeException(
-                'This form uses end-to-end encryption and cannot be submitted in plaintext through the server. Call save_form_draft and give the user resumeUrl so their browser seals and submits it.'
+                'This form uses end-to-end encryption and cannot be submitted in plaintext through the server. Direct the user to open the form link in their browser so their browser seals and submits it.'
             );
         }
 

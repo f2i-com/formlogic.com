@@ -30,7 +30,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const files = pluginsOnly ? [] : readdirSync('dist-package').filter(name => name.endsWith('.zip'));
   if (!pluginsOnly && files.length !== 1) throw new Error('Expected exactly one release ZIP.');
   const plugins = existsSync('dist-oaiy-plugin') ? readdirSync('dist-oaiy-plugin').filter(name => name.endsWith('.zip')) : [];
+  if (pluginsOnly && plugins.length === 0) throw new Error('Expected at least one plugin ZIP in dist-oaiy-plugin/.');
   const paths = [...files.map(name => `dist-package/${name}`), ...plugins.map(name => `dist-oaiy-plugin/${name}`)];
+  if (paths.length === 0) throw new Error('No release assets found to verify.');
   for (const path of paths) {
     const name = path.slice(path.indexOf('/') + 1);
     verifyUploadedAsset(release, name, readFileSync(path));

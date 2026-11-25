@@ -325,11 +325,10 @@ class AIController
             ], 400);
         }
 
-        // Create a secure temp file with restrictive permissions BEFORE writing
+        // Create a secure temp file with an unguessable name (never incorporate client filenames
+        // into paths passed to document converters or shell commands).
         $tempDir = sys_get_temp_dir();
-        $clientFilename = $file->getClientFilename() ?? 'upload';
-        $safeFilename = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($clientFilename));
-        $tempPath = $tempDir . '/' . bin2hex(random_bytes(16)) . '_' . $safeFilename;
+        $tempPath = $tempDir . '/fl_upload_' . bin2hex(random_bytes(16)) . '.tmp';
 
         // Move the uploaded file into place, THEN restrict permissions: moveTo()
         // (move_uploaded_file/rename) replaces the destination inode, so a chmod
@@ -357,6 +356,24 @@ class AIController
                 'message' => 'Unsupported file type: ' . $mimeType,
                 'allowed' => $allowedTypes,
             ], 400);
+        }
+        // Rename with a server-derived extension from the verified MIME type so converters like
+        // LibreOffice / ImageMagick see an accurate extension without trusting client input.
+        $mimeExtMap = [
+            'application/pdf' => 'pdf',
+            'application/msword' => 'doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+        ];
+        if (isset($mimeExtMap[$mimeType])) {
+            $typedPath = substr($tempPath, 0, -4) . '.' . $mimeExtMap[$mimeType];
+            if (@rename($tempPath, $typedPath)) {
+                $tempPath = $typedPath;
+                @chmod($tempPath, 0600);
+            }
         }
 
         try {

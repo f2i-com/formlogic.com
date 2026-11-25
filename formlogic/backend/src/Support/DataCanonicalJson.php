@@ -178,6 +178,11 @@ final class DataCanonicalJson
     private static function serializeObject(array $vars, int $depth): string
     {
         $keys = array_map('strval', array_keys($vars));
+        foreach ($keys as $key) {
+            if (!preg_match('//u', $key)) {
+                throw new \RuntimeException('canonical_invalid: string is not valid UTF-8');
+            }
+        }
         usort($keys, static fn(string $a, string $b): int => strcmp(self::utf16be($a), self::utf16be($b)));
         $parts = [];
         foreach ($keys as $key) {

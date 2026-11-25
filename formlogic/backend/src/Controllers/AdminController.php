@@ -55,6 +55,8 @@ class AdminController
         private ?\FormLogic\Services\RuntimeEngineService $engines = null,
         private ?\FormLogic\Services\AdminSupportActivity $activity = null,
         private ?\FormLogic\Services\SiteAiDesktopSettings $siteAiDesktop = null,
+        private ?\FormLogic\Services\AppUserService $appUsers = null,
+        private ?\FormLogic\Services\NativeAppService $native = null,
     ) {
     }
 
@@ -335,7 +337,7 @@ class AdminController
                 ], 503);
             }
             // Someone asking for this may be locked out by whoever is signed in.
-            $this->auth->revokeTokens($target['id']);
+            $this->auth->revokeAllCredentials($target['id']);
             $this->audit($request, 'admin.password_reset_link', $target['id']);
             return $this->jsonResponse($response, ['success' => true, 'emailed' => true]);
         }
@@ -346,8 +348,8 @@ class AdminController
             $temporary .= $alphabet[random_int(0, strlen($alphabet) - 1)];
         }
         $this->admin->setUserPassword($target['id'], $temporary);
-        // Sign the user out everywhere — old sessions must not survive a support reset.
-        $this->auth->revokeTokens($target['id']);
+        // Sign the user out everywhere and revoke persistent tokens — old credentials must not survive a support reset.
+        $this->auth->revokeAllCredentials($target['id']);
         $this->audit($request, 'admin.password_reset', $target['id'], ['generated' => true]);
         return $this->jsonResponse($response, ['success' => true, 'tempPassword' => $temporary]);
     }
@@ -369,7 +371,7 @@ class AdminController
         } catch (\InvalidArgumentException $e) {
             return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
         }
-        $this->auth->revokeTokens($target['id']);
+        $this->auth->revokeAllCredentials($target['id']);
         $this->audit($request, 'admin.email_change', $target['id'], ['from' => $target['email'], 'to' => $email]);
         // To the address it no longer signs in with: whoever holds that is who should hear.
         try {
@@ -768,6 +770,17 @@ class AdminController
                 return $this->jsonResponse($response, ['error' => true, 'message' => "{$k} must be an object"], 400);
             }
         }
+        // Server-managed table/database bindings may never be set, retargeted, or erased via admin edits.
+        if (isset($input['settings']) && is_array($input['settings'])) {
+            $existingSettings = is_array($form['settings'] ?? null) ? $form['settings'] : [];
+            foreach (['nativeTableBinding', 'sharedDatabaseAppId'] as $managedKey) {
+                if (array_key_exists($managedKey, $existingSettings)) {
+                    $input['settings'][$managedKey] = $existingSettings[$managedKey];
+                } else {
+                    unset($input['settings'][$managedKey]);
+                }
+            }
+        }
 
         try {
             $updated = $this->forms->updateForm($formId, $input);
@@ -817,6 +830,27 @@ class AdminController
         }
         if ($upd === []) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Nothing to update (name, description, slug, status)'], 400);
+        }
+        $adminId = (string) ($request->getAttribute('userId') ?? '');
+        if ($adminId !== (string) ($app['ownerId'] ?? '')) {
+            $appSettings = is_array($app['settings'] ?? null) ? $app['settings'] : [];
+            $openSelfReg = $this->appUsers !== null
+                ? $this->appUsers->openSelfRegistrationShowsRecords($app)
+                : (!empty($appSettings['allowSelfRegistration']) && empty($appSettings['requireApproval']));
+            $nativeAccess = null;
+            if ($this->native !== null) {
+                try {
+                    $glance = $this->native->glance($appId);
+                    $nativeAccess = is_array($glance) && is_string($glance['access'] ?? null) ? $glance['access'] : null;
+                } catch (\Throwable) {
+                    $nativeAccess = !empty($appSettings['softnApp']) ? 'application' : null;
+                }
+            } elseif (!empty($appSettings['softnApp'])) {
+                $nativeAccess = 'application';
+            }
+            if (($pubRefusal = \FormLogic\Support\AdminActingLimits::appPublishRefusal($upd['status'] ?? null, $app, null, $openSelfReg, $nativeAccess)) !== null) {
+                return $this->jsonResponse($response, ['error' => true, 'code' => \FormLogic\Support\AdminActingLimits::CODE, 'message' => $pubRefusal], 403);
+            }
         }
         try {
             $updated = $this->apps->updateApp($appId, $upd);
@@ -993,7 +1027,7 @@ class AdminController
         if (!is_dir($dir)) {
             @mkdir($dir, 0750, true);
         }
-        $zipPath = $dir . '/package.zip';
+        $zipPath = $dir . '/package-' . bin2hex(random_bytes(12)) . '.zip';
         try {
             $file->moveTo($zipPath);
             $info = $this->upgrade->stageUploadedPackage($zipPath);

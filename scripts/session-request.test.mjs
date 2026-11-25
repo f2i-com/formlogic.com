@@ -69,7 +69,10 @@ test('every operational Playwright session call executes its real options agains
   } };
   try {
   const helperSource = parsed('formlogic/ui/e2e/session-request.ts');
-  const helperBody = helperSource.statements.filter(n => !ts.isImportDeclaration(n)).map(n => n.getText(helperSource).replace(/^export /, '')).join('\n');
+  const helperTs = helperSource.statements.filter(n => !ts.isImportDeclaration(n)).map(n => n.getText(helperSource).replace(/^export /, '')).join('\n');
+  const helperBody = ts.transpileModule(helperTs, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  }).outputText;
   const helper = vm.runInNewContext(`${helperBody}\n({sessionHeaders,E2E_FRONTEND_BASE_URL})`, { process: { env }, sessionJsonHeaders });
   assert.equal(helper.E2E_FRONTEND_BASE_URL, frontend);
   const config = read('formlogic/ui/playwright.config.ts'); touched.add('formlogic/ui/playwright.config.ts');

@@ -285,20 +285,27 @@ fn run_sources(data: &Path, store: &Store, only: Option<Vec<Source>>, pace: Dura
 }
 
 /// Puts a backup on this computer back in FormLogic, as new copies.
-pub fn restore(data: &Path, id: &str) -> Result<Value, String> {
-    let store = Store::open(data);
-    let account = link::load(data)?.ok_or("Connect to FormLogic first.")?;
-    let key = keys::load(&store.key_folder())?.ok_or("Set up your twelve words first.")?;
-    let identity = NodeIdentity::load_or_create(data)?;
-    let sealed = store.path_of(id)?;
-    let plain = store.staging_path()?;
-    let result = (|| {
-        open_to(&store, &sealed, &plain, &key)?;
-        let sha256 = sha256_of_file(&plain)?;
-        client::restore(&account, &identity, &plain, &sha256).map_err(|refusal| refusal.words())
-    })();
-    let _ = std::fs::remove_file(&plain);
-    result
+/// Pins the upload to the exact `confirmed` account the user approved in the dialog and
+/// serializes against concurrent backup/move runs via `alone()`.
+pub fn restore(data: &Path, confirmed: &Account, id: &str) -> Result<Value, String> {
+    alone(|| {
+        let store = Store::open(data);
+        let current = link::load(data)?.ok_or("Connect to FormLogic first.")?;
+        if current.api_key_id != confirmed.api_key_id || current.base_url != confirmed.base_url {
+            return Err("The FormLogic link changed while waiting for confirmation. Nothing was restored.".to_string());
+        }
+        let key = keys::load(&store.key_folder())?.ok_or("Set up your twelve words first.")?;
+        let identity = NodeIdentity::load_or_create(data)?;
+        let sealed = store.path_of(id)?;
+        let plain = store.staging_path()?;
+        let result = (|| {
+            open_to(&store, &sealed, &plain, &key)?;
+            let sha256 = sha256_of_file(&plain)?;
+            client::restore(confirmed, &identity, &plain, &sha256).map_err(|refusal| refusal.words())
+        })();
+        let _ = std::fs::remove_file(&plain);
+        result
+    })
 }
 
 fn sha256_of_file(path: &Path) -> Result<String, String> {

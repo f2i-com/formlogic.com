@@ -680,6 +680,25 @@ class FormService
         if ($encryptionSchema !== null && $encState === null) {
             throw new EncryptionRequestException('private_form_not_encrypted', 'This form is not a private form.', 404);
         }
+        if ($encState === 'active' || $encState === 'enabling') {
+            if (array_key_exists('logicScript', $data) && is_string($data['logicScript']) && trim($data['logicScript']) !== '') {
+                throw new EncryptionRequestException(
+                    'private_form_unsupported_feature',
+                    'End-to-end encrypted private forms cannot use server-side onSubmit scripts.',
+                    409
+                );
+            }
+            if (array_key_exists('customScreen', $data)) {
+                $incomingScreen = $this->screenForStorage($data['customScreen']);
+                if (!empty($incomingScreen)) {
+                    throw new EncryptionRequestException(
+                        'private_form_unsupported_feature',
+                        'End-to-end encrypted private forms cannot use custom screens.',
+                        409
+                    );
+                }
+            }
+        }
         if ($fieldsProvided && $encState === 'active') {
             $published = ($existing['status'] ?? 'draft') === 'published'
                 || ($data['status'] ?? null) === 'published';

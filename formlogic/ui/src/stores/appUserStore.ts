@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
+import { currentSessionGeneration, isSessionGenerationCurrent } from '../lib/sessionGeneration';
 import { toast } from './toastStore';
 import type { AppUser, AppUserGroup, AppInvitation } from '../types/app';
 
@@ -46,9 +47,11 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
   },
 
   fetchUsers: async (appId) => {
+    const gen = currentSessionGeneration();
     startLoading();
     try {
       const result = await api.getAppUsers(appId);
+      if (!isSessionGenerationCurrent(gen)) return;
       // Throw on failure so the consumer's Promise.allSettled sees a rejection and
       // shows its "Some data could not be loaded" toast instead of silently
       // rendering an empty table.
@@ -59,26 +62,32 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
         }));
       }
     } finally {
-      stopLoading();
+      if (isSessionGenerationCurrent(gen)) stopLoading();
     }
   },
 
   updateUser: async (appId, appUserId, data) => {
+    const gen = currentSessionGeneration();
     const result = await api.updateAppUser(appId, appUserId, data);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Update failed', result.error); return false; }
     await get().fetchUsers(appId).catch(() => {});
     return true;
   },
 
   removeUser: async (appId, appUserId) => {
+    const gen = currentSessionGeneration();
     const result = await api.removeAppUser(appId, appUserId);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Remove failed', result.error); return false; }
     await get().fetchUsers(appId).catch(() => {});
     return true;
   },
 
   fetchInvitations: async (appId) => {
+    const gen = currentSessionGeneration();
     const result = await api.getAppInvitations(appId);
+    if (!isSessionGenerationCurrent(gen)) return;
     if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load invitations');
     if (result.data) {
       set((s) => ({
@@ -88,14 +97,18 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
   },
 
   inviteUser: async (appId, email, roleId) => {
+    const gen = currentSessionGeneration();
     const result = await api.createAppInvitation(appId, email, roleId);
+    if (!isSessionGenerationCurrent(gen)) return null;
     if (result.error) { toast.error('Invite failed', result.error); return null; }
     await get().fetchInvitations(appId).catch(() => {});
     return (result.data?.invitation as AppInvitation) ?? null;
   },
 
   revokeInvitation: async (appId, invitationId) => {
+    const gen = currentSessionGeneration();
     const result = await api.revokeAppInvitation(appId, invitationId);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Revoke failed', result.error); return false; }
     await get().fetchInvitations(appId).catch(() => {});
     return true;
@@ -107,7 +120,9 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
   },
 
   fetchGroups: async (appId) => {
+    const gen = currentSessionGeneration();
     const result = await api.getAppGroups(appId);
+    if (!isSessionGenerationCurrent(gen)) return;
     if (result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Failed to load groups');
     if (result.data) {
       set((s) => ({
@@ -117,35 +132,45 @@ export const useAppUserStore = create<AppUserState>()((set, get) => {
   },
 
   createGroup: async (appId, data) => {
+    const gen = currentSessionGeneration();
     const result = await api.createAppGroup(appId, data);
+    if (!isSessionGenerationCurrent(gen)) return null;
     if (result.error) { toast.error('Create failed', result.error); return null; }
     await get().fetchGroups(appId).catch(() => {});
     return (result.data?.group as AppUserGroup) ?? null;
   },
 
   updateGroup: async (appId, groupId, data) => {
+    const gen = currentSessionGeneration();
     const result = await api.updateAppGroup(appId, groupId, data);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Update failed', result.error); return false; }
     await get().fetchGroups(appId).catch(() => {});
     return true;
   },
 
   deleteGroup: async (appId, groupId) => {
+    const gen = currentSessionGeneration();
     const result = await api.deleteAppGroup(appId, groupId);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Delete failed', result.error); return false; }
     await get().fetchGroups(appId).catch(() => {});
     return true;
   },
 
   addGroupMember: async (appId, groupId, appUserId) => {
+    const gen = currentSessionGeneration();
     const result = await api.addAppGroupMember(appId, groupId, appUserId);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Add member failed', result.error); return false; }
     await get().fetchGroups(appId).catch(() => {});
     return true;
   },
 
   removeGroupMember: async (appId, groupId, appUserId) => {
+    const gen = currentSessionGeneration();
     const result = await api.removeAppGroupMember(appId, groupId, appUserId);
+    if (!isSessionGenerationCurrent(gen)) return false;
     if (result.error) { toast.error('Remove member failed', result.error); return false; }
     await get().fetchGroups(appId).catch(() => {});
     return true;

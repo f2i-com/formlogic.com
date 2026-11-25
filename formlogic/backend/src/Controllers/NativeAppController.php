@@ -231,6 +231,12 @@ class NativeAppController
                 if ($requestedTables === []) {
                     throw new \InvalidArgumentException('Choose at least one table from this app\'s database.');
                 }
+                if (!$this->plans->canCreateForms($ownerId, count($requestedTables))) {
+                    throw new \RuntimeException(
+                        'You\'ve reached your plan\'s limit of ' . $this->plans->formLimit($ownerId) . ' forms. Delete a form or upgrade to add more.',
+                        402
+                    );
+                }
 
                 $includeCharts = ($body['includeCharts'] ?? true) !== false;
                 $targetAppId = is_string($body['targetAppId'] ?? null) ? trim($body['targetAppId']) : 'new';
@@ -375,7 +381,11 @@ class NativeAppController
                 $notInstalled = ['installed' => false, 'tables' => [], 'readOnly' => $readOnly];
                 if (!$this->native->get($app['id']) && !isset($query['table'])) return $notInstalled;
                 try {
-                    return $this->native->records($app['id'], $table, (int) ($query['offset'] ?? 0), null, $options) + ['readOnly' => $readOnly];
+                    $records = $this->native->records($app['id'], $table, (int) ($query['offset'] ?? 0), null, $options) + ['readOnly' => $readOnly];
+                    if ($readOnly) {
+                        unset($records['stamps']);
+                    }
+                    return $records;
                 } catch (\RuntimeException $missing) {
                     // The unlocked get() saw the project.json of a first install a terminated process
                     // left unfinished; records() settled it under the lock, which removed it.
@@ -793,8 +803,9 @@ class NativeAppController
                     $site = ['site' => ['url' => SiteAppController::address((string) $app['slug'], $ticket, $built['entry']), 'entry' => $built['entry'], 'proof' => NativeAppService::siteProof($built['key'], $ticket)]];
                 }
                 $containerBackend = $plugin === null && NativeAppService::hasContainerBackend($project) ? ['containerBackend' => 'host'] : [];
+                $ownerMeta = $plugin === null && $owner ? ['isOwner' => true] : [];
                 return ['name' => $app['name'], 'project' => ['version' => $project['version'], 'client' => $client] + $served + ['access' => $project['access'], 'origins' => $origins, 'storageScope' => $storageScope] + $files + $asked + $formlogic + $site + $containerBackend]
-                    + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
+                    + $ownerMeta + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
             if ($plugin === null && NativeAppService::hasContainerBackend($project)) {
@@ -898,7 +909,7 @@ class NativeAppController
                 $manifest = is_string($project['files']['manifest.json'] ?? null) ? $project['files']['manifest.json'] : null;
             }
             // A plugin is the site's own, on no one's plan.
-            if ($plugin === null && in_array($input['method'], ['POST', 'PUT'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
+            if ($plugin === null && in_array($input['method'], ['POST', 'PUT', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
             $headers = is_array($input['headers'] ?? null) ? array_change_key_case($input['headers'], CASE_LOWER) : [];
             $authorization = is_string($headers['authorization'] ?? null) ? $headers['authorization'] : '';
             if (strlen($authorization) > 4096) throw new \InvalidArgumentException('Invalid application authorization');
