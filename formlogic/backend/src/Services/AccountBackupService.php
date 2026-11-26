@@ -1303,7 +1303,8 @@ final class AccountBackupService
                 $stagedDbs[$idsByEntry[$entryId]] = $staged;
             }
 
-            $nativePayloads = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, $serverHeld);
+            $allowHostConfig = $serverHeld || (bool) ($options['allowHostConfig'] ?? true);
+            $nativePayloads = $this->stageNativePayloads($zip, $structure, $manifest['entries'], $stagingDir, $serverHeld, $allowHostConfig);
             $hostedDatabases = $this->stageHostedDatabases($zip, $manifest['entries'], $stagingDir);
             $nativeMode = (($options['nativeApps'] ?? 'restore') === 'skip') ? 'skip' : 'restore';
             // Only an app with a backend needs the runtime; one that runs in the browser alone
@@ -1519,7 +1520,7 @@ final class AccountBackupService
      * @return array<string,array{name:string, projectFile:string, backend:bool, database:?string, hostConfig:?array}>
      *         each project checked and kept on disk, read back for its turn (stagedProject)
      */
-    private function stageNativePayloads(\ZipArchive $zip, array $structure, array $entries, string $stagingDir, bool $keysRequired): array
+    private function stageNativePayloads(\ZipArchive $zip, array $structure, array $entries, string $stagingDir, bool $keysRequired, bool $allowHostConfig = true): array
     {
         $payloads = [];
         foreach ($this->nativeAppsIn($structure) as $oldAppId => $nativeBlock) {
@@ -1561,7 +1562,7 @@ final class AccountBackupService
                 }
             }
             $hostConfig = null;
-            if (isset($entries['native/' . $oldAppId . '/host-config.json'])) {
+            if ($allowHostConfig && isset($entries['native/' . $oldAppId . '/host-config.json'])) {
                 try {
                     $rawHostConfig = $this->readEntryBounded($zip, 'native/' . $oldAppId . '/host-config.json', 64 * 1024);
                     $enc = DataEncryption::fromEnvironment();
@@ -2855,8 +2856,12 @@ final class AccountBackupService
             'text/html',
             'application/xhtml+xml',
             'image/svg+xml',
+            'text/xml',
+            'application/xml',
             'text/x-php',
             'application/x-php',
+            'application/x-httpd-php',
+            'application/x-httpd-php-source',
             'application/javascript',
             'text/javascript',
             'application/x-javascript',
@@ -2867,10 +2872,13 @@ final class AccountBackupService
             'application/x-msdownload',
             'application/x-mach-binary',
             'application/x-elf',
+            'application/java-archive',
         ];
         $disallowedUploadExts = [
-            'php', 'phtml', 'phar', 'html', 'htm', 'xhtml', 'svg', 'svgz',
-            'js', 'mjs', 'cjs', 'exe', 'sh', 'bash', 'bat', 'cmd', 'ps1',
+            'php', 'php3', 'php4', 'php5', 'php7', 'php8', 'pht', 'phtml', 'phps', 'phar',
+            'html', 'htm', 'xhtml', 'shtml', 'shtm', 'svg', 'svgz', 'xml', 'xsl', 'xslt',
+            'js', 'mjs', 'cjs', 'hta', 'vbs', 'exe', 'com', 'scr', 'msi', 'jar', 'swf',
+            'sh', 'bash', 'bat', 'cmd', 'ps1', 'py', 'pl', 'rb', 'inc',
             'dll', 'asp', 'aspx', 'jsp', 'cgi', 'htaccess',
         ];
         $maxFormUploadBytes = 2 * 1024 * 1024 * 1024;
@@ -2881,11 +2889,19 @@ final class AccountBackupService
                 continue;
             }
             [, $entryId, $basename] = explode('/', $name, 3);
-            $newFormId = $formIdMap[$idsByEntry[$entryId] ?? ''] ?? null;
+            $oldFormId = $idsByEntry[$entryId] ?? '';
+            $newFormId = $formIdMap[$oldFormId] ?? null;
             if ($newFormId === null) {
                 continue; // validateStructure guarantees this can't happen; belt and braces
             }
-            $dir = $this->uploadsPath . '/' . $this->sanitizeId($newFormId);
+            if (!$serverHeld && isset($privateFormsByOldId[$oldFormId])) {
+                throw new EncryptionRequestException('private_form_invalid', 'Private forms cannot carry uploaded files in backup archives.', 400);
+            }
+            $safeDirName = $this->sanitizeId($newFormId);
+            if ($safeDirName === '') {
+                throw new \RuntimeException('Invalid restored form id for file storage');
+            }
+            $dir = $this->uploadsPath . '/' . $safeDirName;
             if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
                 throw new \RuntimeException('Could not create the uploads directory for a restored form');
             }

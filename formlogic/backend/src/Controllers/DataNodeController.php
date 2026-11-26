@@ -10,6 +10,7 @@ use FormLogic\Services\DataCloudSigner;
 use FormLogic\Services\DataSnapshotService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Slim\Psr7\Stream;
 
 /**
  * Desktop-facing data-node control surface — N2 subset (plan §21.2;
@@ -172,11 +173,19 @@ final class DataNodeController
         if ($file === null) {
             return $this->jsonError($response, 'Unknown snapshot file', 404, 'snapshot_file_not_found');
         }
-        $bytes = (string) file_get_contents($file);
-        $response->getBody()->write($bytes);
-        return $response
+        $fh = @fopen($file, 'rb');
+        if ($fh === false) {
+            return $this->jsonError($response, 'Unknown snapshot file', 404, 'snapshot_file_not_found');
+        }
+        $size = filesize($file);
+        $resp = $response
+            ->withBody(new Stream($fh))
             ->withHeader('Content-Type', 'application/octet-stream')
             ->withHeader('Cache-Control', 'no-store');
+        if (is_int($size)) {
+            $resp = $resp->withHeader('Content-Length', (string) $size);
+        }
+        return $resp;
     }
 
     public function deleteSnapshot(Request $request, Response $response, array $args): Response

@@ -462,6 +462,7 @@ if ($check && $rollbackId !== null) {
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 try {
     $config = require __DIR__ . '/../config/settings.php';
 } catch (\Throwable $e) {

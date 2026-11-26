@@ -245,6 +245,34 @@ class AppUserService
         return $stmt->fetchColumn() !== false;
     }
 
+    /**
+     * Privilege ceiling on record-data permissions: a delegated MANAGE_USERS holder (who is not
+     * the app owner) may only assign or invite into roles whose record-viewing/mutating grants
+     * (`view_all_responses`, `edit_responses`, `delete_responses`, `export_responses`, etc.) they
+     * already hold for the same form scope. Otherwise a delegated manager — or a member granted
+     * MANAGE_USERS by an acting platform admin — could escalate a confederate into any record role.
+     */
+    private function assertActorCoversRoleRecordPermissions(string $appId, string $actorUserId, string $roleId, string $action = 'assign'): void
+    {
+        if ($this->isAppOwner($appId, $actorUserId)) {
+            return;
+        }
+        foreach ($this->getRolePermissions($roleId) as $grant) {
+            $perm = (string) ($grant['permission'] ?? '');
+            if ($perm === '' || !AdminActingLimits::showsRecords($perm)) {
+                continue;
+            }
+            $formId = isset($grant['formId']) && $grant['formId'] !== '' ? (string) $grant['formId'] : null;
+            if (!$this->hasPermission($appId, $actorUserId, $perm, $formId)) {
+                throw new \RuntimeException(
+                    $action === 'invite'
+                        ? 'You cannot invite users to a role with record permissions you do not hold'
+                        : 'You cannot assign a role with record permissions you do not hold'
+                );
+            }
+        }
+    }
+
     /** Whether this role shows its holder more than their own work (AdminActingLimits). */
     public function roleShowsRecords(string $roleId): bool
     {
@@ -669,6 +697,7 @@ class AppUserService
             if (!$this->isAppOwner($appId, $actorUserId) && $this->roleGrantsAppLevel($data['roleId'])) {
                 throw new \RuntimeException('Only the app owner can assign roles with app-level permissions');
             }
+            $this->assertActorCoversRoleRecordPermissions($appId, $actorUserId, (string) $data['roleId'], 'assign');
         }
         // ...and only the owner takes app-level permissions away: a member who holds them is not a
         // delegated manager's to re-role or suspend.
@@ -814,6 +843,7 @@ class AppUserService
         if (!$this->isAppOwner($appId, $invitedBy) && $this->roleGrantsAppLevel($roleId)) {
             throw new \RuntimeException('Only the app owner can invite users to roles with app-level permissions');
         }
+        $this->assertActorCoversRoleRecordPermissions($appId, $invitedBy, $roleId, 'invite');
 
         // Check if email is already a member
         $stmt = $this->mysql->prepare("

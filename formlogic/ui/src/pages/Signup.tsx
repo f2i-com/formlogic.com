@@ -71,6 +71,8 @@ export function Signup() {
     const result = await register(email, password, name || undefined);
     if (result.success) {
       navigate(dest, { replace: true });
+    } else if (result.error) {
+      setLocalError(result.error);
     }
   };
 

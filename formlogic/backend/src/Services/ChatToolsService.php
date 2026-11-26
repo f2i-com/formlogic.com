@@ -303,34 +303,20 @@ class ChatToolsService
             );
         }
         // Prompt-injection defense for site chat: chat may create helpful automations, but must
-        // not arm connector/hardware commands or destructive native record deletes in flow graphs.
+        // not arm connector/hardware commands, destructive native record deletes, or destructive
+        // owner-privileged native app requests (directly, on an updated stored flow, or via flow_call).
         if ($name === 'create_flow' || $name === 'update_flow') {
-            if (self::flowSendsConnectorCommands($args)) {
-                throw new ChatToolDeniedException(
-                    'Automations that send connector commands are not created from chat — add connector nodes in the app\'s flow editor.',
-                    'connector_permission_refused'
-                );
-            }
-            $flowGraph = is_array($args['flowJson'] ?? null) ? $args['flowJson'] : [];
-            foreach ((is_array($flowGraph['nodes'] ?? null) ? $flowGraph['nodes'] : []) as $node) {
-                if (!is_array($node)) continue;
-                $nodeType = (string) ($node['type'] ?? '');
-                $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
-                if ($nodeType === 'native_record_action') {
-                    $rawOp = $nodeData['operation'] ?? 'list';
-                    $op = is_string($rawOp) ? strtolower(trim($rawOp)) : '';
-                    if (
-                        !in_array($op, ['list', 'read', 'create', 'update'], true)
-                        || str_contains($op, '{{')
-                        || str_starts_with($op, '$')
-                    ) {
-                        throw new ChatToolDeniedException(
-                            'Automations that delete app records or use dynamic operations are not created from chat — configure them in the app\'s flow editor.',
-                            'delete_refused'
-                        );
-                    }
+            $chatAppId = is_string($args['appId'] ?? null) && $args['appId'] !== ''
+                ? $args['appId']
+                : ($ctx->scopedAppId ?? '');
+            $effectiveFlow = $args;
+            if ($name === 'update_flow' && $chatAppId !== '' && is_string($args['flowId'] ?? null) && $args['flowId'] !== '' && $this->hasFlowStore()) {
+                $storedFlow = $this->flows()->getFlow($chatAppId, $args['flowId']);
+                if (is_array($storedFlow)) {
+                    $effectiveFlow = array_merge($storedFlow, $args);
                 }
             }
+            $this->assertChatFlowSafe($effectiveFlow, $chatAppId, $ctx->userId);
         }
         return $this->call($name, $args, $ctx);
     }
@@ -1096,7 +1082,7 @@ class ChatToolsService
                         $input[$k] = $args[$k];
                     }
                 }
-                $this->requireConnectorScopeIf($ctx, self::flowSendsConnectorCommands($input));
+                $this->requireConnectorScopeIf($ctx, $this->flowTreeSendsConnectorCommands($input, $appId, $userId));
                 $this->assertFlowGraphPermitted($input, $appId, $ctx);
                 $data = $this->flows()->createFlow($appId, $userId, $input);
                 $ctx->audit('create_flow', ['appId' => $appId, 'flowId' => $data['id'] ?? null]);
@@ -1113,11 +1099,13 @@ class ChatToolsService
                     }
                 }
                 $stored = $this->flows()->getFlow($appId, (string) ($args['flowId'] ?? ''));
+                $effectiveFlow = $stored !== null ? array_merge($stored, $input) : $input;
                 $this->requireConnectorScopeIf(
                     $ctx,
-                    self::flowSendsConnectorCommands($input) || ($stored !== null && self::flowSendsConnectorCommands($stored))
+                    $this->flowTreeSendsConnectorCommands($input, $appId, $userId)
+                        || ($stored !== null && $this->flowTreeSendsConnectorCommands($stored, $appId, $userId))
                 );
-                $this->assertFlowGraphPermitted($input, $appId, $ctx);
+                $this->assertFlowGraphPermitted($effectiveFlow, $appId, $ctx);
                 $data = $this->flows()->updateFlow($appId, (string) ($args['flowId'] ?? ''), $input);
                 if (!$data) {
                     throw new \Exception('Flow not found in this app');
@@ -1517,10 +1505,12 @@ class ChatToolsService
 
     /**
      * Enforce MCP data scopes and app/creator confinement on every data-touching node in a flow
-     * graph so an app-scoped or write-only token cannot smuggle cross-app or out-of-scope access
-     * inside an automation definition.
+     * graph (including transitively invoked `flow_call` targets) so an app-scoped or write-only
+     * token cannot smuggle cross-app or out-of-scope access inside an automation definition.
+     *
+     * @param array<string,bool> $visited
      */
-    private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx): void
+    private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx, array $visited = []): void
     {
         foreach ((is_array($flowInput['nodeCapabilities'] ?? null) ? $flowInput['nodeCapabilities'] : []) as $capability) {
             if (!is_string($capability)) continue;
@@ -1552,6 +1542,10 @@ class ChatToolsService
                     $ctx->requireScope('responses:write');
                 } elseif ($op === 'list' || $op === 'read') {
                     $ctx->requireScope('responses:read');
+                } elseif ($op === 'update') {
+                    // Updating a native record returns the full updated record in the flow output.
+                    $ctx->requireScope('responses:read');
+                    $ctx->requireScope('responses:write');
                 } else {
                     $ctx->requireScope('responses:write');
                 }
@@ -1564,7 +1558,24 @@ class ChatToolsService
                 } elseif ($method === 'GET' || $method === 'HEAD') {
                     $ctx->requireScope('responses:read');
                 } else {
+                    // Mutating native_app_request calls also return the full backend response body.
+                    $ctx->requireScope('responses:read');
                     $ctx->requireScope('responses:write');
+                }
+            } elseif ($type === 'flow_call') {
+                $rawTarget = $data['flowId'] ?? $data['flow'] ?? '';
+                $targetRef = is_string($rawTarget) ? trim($rawTarget) : '';
+                if ($targetRef === '' || str_contains($targetRef, '{{') || str_starts_with($targetRef, '$')) {
+                    $ctx->requireScope('responses:read');
+                    $ctx->requireScope('responses:write');
+                    $ctx->requireScope('connector:command');
+                } elseif (!isset($visited[$targetRef])) {
+                    $visited[$targetRef] = true;
+                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $ctx->userId);
+                    if ($targetFlow !== null) {
+                        $this->requireConnectorScopeIf($ctx, self::flowSendsConnectorCommands($targetFlow));
+                        $this->assertFlowGraphPermitted($targetFlow, $appId, $ctx, $visited);
+                    }
                 }
             }
 
@@ -1661,6 +1672,135 @@ class ChatToolsService
         }
     }
 
+    /** True when this instance has an initialized flow store (guards constructorless unit tests). */
+    private function hasFlowStore(): bool
+    {
+        return isset($this->flowService);
+    }
+
+    /** Resolve a `flow_call` target by flow id or slug within the app (or owner workspace). */
+    private function resolveCalledFlow(string $appId, string $targetRef, string $userId): ?array
+    {
+        if (!$this->hasFlowStore() || $targetRef === '') {
+            return null;
+        }
+        if ($appId !== '') {
+            $byId = $this->flows()->getFlow($appId, $targetRef);
+            if (is_array($byId)) {
+                return $byId;
+            }
+            foreach ($this->flows()->listFlows($appId) as $candidate) {
+                if (($candidate['slug'] ?? null) === $targetRef || ($candidate['id'] ?? null) === $targetRef) {
+                    return $candidate;
+                }
+            }
+        }
+        if ($userId !== '') {
+            foreach ($this->flows()->listWorkspaceFlows($userId) as $candidate) {
+                if (($candidate['id'] ?? null) === $targetRef || ($candidate['slug'] ?? null) === $targetRef) {
+                    return $candidate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Site-chat prompt-injection guard over a flow graph and any transitively called flows.
+     *
+     * @param array<string,bool> $visited
+     */
+    private function assertChatFlowSafe(array $flow, string $appId, string $userId, array $visited = []): void
+    {
+        if (self::flowSendsConnectorCommands($flow)) {
+            throw new ChatToolDeniedException(
+                'Automations that send connector commands are not created from chat — add connector nodes in the app\'s flow editor.',
+                'connector_permission_refused'
+            );
+        }
+        $flowGraph = is_array($flow['flowJson'] ?? null) ? $flow['flowJson'] : [];
+        foreach ((is_array($flowGraph['nodes'] ?? null) ? $flowGraph['nodes'] : []) as $node) {
+            if (!is_array($node)) continue;
+            $nodeType = (string) ($node['type'] ?? '');
+            $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
+            if ($nodeType === 'native_record_action') {
+                $rawOp = $nodeData['operation'] ?? 'list';
+                $op = is_string($rawOp) ? strtolower(trim($rawOp)) : '';
+                if (
+                    !in_array($op, ['list', 'read', 'create', 'update'], true)
+                    || str_contains($op, '{{')
+                    || str_starts_with($op, '$')
+                ) {
+                    throw new ChatToolDeniedException(
+                        'Automations that delete app records or use dynamic operations are not created from chat — configure them in the app\'s flow editor.',
+                        'delete_refused'
+                    );
+                }
+            } elseif ($nodeType === 'native_app_request') {
+                $rawMethod = $nodeData['method'] ?? 'GET';
+                $method = is_string($rawMethod) ? strtoupper(trim($rawMethod)) : '';
+                if (
+                    !in_array($method, ['GET', 'HEAD', 'POST', 'PUT', 'PATCH'], true)
+                    || str_contains($method, '{{')
+                    || str_starts_with($method, '$')
+                ) {
+                    throw new ChatToolDeniedException(
+                        'Automations that issue DELETE or dynamic-method native app requests are not created from chat — configure them in the app\'s flow editor.',
+                        'delete_refused'
+                    );
+                }
+            } elseif ($nodeType === 'flow_call') {
+                $rawTarget = $nodeData['flowId'] ?? $nodeData['flow'] ?? '';
+                $targetRef = is_string($rawTarget) ? trim($rawTarget) : '';
+                if ($targetRef === '' || str_contains($targetRef, '{{') || str_starts_with($targetRef, '$')) {
+                    throw new ChatToolDeniedException(
+                        'Automations with dynamic flow_call targets are not created from chat — configure them in the app\'s flow editor.',
+                        'delete_refused'
+                    );
+                }
+                if (!isset($visited[$targetRef])) {
+                    $visited[$targetRef] = true;
+                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId);
+                    if ($targetFlow !== null) {
+                        $this->assertChatFlowSafe($targetFlow, $appId, $userId, $visited);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Check whether a flow (or any flow it calls via `flow_call`) sends connector commands.
+     *
+     * @param array<string,bool> $visited
+     */
+    private function flowTreeSendsConnectorCommands(array $flow, string $appId, string $userId = '', array $visited = []): bool
+    {
+        if (self::flowSendsConnectorCommands($flow)) {
+            return true;
+        }
+        $graph = is_array($flow['flowJson'] ?? null) ? $flow['flowJson'] : [];
+        foreach ((is_array($graph['nodes'] ?? null) ? $graph['nodes'] : []) as $node) {
+            if (!is_array($node) || ($node['type'] ?? null) !== 'flow_call') {
+                continue;
+            }
+            $data = is_array($node['data'] ?? null) ? $node['data'] : [];
+            $rawTarget = $data['flowId'] ?? $data['flow'] ?? '';
+            $targetRef = is_string($rawTarget) ? trim($rawTarget) : '';
+            if ($targetRef === '' || str_contains($targetRef, '{{') || str_starts_with($targetRef, '$')) {
+                return true;
+            }
+            if (!isset($visited[$targetRef])) {
+                $visited[$targetRef] = true;
+                $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId);
+                if ($targetFlow !== null && $this->flowTreeSendsConnectorCommands($targetFlow, $appId, $userId, $visited)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /** A flow (tool input, or a stored flow) that declares a connector capability or holds a connector node. */
     private static function flowSendsConnectorCommands(array $flow): bool
     {
@@ -1695,7 +1835,7 @@ class ChatToolsService
         }
         foreach ($this->flows()->listFlows($appId) as $flow) {
             if (($flow['slug'] ?? null) === $slug) {
-                return self::flowSendsConnectorCommands($flow);
+                return $this->flowTreeSendsConnectorCommands($flow, $appId, (string) ($flow['ownerUserId'] ?? ''));
             }
         }
         return false;

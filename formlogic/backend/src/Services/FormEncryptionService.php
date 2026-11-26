@@ -451,13 +451,21 @@ final class FormEncryptionService
     {
         $reasons = [];
 
-        $stmt = $this->mysql->prepare('SELECT ever_published_at FROM forms WHERE id = :f');
+        $stmt = $this->mysql->prepare('SELECT ever_published_at, settings FROM forms WHERE id = :f');
         $stmt->execute(['f' => $formId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
             $reasons[] = 'form_not_found';
-        } elseif ($row['ever_published_at'] !== null) {
-            $reasons[] = 'ever_published';
+        } else {
+            if ($row['ever_published_at'] !== null) {
+                $reasons[] = 'ever_published';
+            }
+            $settings = is_string($row['settings'] ?? null)
+                ? json_decode($row['settings'], true)
+                : (is_array($row['settings'] ?? null) ? $row['settings'] : null);
+            if (is_array($settings) && !empty($settings['nativeTableBinding'])) {
+                $reasons[] = 'has_native_table_binding';
+            }
         }
 
         // Our own 'enabling' marker (phase 1) is expected — anything ELSE with a
@@ -579,8 +587,8 @@ final class FormEncryptionService
                 }
                 try {
                     $probe = $this->sqlite->getFormDatabase($otherFormId)
-                        ->prepare("SELECT COUNT(*) FROM fields WHERE type = 'linked_record' AND properties LIKE :needle");
-                    $probe->execute(['needle' => '%' . $formId . '%']);
+                        ->prepare("SELECT COUNT(*) FROM fields WHERE type = 'linked_record' AND properties LIKE :needle ESCAPE '!'");
+                    $probe->execute(['needle' => $needle]);
                     if ((int) $probe->fetchColumn() > 0) {
                         $reasons[] = 'targeted_by_linked_record';
                         break;

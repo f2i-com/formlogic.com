@@ -132,7 +132,7 @@ class PrivateResponsePipelineTest extends TestCase
             'fields' => [['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false]],
         ]);
         $formId = (string) $form['id'];
-        $schemaJson = json_encode([['id' => 'name', 'type' => 'short_text']], JSON_UNESCAPED_SLASHES) ?: '[]';
+        $schemaJson = json_encode($form['fields'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '[]';
         self::$enc->enable($formId, $userId, $this->enableBody($formId, $userId, $keys, $schemaJson));
         self::$forms->updateForm($formId, ['status' => 'published']);
         $manifest = self::$enc->publicManifest($formId);

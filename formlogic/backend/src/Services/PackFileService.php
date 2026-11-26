@@ -80,6 +80,32 @@ class PackFileService
     }
 
     /**
+     * Stream-read a ZIP entry with a hard byte ceiling on actual INFLATED bytes so a crafted
+     * archive whose central-directory header under-declares uncompressed size cannot OOM PHP.
+     * Returns null when the named entry does not exist.
+     */
+    public static function readEntryBounded(\ZipArchive $zip, string|int $entry, int $maxBytes, ?string $label = null): ?string
+    {
+        $stream = is_int($entry) ? $zip->getStreamIndex($entry) : $zip->getStream($entry);
+        if ($stream === false) {
+            return null;
+        }
+        try {
+            $data = stream_get_contents($stream, $maxBytes + 1);
+        } finally {
+            fclose($stream);
+        }
+        if ($data === false) {
+            throw new \RuntimeException('Could not read archive entry' . ($label !== null ? ': ' . $label : ''));
+        }
+        if (strlen($data) > $maxBytes) {
+            $name = $label ?? (is_string($entry) ? $entry : '#' . $entry);
+            throw new \RuntimeException("Archive entry \"{$name}\" exceeds the maximum allowed size");
+        }
+        return $data;
+    }
+
+    /**
      * Process a .zip upload: extract, validate manifest.json, return parsed PackData.
      *
      * @param array $uploadedFile PSR-7 uploaded file array
@@ -134,9 +160,14 @@ class PackFileService
             throw new \RuntimeException('manifest.json is too large');
         }
 
-        // Look for manifest.json
-        $manifestContent = $zip->getFromName('manifest.json');
-        if ($manifestContent === false) {
+        // Stream-read manifest.json with a hard byte cap so a lying ZIP header cannot OOM PHP.
+        try {
+            $manifestContent = self::readEntryBounded($zip, 'manifest.json', 8 * 1024 * 1024, 'manifest.json');
+        } catch (\RuntimeException $e) {
+            $zip->close();
+            throw new \RuntimeException('manifest.json is too large', 0, $e);
+        }
+        if ($manifestContent === null) {
             $zip->close();
             throw new \RuntimeException('Zip file must contain a manifest.json');
         }

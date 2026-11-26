@@ -4304,7 +4304,7 @@ $nativeUploadWriteLimiter = new RateLimitMiddleware($rateLimiter, 30, 60, 'nativ
 $nativeUploadReadLimiter = new RateLimitMiddleware($rateLimiter, 240, 60, 'native_uploads_read', true, true, null, true, false, true);
 $app->post('/api/app/{slug}/native/uploads', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeUpload($request, $response, $getArgs($request));
-})->add($appAccessGate)->add($nativeUploadWriteLimiter)->add($authOptional);
+})->add($cloudWriteGate)->add($appAccessGate)->add($nativeUploadWriteLimiter)->add($authOptional);
 $app->get('/api/app/{slug}/native/uploads', function ($request, $response) use ($container, $getArgs) {
     return $container->get(\FormLogic\Controllers\NativeAppUploadsController::class)->runtimeList($request, $response, $getArgs($request));
 })->add($appAccessGate)->add($nativeUploadReadLimiter)->add($authOptional);

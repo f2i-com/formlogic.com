@@ -125,7 +125,7 @@ final class AccountBackupController
                 $openedPath = $this->backup->scratchFile('.zip');
                 BackupEnvelope::open($tmpPath, $openedPath, ['passphrase' => $passphrase]);
             }
-            $result = $this->backup->importAccount($openedPath ?? $tmpPath, $userId);
+            $result = $this->backup->importAccount($openedPath ?? $tmpPath, $userId, ['allowHostConfig' => false]);
             $this->audit($request, 'account.backup_import', [
                 'apps' => count($result['apps']),
                 'forms' => count($result['forms']),

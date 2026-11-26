@@ -28,12 +28,9 @@ class PackCapabilities
         $permissions = [];
         $connectors = [];
         // APP-502: connectorGrants is the REVIEWABLE subset — connector grants
-        // carried by app/form customLogic + app roles, i.e. exactly the
-        // carriers importPack's grant review can strip. Flow-declared connector
-        // grants (structural to the flow) go into `permissions`/`connectors`
-        // but NOT here, so the install UI never offers a decline control it
-        // cannot enforce. Any 'connector.'-prefixed string counts (the loose
-        // rule the runtime gate honors, incl. wildcards).
+        // carried by app/form customLogic, app roles, flows, and flow bindings,
+        // i.e. every carrier importPack's grant review enforces and strips.
+        // Any 'connector.'-prefixed string counts (incl. wildcards).
         $connectorGrants = [];
         $logicScripts = 0;
         $hasScreens = false;
@@ -77,6 +74,9 @@ class PackCapabilities
         foreach ($forms as $f) {
             if (is_array($f)) {
                 $collect($f['customLogic'] ?? null);
+                if (is_string($f['logicScript'] ?? null) && trim($f['logicScript']) !== '') {
+                    $logicScripts++;
+                }
                 if (!empty($f['customScreen'])) {
                     $hasScreens = true;
                 }
@@ -147,10 +147,34 @@ class PackCapabilities
                 if (is_string($cap) && $cap !== '') {
                     $permissions[$cap] = true;
                     if (strncmp($cap, 'connector.', 10) === 0) {
-                        $rest = substr($cap, 10);
-                        $dot = strpos($rest, '.');
-                        $connectors[$dot !== false ? substr($rest, 0, $dot) : $rest] = true;
+                        $connectorGrants[$cap] = true;
+                        $noteConnector($cap);
                     }
+                }
+            }
+            $flowNodes = is_array($fl['flowJson']['nodes'] ?? null) ? $fl['flowJson']['nodes'] : [];
+            foreach ($flowNodes as $node) {
+                if (!is_array($node)) {
+                    continue;
+                }
+                $nodeType = (string) ($node['type'] ?? '');
+                $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
+                if ($nodeType === 'connector_request') {
+                    $cid = is_string($nodeData['connectorId'] ?? null) && trim($nodeData['connectorId']) !== ''
+                        ? trim($nodeData['connectorId'])
+                        : (is_string($nodeData['connector'] ?? null) ? trim($nodeData['connector']) : '');
+                    $cmd = is_string($nodeData['command'] ?? null) && trim($nodeData['command']) !== '' ? trim($nodeData['command']) : '*';
+                    if ($cid !== '') {
+                        $grant = 'connector.' . $cid . '.' . $cmd;
+                        $permissions[$grant] = true;
+                        $connectorGrants[$grant] = true;
+                        $noteConnector($grant);
+                    }
+                } elseif ($nodeType === 'aokie_speak') {
+                    $grant = 'connector.aokie.speak';
+                    $permissions[$grant] = true;
+                    $connectorGrants[$grant] = true;
+                    $noteConnector($grant);
                 }
             }
         }
@@ -162,14 +186,24 @@ class PackCapabilities
                 $connectors[$b['connectorId']] = true;
             }
             foreach ((is_array($b['outputActions'] ?? null) ? $b['outputActions'] : []) as $action) {
-                if (!is_array($action) || ($action['type'] ?? '') !== 'connector.request') {
+                if (!is_array($action)) {
                     continue;
                 }
-                $cid = is_string($action['connectorId'] ?? null) ? $action['connectorId'] : '';
-                if ($cid !== '') {
-                    $connectors[$cid] = true;
-                    $cmd = is_string($action['command'] ?? null) && $action['command'] !== '' ? $action['command'] : '*';
-                    $permissions['connector.' . $cid . '.' . $cmd] = true;
+                $aType = (string) ($action['type'] ?? '');
+                if ($aType === 'connector.request') {
+                    $cid = is_string($action['connectorId'] ?? null) ? trim($action['connectorId']) : '';
+                    if ($cid !== '') {
+                        $connectors[$cid] = true;
+                        $cmd = is_string($action['command'] ?? null) && trim($action['command']) !== '' ? trim($action['command']) : '*';
+                        $grant = 'connector.' . $cid . '.' . $cmd;
+                        $permissions[$grant] = true;
+                        $connectorGrants[$grant] = true;
+                    }
+                } elseif ($aType === 'call.speak') {
+                    $grant = 'connector.aokie.speak';
+                    $connectors['aokie'] = true;
+                    $permissions[$grant] = true;
+                    $connectorGrants[$grant] = true;
                 }
             }
         }

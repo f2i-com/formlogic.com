@@ -404,6 +404,9 @@ impl App {
         };
         let key = run::alone(|| {
             let current_folder = self.store().key_folder();
+            if keys::exists(&current_folder) {
+                return Err("This computer already has a backup key.".to_string());
+            }
             keys::recover(&current_folder, words.expose(), &[])
         })?;
         Ok(json!({"keyId": keys::key_id(&key)}))

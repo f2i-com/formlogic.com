@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { WebStarterTemplate } from '../lib/softnApps';
+import { currentSessionOwner, subscribeSessionGeneration } from '../lib/sessionGeneration';
 
 type ModalType =
   | 'fieldPicker'
@@ -236,3 +237,15 @@ export const useUIStore = create<UIState>()(
     }
   )
 );
+
+// Clear per-session chat handoffs whenever an authenticated session ends or switches
+// to a different account, while preserving a Dashboard launch queued before initial
+// auth hydration resolves (`null -> user`).
+let lastUiSessionOwner = currentSessionOwner();
+subscribeSessionGeneration(() => {
+  const nextOwner = currentSessionOwner();
+  if (lastUiSessionOwner !== null && lastUiSessionOwner !== nextOwner) {
+    useUIStore.setState({ chatSeed: null, chatLaunch: null, softnOpen: null });
+  }
+  lastUiSessionOwner = nextOwner;
+});

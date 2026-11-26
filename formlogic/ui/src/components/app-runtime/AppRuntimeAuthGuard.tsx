@@ -21,14 +21,32 @@ interface AppRuntimeAuthGuardProps {
 
 export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
   const { config, isLoading, error, appSlug, initialize } = useAppRuntimeStore();
-  const { user, login, isLoading: authLoading } = useAuthStore();
+  const { user, login, verifyMfa, isLoading: authLoading } = useAuthStore();
   const location = useLocation();
   const { supportEmail } = usePublicConfig();
   const signInAt = useContext(DomainSignInContext);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [rememberBrowser, setRememberBrowser] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+
+  // Wipe credentials and MFA state on any auth-session or app transition so an
+  // authenticated user's plaintext password never lingers in state and re-fills
+  // the form on logout or session expiry.
+  const sessionKey = `${user?.id ?? ''}\0${appSlug ?? ''}`;
+  const [prevSessionKey, setPrevSessionKey] = useState(sessionKey);
+  if (prevSessionKey !== sessionKey) {
+    setPrevSessionKey(sessionKey);
+    setEmail('');
+    setPassword('');
+    setMfaToken(null);
+    setMfaCode('');
+    setRememberBrowser(false);
+    setLoginError(null);
+  }
   const navigate = useNavigate();
   const [membershipInfo, setMembershipInfo] = useState<{ appName: string; status: string; isMember: boolean; canSelfRegister: boolean; requirements?: RequirementsStatus | null } | null>(null);
   const [membershipChecked, setMembershipChecked] = useState(false);
@@ -83,18 +101,71 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
       }
 
       const result = await login(email, password);
-      if (result.success && appSlug) {
-        // Re-initialize the app after login
-        try {
-          await initialize(appSlug);
-        } catch {
-          setLoginError('Login succeeded but failed to load the app. Please refresh.');
+      if (result.mfaRequired && result.mfaToken) {
+        setPassword('');
+        setMfaToken(result.mfaToken);
+        setMfaCode('');
+        return;
+      }
+      if (result.success) {
+        setEmail('');
+        setPassword('');
+        setMfaToken(null);
+        setMfaCode('');
+        setRememberBrowser(false);
+        setLoginError(null);
+        if (appSlug) {
+          // Re-initialize the app after login
+          try {
+            await initialize(appSlug);
+          } catch {
+            setLoginError('Login succeeded but failed to load the app. Please refresh.');
+          }
         }
-      } else if (!result.success) {
+      } else {
         // Surface the real server message (rate-limit/lockout/network) instead of
         // always blaming the credentials.
         setLoginError(result.error || 'Invalid email or password');
       }
+    };
+
+    const handleMfaSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setLoginError(null);
+      if (!mfaToken) return;
+      if (!mfaCode.trim()) {
+        setLoginError('Enter the code from your authenticator app');
+        return;
+      }
+      const result = await verifyMfa(mfaToken, mfaCode.trim(), rememberBrowser);
+      if (result.success) {
+        setEmail('');
+        setPassword('');
+        setMfaToken(null);
+        setMfaCode('');
+        setRememberBrowser(false);
+        setLoginError(null);
+        if (appSlug) {
+          try {
+            await initialize(appSlug);
+          } catch {
+            setLoginError('Login succeeded but failed to load the app. Please refresh.');
+          }
+        }
+      } else {
+        setLoginError(result.error || 'Invalid verification code');
+        if ((result.error || '').toLowerCase().includes('expired')) {
+          setMfaToken(null);
+          setMfaCode('');
+        }
+      }
+    };
+
+    const backToPassword = () => {
+      setPassword('');
+      setMfaToken(null);
+      setMfaCode('');
+      setLoginError(null);
     };
 
     return (
@@ -122,6 +193,56 @@ export function AppRuntimeAuthGuard({ children }: AppRuntimeAuthGuardProps) {
                 <Button className="w-full" onClick={() => startDomainSignIn(signInAt, 'login', location.pathname + location.search)}>Sign in</Button>
                 <Button className="w-full" variant="outline" onClick={() => startDomainSignIn(signInAt, 'signup', location.pathname + location.search)}>Create an account</Button>
               </div>
+            ) : mfaToken ? (
+            <form onSubmit={handleMfaSubmit} className="space-y-4">
+              {loginError && (
+                <div role="alert" className="flex items-center gap-2 p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 rounded-xl border border-red-200 dark:border-red-500/20">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  <span>{loginError}</span>
+                </div>
+              )}
+
+              <p className="text-sm text-gray-600 dark:text-slate-300">
+                Enter the 6-digit code from your authenticator app or a recovery code to finish signing in.
+              </p>
+
+              <Input
+                label="Verification code"
+                type="text"
+                inputMode="text"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                placeholder="123456"
+                leftIcon={<ShieldCheck className="h-4 w-4" />}
+                autoComplete="one-time-code"
+                disabled={authLoading}
+                required
+              />
+
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-slate-300 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={rememberBrowser}
+                  onChange={(e) => setRememberBrowser(e.target.checked)}
+                  disabled={authLoading}
+                  className="rounded border-gray-300 dark:border-slate-600 text-primary-600 focus:ring-primary-500"
+                />
+                <span>Remember this browser for 60 days</span>
+              </label>
+
+              <Button type="submit" className="w-full" isLoading={authLoading}>
+                Verify &amp; Sign In
+              </Button>
+
+              <button
+                type="button"
+                onClick={backToPassword}
+                disabled={authLoading}
+                className="w-full text-center text-sm text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white cursor-pointer"
+              >
+                &larr; Use a different account
+              </button>
+            </form>
             ) : (<>
             <form onSubmit={handleLogin} className="space-y-4">
               {loginError && (

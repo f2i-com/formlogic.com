@@ -501,7 +501,7 @@ class FormService
 
         // Clients choose form ids, and an id goes into every URL of this form: it is one path
         // segment, never a path. That holds new ids to a format, and older ones keep working.
-        if (!$keepsItsId && !SQLiteConnection::isFormId($id)) {
+        if (!$keepsItsId && (!SQLiteConnection::isFormId($id) || str_replace('_', '', $id) === '')) {
             throw new \InvalidArgumentException('Invalid form id');
         }
 
@@ -699,16 +699,18 @@ class FormService
                 }
             }
         }
-        if ($fieldsProvided && $encState === 'active') {
-            $published = ($existing['status'] ?? 'draft') === 'published'
-                || ($data['status'] ?? null) === 'published';
-            $fieldsChanged = $this->canonicalFieldsHash($data['fields']) !== $this->formEncryption->latestManifestSchemaHash($formId);
-            if ($published && $fieldsChanged && $encryptionSchema === null) {
-                throw new EncryptionRequestException(
-                    'manifest_required',
-                    'This private form is published and its fields changed — the save must carry a signed encryptionSchema (manifest_required).',
-                    409
-                );
+        if (($fieldsProvided || ($statusProvided && ($data['status'] ?? null) === 'published')) && $encState === 'active') {
+            $resultingStatus = $statusProvided ? (string) ($data['status'] ?? 'draft') : (string) ($existing['status'] ?? 'draft');
+            if ($resultingStatus === 'published') {
+                $effectiveFields = $fieldsProvided ? $data['fields'] : ($existing['fields'] ?? $this->getFormFields($formId));
+                $fieldsChanged = $this->canonicalFieldsHash($effectiveFields) !== $this->formEncryption->latestManifestSchemaHash($formId);
+                if ($fieldsChanged && $encryptionSchema === null) {
+                    throw new EncryptionRequestException(
+                        'manifest_required',
+                        'This private form is published and its fields changed — the save must carry a signed encryptionSchema (manifest_required).',
+                        409
+                    );
+                }
             }
         }
 
@@ -834,9 +836,52 @@ class FormService
             // Serialize against a concurrent enable: FormEncryptionService::enable
             // holds the same forms-row lock from preflight to commit, so a publish/
             // field save can never interleave between its check and its writes.
-            $this->mysql->prepare('SELECT id FROM forms WHERE id = :id FOR UPDATE')->execute(['id' => $formId]);
-            if (($fieldsProvided || $statusProvided || $encryptionSchema !== null) && $this->formEncryption->encryptionState($formId) === 'enabling') {
+            $lockStmt = $this->mysql->prepare('SELECT status FROM forms WHERE id = :id FOR UPDATE');
+            $lockStmt->execute(['id' => $formId]);
+            $lockedStatus = (string) ($lockStmt->fetchColumn() ?: ($existing['status'] ?? 'draft'));
+
+            // Re-read authoritative encryption state inside the lock (bypassing process cache)
+            // so a concurrent enable() commit cannot race past pre-lock E2EE invariant checks.
+            FormEncryptionService::invalidateCache($formId);
+            $lockedEncState = $this->formEncryption->encryptionState($formId);
+            if (($fieldsProvided || $statusProvided || $encryptionSchema !== null) && $lockedEncState === 'enabling') {
                 throw new EncryptionEnablingException();
+            }
+            if ($lockedEncState === 'active' || $lockedEncState === 'enabling') {
+                if (array_key_exists('logicScript', $data) && is_string($data['logicScript']) && trim($data['logicScript']) !== '') {
+                    throw new EncryptionRequestException(
+                        'private_form_unsupported_feature',
+                        'End-to-end encrypted private forms cannot use server-side onSubmit scripts.',
+                        409
+                    );
+                }
+                if (array_key_exists('customScreen', $data)) {
+                    $incomingScreen = $this->screenForStorage($data['customScreen']);
+                    if (!empty($incomingScreen)) {
+                        throw new EncryptionRequestException(
+                            'private_form_unsupported_feature',
+                            'End-to-end encrypted private forms cannot use custom screens.',
+                            409
+                        );
+                    }
+                }
+                if ($fieldsProvided) {
+                    $this->assertFieldsAllowedOnPrivate($formId, $data['fields']);
+                }
+            }
+            if ($lockedEncState === 'active') {
+                $resultingStatus = $statusProvided ? (string) ($data['status'] ?? 'draft') : $lockedStatus;
+                if ($resultingStatus === 'published' && ($fieldsProvided || $lockedStatus !== 'published')) {
+                    $effectiveFields = $fieldsProvided ? $data['fields'] : $this->getFormFields($formId);
+                    $fieldsChanged = $this->canonicalFieldsHash($effectiveFields) !== $this->formEncryption->latestManifestSchemaHash($formId);
+                    if ($fieldsChanged && $encryptionSchema === null) {
+                        throw new EncryptionRequestException(
+                            'manifest_required',
+                            'This private form is published and its fields changed — the save must carry a signed encryptionSchema (manifest_required).',
+                            409
+                        );
+                    }
+                }
             }
 
             // Update fields in SQLite if provided

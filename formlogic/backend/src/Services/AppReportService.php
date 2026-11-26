@@ -288,7 +288,11 @@ class AppReportService
                 if (!isset($map[$tid])) { $targetIds[] = $tid; }
             }
         }
+        $ownerId = isset($form['userId']) ? (string) $form['userId'] : '';
         foreach ($this->formService->getFormsByIds($targetIds) as $tid => $tform) {
+            if ($ownerId === '' || (string) ($tform['userId'] ?? '') !== $ownerId) {
+                continue;
+            }
             $tById = [];
             foreach (($tform['fields'] ?? []) as $tf) {
                 if (!empty($tf['id'])) { $tById[$tf['id']] = $tf; }

@@ -240,8 +240,10 @@ function FlowEditorInner({ flow, onBack, onSave, onOpenTestRun, onToggleHistory,
   }, [setNodes, setEdges]);
   const pushHistory = useCallback((preservePatchBurst = false) => {
     if (!preservePatchBurst) patchBurstRef.current = null;
-    pastRef.current.push(serialized);
-    if (pastRef.current.length > 50) pastRef.current.shift();
+    if (pastRef.current[pastRef.current.length - 1] !== serialized) {
+      pastRef.current.push(serialized);
+      if (pastRef.current.length > 50) pastRef.current.shift();
+    }
     futureRef.current = [];
     syncHistFlags();
   }, [serialized, syncHistFlags]);

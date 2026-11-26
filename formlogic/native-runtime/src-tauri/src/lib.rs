@@ -56,10 +56,10 @@ struct DeepLinkNav {
     /// One-shot latch allowing navigation to the privileged bundled shell URL (`SHELL_URL`),
     /// initialized true for startup and re-armed only by `formlogic://home`.
     allow_shell_nav: AtomicBool,
-    /// Tracks whether `PageLoadEvent::Started` ran for the current hosted-app load, so
-    /// `PageLoadEvent::Finished` can force re-verification on WebView backends that skip
-    /// `Started` and re-apply `DISPLAY_ONLY_SCRIPT` if verification already failed before DOM init.
-    started_seen: AtomicBool,
+    /// Tracks the `(origin|slug)` key for which `PageLoadEvent::Started` triggered verification,
+    /// so `PageLoadEvent::Finished` forces re-verification on WebView backends that skip `Started`
+    /// OR when a server-side 302 redirect lands on a different app than `Started` saw.
+    started_key: Mutex<Option<String>>,
 }
 
 impl Default for DeepLinkNav {
@@ -68,7 +68,7 @@ impl Default for DeepLinkNav {
             pending: Mutex::new(None),
             shell_ready: AtomicBool::new(false),
             allow_shell_nav: AtomicBool::new(true),
-            started_seen: AtomicBool::new(false),
+            started_key: Mutex::new(None),
         }
     }
 }
@@ -1112,6 +1112,7 @@ fn pending_deep_link(state: tauri::State<Arc<DeepLinkNav>>) -> Option<String> {
 // connector/sync calls from an unverified origin reject with the typed origin_denied error.
 const BRIDGE_SCRIPT: &str = r#"
 ;(function () {
+  if (window !== window.top) return;
   if (window.FormLogicNative) return;
   // Bare invoke: rejects with the typed ipc_unavailable error when the native IPC is absent
   // (non-approved origin / __TAURI__ not injected), which the web client treats as fallbackable.
@@ -1188,6 +1189,7 @@ const BRIDGE_SCRIPT: &str = r#"
 // app via a link or the shell never shows a blank/white flash.
 ;(function () {
   try {
+    if (window !== window.top) return;
     if (location.protocol === 'tauri:' || location.hostname === 'tauri.localhost') return;
     var doc = document, ID = '__fl_loading', start = Date.now();
     if (doc.getElementById(ID)) return;
@@ -1593,24 +1595,31 @@ pub fn run() {
                     tauri::webview::PageLoadEvent::Started => {
                         // Start manifest (re-)verification as soon as navigation begins so
                         // `runtime.ready()` awaits the fresh decision before page scripts run.
-                        if app_to_verify(payload.url()).is_some() {
-                            state_load.started_seen.store(true, Ordering::SeqCst);
+                        if let Some((origin, slug)) = app_to_verify(payload.url()) {
+                            let key = app_key(&origin, &slug);
+                            if let Ok(mut guard) = state_load.started_key.lock() {
+                                *guard = Some(key);
+                            }
                             verify_on_page_load(webview.as_ref(), payload.url());
-                        } else {
-                            state_load.started_seen.store(false, Ordering::SeqCst);
+                        } else if let Ok(mut guard) = state_load.started_key.lock() {
+                            *guard = None;
                         }
                     }
                     tauri::webview::PageLoadEvent::Finished => {
                         state_load.shell_ready.store(true, Ordering::SeqCst);
-                        let saw_started = state_load.started_seen.swap(false, Ordering::SeqCst);
+                        let started_key = state_load
+                            .started_key
+                            .lock()
+                            .ok()
+                            .and_then(|mut guard| guard.take());
                         // Ensure display-only fallback applies once the document exists, re-verify
-                        // on WebView backends that skip `Started`, and re-apply DISPLAY_ONLY_SCRIPT
-                        // if a verification started during `Started` already failed before DOM init.
+                        // on WebView backends that skip `Started` or after a cross-app redirect,
+                        // and re-apply DISPLAY_ONLY_SCRIPT if verification already failed before DOM init.
                         if let Some((origin, slug)) = app_to_verify(payload.url()) {
-                            if !saw_started {
+                            let key = app_key(&origin, &slug);
+                            if started_key.as_deref() != Some(key.as_str()) {
                                 verify_on_page_load(webview.as_ref(), payload.url());
                             } else {
-                                let key = app_key(&origin, &slug);
                                 let verified = webview.state::<VerifiedOrigins>();
                                 if verified.is_failed(&key) {
                                     let _ = webview.eval(DISPLAY_ONLY_SCRIPT);

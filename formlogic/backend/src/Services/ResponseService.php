@@ -3555,10 +3555,28 @@ class ResponseService
      * firing hundreds of response.deleted hooks is the pattern this replaces).
      * Returns the number of rows removed.
      */
+    public function isNativeTableBound(string $formId): bool
+    {
+        return $this->nativeTableBridge !== null && $this->nativeTableBridge->resolveBinding($formId) !== null;
+    }
+
     public function deleteAllResponses(string $formId): int
     {
         // Audit FL-05: same refusal as deleteResponse — see that method.
         $this->assertDeletableUnderPlacement($formId);
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $deleted = $this->nativeTableBridge->deleteAllResponses($binding);
+            try {
+                $this->mysql->prepare('DELETE FROM response_links WHERE source_form_id = :f OR target_form_id = :f2')
+                    ->execute(['f' => $formId, 'f2' => $formId]);
+            } catch (\Throwable $metaErr) {
+                $this->logger->error('Cross-store link cleanup failed after native-table bulk delete', [
+                    'formId' => $formId, 'error' => $metaErr->getMessage(),
+                ]);
+            }
+            $this->syncResponseCount($formId);
+            return $deleted;
+        }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
@@ -3944,10 +3962,13 @@ class ResponseService
         // (no backslash escaping) is the RFC-4180-correct behavior spreadsheets expect.
         fputcsv($outputStream, $headers, ',', '"', '');
 
-        $batchSize = 500;
+        $isNativeBound = $this->isNativeTableBound($formId);
+        $batchSize = $isNativeBound ? 250 : 500;
         $totalWritten = 0;
 
-        $batchOptions = self::EXPORT_ORDER + ['limit' => $batchSize];
+        $batchOptions = $isNativeBound
+            ? ['limit' => $batchSize, 'offset' => 0]
+            : (self::EXPORT_ORDER + ['limit' => $batchSize]);
         if ($submittedByUserId !== null) {
             $batchOptions['submittedByUserId'] = $submittedByUserId;
         }
@@ -4024,7 +4045,11 @@ class ResponseService
                 $totalWritten++;
             }
 
-            $batchOptions['before'] = self::pageEnd($batch);
+            if ($isNativeBound) {
+                $batchOptions['offset'] = $totalWritten;
+            } else {
+                $batchOptions['before'] = self::pageEnd($batch);
+            }
         } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
 
         // Stopping has to show in the file, or the owner takes it for the whole form.
@@ -4422,8 +4447,12 @@ class ResponseService
             throw new \RuntimeException('Form not found');
         }
 
-        $db = $this->sqlite->getFormDatabase($formId);
-        $this->sqlite->migrateFormDatabase($db);
+        $binding = $this->nativeTableBridge?->resolveBinding($formId);
+        $db = null;
+        if ($binding === null) {
+            $db = $this->sqlite->getFormDatabase($formId);
+            $this->sqlite->migrateFormDatabase($db);
+        }
 
         $created = 0;
         $skipped = 0;
@@ -4534,11 +4563,42 @@ class ResponseService
                     $errors[] = ['row' => $rowIndex + 1, 'errors' => ['Row contains values that cannot be encoded (invalid character data)']];
                     continue;
                 }
-                $ready[] = [$rowIndex, $answersJson];
+                $ready[] = [$rowIndex, $answers, $answersJson];
             }
 
+            if ($binding !== null && $this->nativeTableBridge !== null) {
+                $now = date('Y-m-d H:i:s');
+                foreach ($ready as [$rowIndex, $answers]) {
+                    try {
+                        $this->nativeTableBridge->createResponse($binding, [
+                            'answers' => $answers,
+                            'status' => 'submitted',
+                            'metadata' => [
+                                'source' => 'csv_import',
+                                'importedAt' => $now,
+                            ],
+                        ]);
+                        $created++;
+                    } catch (\Exception $e) {
+                        $skipped++;
+                        $errors[] = ['row' => $rowIndex + 1, 'errors' => [$e->getMessage()]];
+                    }
+                }
+                usort($errors, static fn (array $a, array $b): int => $a['row'] <=> $b['row']);
+                if ($created > 0) {
+                    $this->syncResponseCount($formId);
+                }
+                return [
+                    'created' => $created,
+                    'skipped' => $skipped,
+                    'total' => $total,
+                    'errors' => $errors,
+                ];
+            }
+
+            assert($db !== null);
             $db->beginTransaction();
-            foreach ($ready as [$rowIndex, $answersJson]) {
+            foreach ($ready as [$rowIndex, , $answersJson]) {
                 try {
                     $id = $this->generateUuid();
                     $now = date('Y-m-d H:i:s');
@@ -4562,11 +4622,13 @@ class ResponseService
                         'updated_at' => $now,
                     ]);
 
-                    // Also insert into MySQL response_metadata table
+                    // Atomic enable-race gate (§9.1): refuse plaintext mirror insert if form_encryption arrived.
                     try {
                         $mysqlStmt = $this->mysql->prepare("
                             INSERT INTO response_metadata (id, form_id, status, submitted_at)
-                            VALUES (:id, :form_id, :status, :submitted_at)
+                            SELECT :id, :form_id, :status, :submitted_at
+                            FROM DUAL
+                            WHERE NOT EXISTS (SELECT 1 FROM form_encryption WHERE form_id = :fe_form_id)
                         ");
 
                         $mysqlStmt->execute([
@@ -4574,7 +4636,16 @@ class ResponseService
                             'form_id' => $formId,
                             'status' => 'submitted',
                             'submitted_at' => $now,
+                            'fe_form_id' => $formId,
                         ]);
+                        if ($mysqlStmt->rowCount() === 0) {
+                            $db->exec("DELETE FROM responses WHERE id = " . $db->quote($id));
+                            $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+                            if ($this->formEncryption->encryptionState($formId) === 'enabling') {
+                                throw new EncryptionEnablingException();
+                            }
+                            throw new PrivateFormEncryptedException();
+                        }
                         $mysqlInsertedIds[] = $id;
                     } catch (\Exception $mysqlErr) {
                         // Roll back the SQLite insert to keep databases in sync
@@ -4583,6 +4654,8 @@ class ResponseService
                     }
 
                     $created++;
+                } catch (PrivateFormEncryptedException $e) {
+                    throw $e;
                 } catch (\Exception $e) {
                     $skipped++;
                     $errors[] = ['row' => $rowIndex + 1, 'errors' => [$e->getMessage()]];
@@ -4597,7 +4670,7 @@ class ResponseService
                 $this->syncResponseCount($formId);
             }
         } catch (\Exception $e) {
-            if ($db->inTransaction()) {
+            if ($db !== null && $db->inTransaction()) {
                 $db->rollBack();
             }
             // Clean up orphaned MySQL rows from successful inserts before the failure
@@ -4616,6 +4689,9 @@ class ResponseService
                         'error' => $cleanupErr->getMessage(),
                     ]);
                 }
+            }
+            if ($e instanceof PrivateFormEncryptedException) {
+                throw $e;
             }
             $this->logger->error('Import failed', [
                 'formId' => $formId,
@@ -4972,7 +5048,9 @@ class ResponseService
             ");
             $mysqlStmt = $this->mysql->prepare("
                 INSERT INTO response_metadata (id, form_id, status, submitted_at)
-                VALUES (:id, :form_id, :status, :submitted_at)
+                SELECT :id, :form_id, :status, :submitted_at
+                FROM DUAL
+                WHERE NOT EXISTS (SELECT 1 FROM form_encryption WHERE form_id = :fe_form_id)
             ");
 
             foreach ($ready as $item) {
@@ -5004,7 +5082,16 @@ class ResponseService
                             'form_id' => $formId,
                             'status' => $item['status'],
                             'submitted_at' => $item['submittedAt'],
+                            'fe_form_id' => $formId,
                         ]);
+                        if ($mysqlStmt->rowCount() === 0) {
+                            $db->exec('DELETE FROM responses WHERE id = ' . $db->quote($id));
+                            $this->formEncryption ??= new FormEncryptionService($this->mysql, $this->sqlite);
+                            if ($this->formEncryption->encryptionState($formId) === 'enabling') {
+                                throw new EncryptionEnablingException();
+                            }
+                            throw new PrivateFormEncryptedException();
+                        }
                         $mysqlInsertedIds[] = $id;
                     } catch (\Throwable $mysqlErr) {
                         $db->exec('DELETE FROM responses WHERE id = ' . $db->quote($id));
@@ -5020,6 +5107,8 @@ class ResponseService
                     if ($linkedFieldIds !== []) {
                         $linkQueue[] = [$id, $item['answers']];
                     }
+                } catch (PrivateFormEncryptedException $e) {
+                    throw $e;
                 } catch (\Throwable $e) {
                     $failed++;
                     $results[$item['index']] = [
@@ -5047,6 +5136,9 @@ class ResponseService
                         'error' => $cleanupErr->getMessage(),
                     ]);
                 }
+            }
+            if ($e instanceof PrivateFormEncryptedException) {
+                throw $e;
             }
             $this->logger->error('Batch import failed', ['formId' => $formId, 'error' => $e->getMessage()]);
             throw new \RuntimeException('Batch import failed. Please try again.');
@@ -5191,10 +5283,14 @@ class ResponseService
                 $linkQueue[] = [$responseId, $merged];
                 $updated++;
             }
+            $this->assertNotPrivate($formId);
             $db->commit();
         } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
+            }
+            if ($e instanceof PrivateFormEncryptedException) {
+                throw $e;
             }
             $this->logger->error('Batch link patch failed', ['formId' => $formId, 'error' => $e->getMessage()]);
             throw new \RuntimeException('Batch link patch failed.');

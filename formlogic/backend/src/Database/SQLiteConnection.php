@@ -437,20 +437,23 @@ class SQLiteConnection
     /**
      * Acquire an exclusive lock file, verifying on POSIX that the locked descriptor still matches
      * the directory entry (so unlinking on release cannot let two concurrent lockers proceed on
-     * different inodes).
+     * different inodes). Retries transient open failures (e.g. Windows DELETE_PENDING) and fails
+     * closed if the lock cannot be acquired within the retry budget.
      *
-     * @return resource|null
+     * @return resource
      */
     private static function acquireLockFile(string $lockPath)
     {
-        for ($attempt = 0; $attempt < 32; $attempt++) {
+        for ($attempt = 0; $attempt < 64; $attempt++) {
             $fp = @fopen($lockPath, 'c');
             if ($fp === false) {
-                return null;
+                usleep(min(50_000, 2_000 + $attempt * 1_500));
+                continue;
             }
             if (!flock($fp, LOCK_EX)) {
                 fclose($fp);
-                return null;
+                usleep(min(50_000, 2_000 + $attempt * 1_500));
+                continue;
             }
             if (PHP_OS_FAMILY === 'Windows') {
                 return $fp;
@@ -466,8 +469,9 @@ class SQLiteConnection
             // The previous owner unlinked the file while we waited; close and re-open the current path.
             flock($fp, LOCK_UN);
             fclose($fp);
+            usleep(min(25_000, 1_000 + $attempt * 500));
         }
-        return null;
+        throw new PDOException('SQLite lock acquisition failed: database is locked');
     }
 
     /**

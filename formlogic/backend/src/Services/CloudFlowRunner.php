@@ -197,7 +197,7 @@ class CloudFlowRunner
         ]);
 
         try {
-            $outcome = $this->execute($flow, $userId, $inputs, null, [(string) $flow['id']], $runId);
+            $outcome = $this->execute($flow, $userId, $inputs, null, [strtolower((string) $flow['id'])], $runId);
         } catch (CloudFlowNodeError $e) {
             // 'timeout' is its own terminal status: FlowService maps it to
             // flow.timed_out, and recording it as a generic error meant a binding on
@@ -269,7 +269,7 @@ class CloudFlowRunner
             return ['ok' => true, 'runId' => $runId, 'status' => 'error', 'error' => ['code' => 'flow_credits_exceeded', 'message' => $e->getMessage()]];
         }
         try {
-            $outcome = $this->execute($flow, $userId, $inputs, null, [(string) $flow['id']], $runId);
+            $outcome = $this->execute($flow, $userId, $inputs, null, [strtolower((string) $flow['id'])], $runId);
         } catch (CloudFlowNodeError $e) {
             $status = $e->flowErrorCode === 'timeout' ? 'timeout' : 'error';
             $this->finalizeRun($runId, $status, null, ['code' => $e->flowErrorCode, 'message' => $e->getMessage(), 'nodeId' => $e->nodeId]);
@@ -1429,7 +1429,8 @@ class CloudFlowRunner
         }
         // RUN-301: children execute their revision's compiled IR too — same rule as the root.
         $child['flowJson'] = $this->effectiveGraph($child);
-        if (in_array($targetId, $runCtx['callStack'], true)) {
+        $childId = strtolower((string) ($child['id'] ?? $targetId));
+        if (in_array($childId, $runCtx['callStack'], true)) {
             throw new CloudFlowNodeError(
                 'node_failed',
                 "Node '{$node['id']}': recursion_detected: flow '{$child['slug']}' is already running in this awaited call chain",
@@ -1488,7 +1489,7 @@ class CloudFlowRunner
                     $userId,
                     $input,
                     $runCtx['deadline'],
-                    [...$runCtx['callStack'], $targetId],
+                    [...$runCtx['callStack'], $childId],
                     $childRunId
                 );
                 $childResult = $childOutcome['result'];

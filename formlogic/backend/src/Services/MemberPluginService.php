@@ -460,7 +460,20 @@ class MemberPluginService
             throw new InvalidArgumentException('Unsupported HTTP method.');
         }
         $path = trim((string) ($payload['path'] ?? ''));
-        if ($path === '' || !str_starts_with($path, '/api/') || str_starts_with(strtolower($path), '/api/site/') || str_contains($path, '..')) {
+        $decodedPath = rawurldecode($path);
+        $lowerDecoded = strtolower($decodedPath);
+        if (
+            $path === ''
+            || !str_starts_with($path, '/api/')
+            || preg_match('/[\x00-\x1f\x7f\\\\?#;]/', $path) === 1
+            || preg_match('/[\x00-\x1f\x7f\\\\?#;]/', $decodedPath) === 1
+            || str_contains($path, '//')
+            || str_contains($decodedPath, '//')
+            || str_contains($path, '..')
+            || str_contains($decodedPath, '..')
+            || $lowerDecoded === '/api/site'
+            || str_starts_with($lowerDecoded, '/api/site/')
+        ) {
             throw new InvalidArgumentException('Plugin API path must start with /api/.');
         }
 

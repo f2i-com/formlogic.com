@@ -159,19 +159,26 @@ function FormResponseView() {
     return record;
   }, [record, isPrivateRecord, decRow]);
 
+  const privateEditBlocked = isPrivateRecord && (vaultLocked || decrypted.decrypting || !decRow?._encrypted || !!decRow?._decryptError);
+
   const startEdit = useCallback(() => {
-    if (!viewRecord) return;
+    if (!viewRecord || privateEditBlocked) return;
     const safeAnswers = viewRecord.answers && typeof viewRecord.answers === 'object' && !Array.isArray(viewRecord.answers) ? viewRecord.answers : {};
     setDraft({ ...safeAnswers });
     setEditing(true);
-  }, [viewRecord]);
+  }, [viewRecord, privateEditBlocked]);
 
   const saveEdit = useCallback(async () => {
     if (!formId || !record) return;
     setSaving(true);
     try {
       // PRIVATE record: re-seal the COMPLETE record (rev+1) with an expectedRev CAS.
-      if (isPrivateRecord && decRow?._encrypted) {
+      // Fail closed — never fall through to the plaintext update endpoint.
+      if (isPrivateRecord) {
+        if (!decRow?._encrypted || vaultLocked || decrypted.decrypting) {
+          toast.error('Cannot update encrypted record', 'Unlock your vault and wait for decryption to finish before saving.');
+          return;
+        }
         const expectedRev = decRow._rev ?? 1;
         const inner = {
           v: 1 as const,
@@ -209,7 +216,7 @@ function FormResponseView() {
     } finally {
       setSaving(false);
     }
-  }, [formId, record, draft, storageMode, updateLocalResponse, isPrivateRecord, decRow]);
+  }, [formId, record, draft, storageMode, updateLocalResponse, isPrivateRecord, decRow, vaultLocked, decrypted.decrypting]);
 
   const changeStatus = useCallback(async (newStatus: string) => {
     if (!formId || !record) return;
@@ -323,7 +330,7 @@ function FormResponseView() {
                       <span className="ml-2 hidden @3xl/header:inline">Re-run logic</span>
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={startEdit} disabled={vaultLocked || !!decRow?._decryptError} title={vaultLocked ? 'Unlock your vault to edit' : decRow?._decryptError ? 'This record could not be decrypted' : 'Edit'}>
+                  <Button variant="outline" size="sm" onClick={startEdit} disabled={privateEditBlocked} title={vaultLocked ? 'Unlock your vault to edit' : isPrivateRecord && decrypted.decrypting ? 'Decrypting record…' : decRow?._decryptError ? 'This record could not be decrypted' : 'Edit'}>
                     <Edit2 className="h-4 w-4" />
                     <span className="ml-2 hidden @2xl/header:inline">Edit</span>
                   </Button>

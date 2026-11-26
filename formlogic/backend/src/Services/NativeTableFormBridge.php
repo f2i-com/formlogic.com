@@ -50,6 +50,23 @@ class NativeTableFormBridge
     public function resolveBinding(string $formId): ?array
     {
         if ($formId === '') return null;
+        // Private (E2EE) forms store ciphertext envelopes in their dedicated per-form SQLite
+        // store and must never route through a plaintext SoftN native table binding.
+        try {
+            $encStmt = $this->mysql->prepare('SELECT 1 FROM form_encryption WHERE form_id = :id LIMIT 1');
+            $encStmt->execute(['id' => $formId]);
+            if ($encStmt->fetchColumn() !== false) {
+                return null;
+            }
+        } catch (\Throwable $e) {
+            $msg = strtolower($e->getMessage());
+            $missingTable = str_contains($msg, 'no such table')
+                || str_contains($msg, "doesn't exist")
+                || str_contains($msg, 'base table or view not found');
+            if (!$missingTable) {
+                return null;
+            }
+        }
         try {
             $stmt = $this->mysql->prepare('SELECT user_id, settings FROM forms WHERE id = :id LIMIT 1');
             $stmt->execute(['id' => $formId]);
@@ -438,6 +455,20 @@ class NativeTableFormBridge
         ], $subscriptions);
         $this->dispatchEvents($binding['appId']);
         return true;
+    }
+
+    /** Delete all rows from the bound SQLite table. Returns the number of rows removed. */
+    public function deleteAllResponses(array $binding): int
+    {
+        $deleted = (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
+            $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
+            $count = $db->exec("DELETE FROM {$quoted}");
+            return is_int($count) ? $count : 0;
+        });
+        if ($deleted > 0) {
+            $this->dispatchEvents($binding['appId']);
+        }
+        return $deleted;
     }
 
     /** Count all rows (or rows owned by $submittedByUserId) in the bound SQLite table. */

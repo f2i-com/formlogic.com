@@ -147,6 +147,22 @@ function previewRowValue(val) {
   return val;
 }
 
+function assertSafeSqliteSidecars(file, reclaimMode = false) {
+  for (const companion of [file + '-wal', file + '-shm', file + '-journal']) {
+    try {
+      const found = lstatSync(companion);
+      if (found.isSymbolicLink()) throw new Error('Invalid database');
+      if (reclaimMode && companion !== file + '-journal' && found.isFile() && (found.mode & 0o400)) {
+        try {
+          chmodSync(companion, 0o600);
+        } catch {}
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+  }
+}
+
 function snapshotSubscribedTables(dbFile, subscribedTables) {
   const snap = new Map();
   if (subscribedTables.size === 0) return snap;
@@ -155,6 +171,7 @@ function snapshotSubscribedTables(dbFile, subscribedTables) {
     return snap;
   }
   if (lstatSync(dbFile).isSymbolicLink()) return snap;
+  assertSafeSqliteSidecars(dbFile, false);
   const sdb = new DatabaseSync(dbFile, {allowExtension: false, limits: SQL_LIMITS, readOnly: true});
   try {
     sdb.exec('PRAGMA busy_timeout=1500; PRAGMA trusted_schema=OFF;');
@@ -262,6 +279,7 @@ function recordContainerDiffEvents(dbFile, subscribedTables, beforeSnap) {
     }
   }
   if (events.length === 0) return;
+  assertSafeSqliteSidecars(dbFile, true);
   const wdb = new DatabaseSync(dbFile, {allowExtension: false, limits: SQL_LIMITS});
   try {
     wdb.exec('PRAGMA busy_timeout=3000; PRAGMA journal_mode=WAL; PRAGMA trusted_schema=OFF;');
@@ -363,7 +381,7 @@ async function main() {
       config,
       request,
       hostContext,
-      markLimited,
+      markLimited: (minute, bucket) => markLimited(data, minute, bucket),
     });
     if (
       !containerResult.isMeta &&
@@ -472,12 +490,7 @@ async function main() {
         if (e.code !== 'ENOENT') throw e;
       }
     }
-    for (const companion of [file + '-wal', file + '-shm']) {
-      try {
-        const found = lstatSync(companion);
-        if (found.isFile() && (found.mode & 0o400)) chmodSync(companion, 0o600);
-      } catch {}
-    }
+    assertSafeSqliteSidecars(file, true);
     db = new DatabaseSync(file, {allowExtension: false, limits: SQL_LIMITS});
     chmodSync(file, 0o600);
     db.exec(

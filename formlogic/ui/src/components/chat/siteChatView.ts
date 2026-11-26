@@ -1,4 +1,5 @@
 import { useUIStore } from '../../stores/uiStore';
+import { subscribeSessionGeneration } from '../../lib/sessionGeneration';
 // Pure view-model helpers for the floating Site Chat widget (plan Phase 6). Kept out of
 // SiteChatWidget.tsx so that file only exports a component (react-refresh rule) — the
 // same split the Desktop Connection popover uses (./desktopConnection.ts).
@@ -76,6 +77,9 @@ export function chatThreadTitle(text: string): string {
 
 /** The requests handed to AI Studio in this session, each by its app and its words: opened again, the app opens plainly. */
 const softnHandedOff = new Set<string>();
+subscribeSessionGeneration(() => {
+  softnHandedOff.clear();
+});
 
 /**
  * A SoftN app link opens the app's workspace straight into AI Studio with the person's request,

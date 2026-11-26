@@ -651,9 +651,11 @@ export default function FormBuilder() {
   // message on a local-mode draft read as "flows need a published form" (user-reported).
   const formFlowsDisabledReason = !form
     ? 'Save the form first to add flows'
-    : storageMode !== 'api' && !acting
-        ? 'Switch to Cloud storage to use flows (drafts work too)'
-        : null;
+    : isPrivateForm
+        ? 'Flows are not available on end-to-end encrypted forms'
+        : storageMode !== 'api' && !acting
+            ? 'Switch to Cloud storage to use flows (drafts work too)'
+            : null;
   const canUseFormFlows = formFlowsDisabledReason === null;
   const fieldSettingsWanted = !!selectedField && !settingsCollapsed && !flowsOpen;
   const rightDockWanted = flowsOpen || fieldSettingsWanted;
@@ -1236,16 +1238,31 @@ export default function FormBuilder() {
   const foldMiddleClusters = builderChrome === 'menu';
   const designActions: BuilderHeaderAction[] = [
     { id: 'theme', label: 'Theme', icon: Palette, onSelect: () => setActiveModal('theme') },
-    { id: 'screen', label: 'Screen', title: 'Custom screen (Beta)', icon: MonitorPlay, onSelect: () => navigate(paths.screenEdit(form.id)) },
-    ...(form.customScreen?.enabled ? [{ id: 'dashboard', label: 'Dashboard', title: 'View dashboard', icon: LayoutDashboard, onSelect: () => setActiveModal('screen') }] : []),
+    {
+      id: 'screen',
+      label: 'Screen',
+      title: isPrivateForm ? 'Custom screens are not available on end-to-end encrypted forms' : 'Custom screen (Beta)',
+      icon: MonitorPlay,
+      onSelect: () => { if (!isPrivateForm) navigate(paths.screenEdit(form.id)); },
+      disabled: isPrivateForm,
+    },
+    ...(form.customScreen?.enabled && !isPrivateForm ? [{ id: 'dashboard', label: 'Dashboard', title: 'View dashboard', icon: LayoutDashboard, onSelect: () => setActiveModal('screen') }] : []),
   ];
   const dataActions: BuilderHeaderAction[] = [
     { id: 'settings', label: 'Settings', title: 'Form settings', icon: Settings, onSelect: () => setActiveModal('settings') },
-    { id: 'script', label: 'Script', title: 'Backend Logic Script', icon: Code2, onSelect: () => setActiveModal('script'), badgeDot: !!form.logicScript },
+    {
+      id: 'script',
+      label: 'Script',
+      title: isPrivateForm ? 'Logic scripts are not available on end-to-end encrypted forms' : 'Backend Logic Script',
+      icon: Code2,
+      onSelect: () => { if (!isPrivateForm) setActiveModal('script'); },
+      badgeDot: !isPrivateForm && !!form.logicScript,
+      disabled: isPrivateForm,
+    },
     {
       id: 'flows',
       label: 'Flows',
-      title: canUseFormFlows ? 'Flows for this form' : 'Save the form first to add flows',
+      title: canUseFormFlows ? 'Flows for this form' : (formFlowsDisabledReason ?? 'Save the form first to add flows'),
       icon: Workflow,
       onSelect: handleFlowsSelect,
       // A count of none is not shown: the bare name already says there is nothing attached.
@@ -1770,10 +1787,14 @@ export default function FormBuilder() {
 
       {/* Script Editor Modal */}
       <ScriptEditor
-        isOpen={activeModal === 'script'}
+        isOpen={activeModal === 'script' && !isPrivateForm}
         onClose={closeModal}
         script={form.logicScript || ''}
         onSave={(script) => {
+          if (isPrivateForm) {
+            toast.error('Not supported on private forms', 'Logic scripts cannot run on end-to-end encrypted forms.');
+            return;
+          }
           updateForm(form.id, { logicScript: script });
           toast.success('Script saved', 'Your backend logic script has been saved');
         }}
@@ -1850,6 +1871,7 @@ export default function FormBuilder() {
         isPrivate={storageMode === 'api' && !acting ? isPrivateForm : undefined}
         onEncryptionEnabled={() => {
           setPrivacy({ formId: form.id, private: true });
+          setFlowsOpen(false);
           void loadFullForm(form.id, { force: true });
         }}
       />

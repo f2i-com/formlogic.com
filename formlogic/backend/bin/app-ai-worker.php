@@ -38,6 +38,7 @@ for ($look = 0; $look < 20; $look++) {
 }
 date_default_timezone_set('UTC');
 \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 
 $watch = in_array('--watch', $argv, true);

@@ -40,6 +40,7 @@ if (in_array('--new-key', $argv, true)) {
 if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
     \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 }
+\FormLogic\Support\Environment::bootstrap();
 $config = require __DIR__ . '/../config/settings.php';
 $mysql = new MySQLConnection($config['settings']['mysql']);
 $mysql->ensureSchemaCurrent();

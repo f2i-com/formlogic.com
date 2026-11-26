@@ -380,8 +380,8 @@ fn run_script(
             return Err("rpc arguments limit exceeded".into());
         }
         let id: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let parsed_args: serde_json::Value =
-            serde_json::from_str(&raw_args).unwrap_or_else(|_| serde_json::json!([]));
+        let parsed_args: serde_json::Value = serde_json::from_str(&raw_args)
+            .map_err(|_| "malformed rpc arguments".to_string())?;
 
         let frame = serde_json::json!({
             "type": "call", "id": id, "module": module,
@@ -498,10 +498,10 @@ fn preamble_start(prelude: &str) -> String {
           out += __fromCharCode(c, next);
           i++;
         }} else {{
-          out += __hex4(c);
+          out += "\\ufffd";
         }}
       }} else if (c >= 0xdc00 && c <= 0xdfff) {{
-        out += __hex4(c);
+        out += "\\ufffd";
       }} else out += __fromCharCode(c);
     }}
     return out + "\"";

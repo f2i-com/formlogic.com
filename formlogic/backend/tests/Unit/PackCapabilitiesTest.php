@@ -61,10 +61,11 @@ class PackCapabilitiesTest extends TestCase
         $this->assertSame([], $d['connectorGrants']);
     }
 
-    public function testConnectorGrantsCoverCustomLogicAndRolesButNotFlows(): void
+    public function testConnectorGrantsCoverCustomLogicRolesAndFlows(): void
     {
-        // APP-502: connectorGrants is the REVIEWABLE subset — customLogic
-        // (bundle + scripts) + app roles — NOT flow-declared connector access.
+        // APP-502: connectorGrants covers EVERY reviewable/strippable carrier —
+        // customLogic (bundle + scripts), app roles, flow nodeCapabilities, and
+        // flowBinding connector outputActions.
         $pack = [
             'apps' => [[
                 'name' => 'A',
@@ -87,17 +88,18 @@ class PackCapabilitiesTest extends TestCase
             ]],
         ];
         $d = PackCapabilities::describe($pack);
-        // Reviewable = customLogic (bundle + script) + role connector grants.
         $this->assertSame(
-            ['connector.aokie.call.answer', 'connector.aokie.call.hangup', 'connector.aokie.sms.send'],
+            [
+                'connector.aokie.call.answer',
+                'connector.aokie.call.dial',
+                'connector.aokie.call.hangup',
+                'connector.aokie.settings.set',
+                'connector.aokie.sms.send',
+            ],
             $d['connectorGrants']
         );
-        // Flow-declared connector access is surfaced in permissions/connectors
-        // (informational) but is NOT declinable → not in connectorGrants.
         $this->assertContains('connector.aokie.call.dial', $d['permissions']);
         $this->assertContains('connector.aokie.settings.set', $d['permissions']);
-        $this->assertNotContains('connector.aokie.call.dial', $d['connectorGrants']);
-        $this->assertNotContains('connector.aokie.settings.set', $d['connectorGrants']);
         $this->assertContains('aokie', $d['connectors']);
     }
 

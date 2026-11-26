@@ -9,6 +9,7 @@ import { useAppStore } from './appStore';
 import { useAppUserStore } from './appUserStore';
 import { useAppRuntimeStore } from './appRuntimeStore';
 import { useResponseStore } from './responseStore';
+import { useUIStore } from './uiStore';
 import { toast } from './toastStore';
 import { lockVaultForSessionTeardown, useVaultStore } from './vaultStore';
 import { forgetAppLocalAccessOf, setAppLocalAccessAccount } from '../client-runtime/appLocalAccess';
@@ -404,6 +405,7 @@ async function clearUserSessionData(memoryOnly: boolean, keepFormsFor: string | 
     useAppUserStore.getState().reset();
     useAppRuntimeStore.getState().reset();
     useResponseStore.setState({ ...(keepFormsFor ? {} : { responses: [] }), currentFormId: null, currentAnswers: {}, currentStep: 0, startTime: null });
+    useUIStore.setState({ chatSeed: null, chatLaunch: null, softnOpen: null });
   };
   if (memoryOnly) withMemoryOnlyPersistence(resetStores);
   else resetStores();

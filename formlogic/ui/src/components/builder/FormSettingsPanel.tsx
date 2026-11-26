@@ -77,7 +77,7 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
     { id: 'behavior' as const, label: 'Behavior', icon: <Settings className="h-4 w-4" /> },
     { id: 'notifications' as const, label: 'Notifications', icon: <Bell className="h-4 w-4" /> },
     { id: 'access' as const, label: 'Access', icon: <Shield className="h-4 w-4" /> },
-    ...(formId ? [{ id: 'webhooks' as const, label: 'Webhooks', icon: <Zap className="h-4 w-4" /> }] : []),
+    ...(formId && !isPrivate ? [{ id: 'webhooks' as const, label: 'Webhooks', icon: <Zap className="h-4 w-4" /> }] : []),
   ];
 
   return (
@@ -364,8 +364,8 @@ export function FormSettingsModal({ isOpen, onClose, settings, onSave, formId, i
             </div>
           )}
 
-          {/* Webhooks Tab */}
-          {activeTab === 'webhooks' && formId && (
+          {/* Webhooks Tab (not supported on E2EE private forms) */}
+          {activeTab === 'webhooks' && formId && !isPrivate && (
             <WebhookManager formId={formId} />
           )}
 

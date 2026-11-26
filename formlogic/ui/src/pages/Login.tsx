@@ -64,12 +64,15 @@ export function Login() {
 
     const result = await login(email, password);
     if (result.mfaRequired && result.mfaToken) {
+      setPassword('');
       setMfaToken(result.mfaToken);
       setMfaCode('');
       return;
     }
     if (result.success) {
       navigate(dest, { replace: true });
+    } else if (result.error) {
+      setLocalError(result.error);
     }
   };
 
@@ -85,14 +88,18 @@ export function Login() {
     const result = await verifyMfa(mfaToken, mfaCode.trim(), rememberBrowser);
     if (result.success) {
       navigate(dest, { replace: true });
-    } else if ((result.error || '').includes('expired')) {
-      // The 5-minute pending token lapsed — back to the password step.
-      setMfaToken(null);
-      setMfaCode('');
+    } else {
+      if (result.error) setLocalError(result.error);
+      if ((result.error || '').toLowerCase().includes('expired')) {
+        // The 5-minute pending token lapsed — back to the password step.
+        setMfaToken(null);
+        setMfaCode('');
+      }
     }
   };
 
   const backToPassword = () => {
+    setPassword('');
     setMfaToken(null);
     setMfaCode('');
     setLocalError(null);
@@ -165,7 +172,7 @@ export function Login() {
                 <Input
                   label="Verification code"
                   type="text"
-                  inputMode="numeric"
+                  inputMode="text"
                   value={mfaCode}
                   onChange={(e) => setMfaCode(e.target.value)}
                   placeholder="123 456"

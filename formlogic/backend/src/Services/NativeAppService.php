@@ -4209,7 +4209,7 @@ JS;
         $slots = $this->heldRoot === $root ? [] : $this->takeSlots($root);
         $this->lastRolledBack = false;
         $answered = false;
-        $useSharedRunner = $sharedDataDir !== null || $subscriptions !== [];
+        $useSharedRunner = $sharedDataDir !== null || $subscriptions !== [] || strlen($input) > 5900000;
         $captureLock = null;
         try {
             if ($subscriptions !== [] && in_array(strtoupper((string) ($request['method'] ?? 'GET')), ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
@@ -4718,16 +4718,20 @@ JS;
                 }
                 if ($norm === '' || str_contains($norm, '..')) continue;
                 $stat = $zip->statIndex($i);
-                $size = is_array($stat) ? (int) ($stat['size'] ?? 0) : 0;
-                if ($size > self::MAX_MEDIA_FILE_BYTES) {
+                $declaredSize = is_array($stat) ? (int) ($stat['size'] ?? 0) : 0;
+                if ($declaredSize > self::MAX_MEDIA_FILE_BYTES) {
                     throw new InvalidArgumentException("{$norm} exceeds the maximum allowed file size.");
                 }
-                $totalBytes += $size;
+                try {
+                    $bytes = PackFileService::readEntryBounded($zip, $i, self::MAX_MEDIA_FILE_BYTES, $norm);
+                } catch (RuntimeException $e) {
+                    throw new InvalidArgumentException("{$norm} exceeds the maximum allowed file size.", 0, $e);
+                }
+                if ($bytes === null) continue;
+                $totalBytes += strlen($bytes);
                 if ($totalBytes > self::MAX_PROJECT_BYTES) {
                     throw new InvalidArgumentException('Archive exceeds the maximum allowed project size.');
                 }
-                $bytes = $zip->getFromIndex($i);
-                if ($bytes === false) continue;
 
                 if (preg_match(self::SOURCE_PATH, $norm) === 1 && !str_starts_with($norm, 'site/') && !str_starts_with($norm, 'assets/')) {
                     $files[$norm] = $bytes;

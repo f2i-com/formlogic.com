@@ -86,7 +86,8 @@ final class NativeAppUploadsController
         } catch (InvalidArgumentException $e) {
             return $this->json($response, ['error' => $e->getMessage(), 'code' => 'sandbox_rejected'], 422);
         } catch (RuntimeException $e) {
-            $status = $e->getCode() === 413 ? 413 : 500;
+            $code = (int) $e->getCode();
+            $status = in_array($code, [402, 413], true) ? $code : 500;
             return $this->json($response, ['error' => $e->getMessage()], $status);
         }
     }
@@ -218,7 +219,8 @@ final class NativeAppUploadsController
         } catch (InvalidArgumentException $e) {
             return $this->json($response, ['error' => $e->getMessage(), 'code' => 'sandbox_rejected'], 422);
         } catch (RuntimeException $e) {
-            $status = $e->getCode() === 413 ? 413 : 500;
+            $code = (int) $e->getCode();
+            $status = in_array($code, [402, 413], true) ? $code : 500;
             return $this->json($response, ['error' => $e->getMessage()], $status);
         }
     }

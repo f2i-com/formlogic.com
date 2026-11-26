@@ -2095,6 +2095,12 @@ class ResponseController
         }
 
         // Column mapping provided - perform the import
+        if (!is_string($columnMappingJson)) {
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => 'Invalid column mapping format',
+            ], 400);
+        }
         $columnMapping = json_decode($columnMappingJson, true);
         if (!is_array($columnMapping)) {
             return $this->jsonResponse($response, [
@@ -2148,6 +2154,10 @@ class ResponseController
             ]);
 
             return $this->jsonResponse($response, $result);
+        } catch (EncryptionEnablingException $e) {
+            return $this->jsonError($response, $e->getMessage(), 409, EncryptionEnablingException::ERROR_CODE);
+        } catch (PrivateFormEncryptedException $e) {
+            return $this->privateFormError($response, $e);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -2232,6 +2242,10 @@ class ResponseController
             ]);
 
             return $this->jsonResponse($response, $result);
+        } catch (EncryptionEnablingException $e) {
+            return $this->jsonError($response, $e->getMessage(), 409, EncryptionEnablingException::ERROR_CODE);
+        } catch (PrivateFormEncryptedException $e) {
+            return $this->privateFormError($response, $e);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -2300,6 +2314,10 @@ class ResponseController
             ]);
 
             return $this->jsonResponse($response, $result);
+        } catch (EncryptionEnablingException $e) {
+            return $this->jsonError($response, $e->getMessage(), 409, EncryptionEnablingException::ERROR_CODE);
+        } catch (PrivateFormEncryptedException $e) {
+            return $this->privateFormError($response, $e);
         } catch (\RuntimeException $e) {
             return $this->jsonResponse($response, [
                 'error' => true,
@@ -2450,13 +2468,16 @@ class ResponseController
         $body->write(',"responses":[');
 
         // Fetch responses in batches to limit memory usage
-        $batchSize = 500;
+        $isNativeBound = $this->responseService->isNativeTableBound($formId);
+        $batchSize = $isNativeBound ? 250 : 500;
         $totalWritten = 0;
         $isFirst = true;
         // Hard cap (mirrors the CSV export) so one request cannot stream an
         // unbounded table and monopolize a PHP worker.
         $maxExportRows = 100000;
-        $batchOptions = ResponseService::EXPORT_ORDER + ['limit' => $batchSize];
+        $batchOptions = $isNativeBound
+            ? ['limit' => $batchSize, 'offset' => 0]
+            : (ResponseService::EXPORT_ORDER + ['limit' => $batchSize]);
 
         do {
             $batch = $this->responseService->getFormResponses($formId, $batchOptions);
@@ -2470,7 +2491,11 @@ class ResponseController
                 $totalWritten++;
             }
 
-            $batchOptions['before'] = ResponseService::pageEnd($batch);
+            if ($isNativeBound) {
+                $batchOptions['offset'] = $totalWritten;
+            } else {
+                $batchOptions['before'] = ResponseService::pageEnd($batch);
+            }
         } while (count($batch) === $batchSize && $totalWritten < $maxExportRows);
 
         $truncated = $totalWritten >= $maxExportRows && $this->responseService->getFormResponses($formId, ['limit' => 1] + $batchOptions) !== [];

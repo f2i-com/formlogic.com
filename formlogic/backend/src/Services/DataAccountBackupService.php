@@ -304,7 +304,7 @@ final class DataAccountBackupService
             $signature,
             self::RESTORE_SIGNATURE_WINDOW_SECONDS,
         );
-        return $this->backups->importAccount($zipPath, $userId);
+        return $this->backups->importAccount($zipPath, $userId, ['allowHostConfig' => false]);
     }
 
     /** See AccountBackupService::scratchFile. */

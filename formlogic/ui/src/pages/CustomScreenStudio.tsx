@@ -178,6 +178,7 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
   const [dirty, setDirty] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [screenLoaded, setScreenLoaded] = useState(false);
+  const [isPrivateForm, setIsPrivateForm] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [compileError, setCompileError] = useState<string | null>(null);
@@ -250,6 +251,16 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
         return;
       }
       setTitle(form.title || '');
+      const formPriv =
+        form.isPrivate === true ||
+        (form as { encryption?: { mode?: string } }).encryption?.mode === 'private';
+      setIsPrivateForm(formPriv);
+      if (!formPriv && !acting) {
+        void import('../lib/crypto/formCrypto')
+          .then(({ getFormPrivacy }) => getFormPrivacy(formId))
+          .then((priv) => { if (!cancelled && priv) setIsPrivateForm(true); })
+          .catch(() => {});
+      }
       setFields((form.fields || []).map((f) => ({ id: f.id, label: f.label, type: f.type })));
       const cs = form.customScreen;
       storedRef.current = cs ?? null;
@@ -271,11 +282,11 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
       }
     });
     return () => { cancelled = true; };
-  }, [formId, loadAttempt]);
+  }, [formId, loadAttempt, acting]);
 
   // A real record makes the record-widget preview meaningful; without one, record() serves a stub.
   useEffect(() => {
-    if (!formId || acting) return;
+    if (!formId || acting || !screenLoaded || isPrivateForm || loadError) return;
     let cancelled = false;
     api.getResponses(formId, { limit: 1 }).then((res) => {
       if (cancelled) return;
@@ -283,7 +294,7 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
       if (row) setSampleRecord({ id: row.id, answers: row.answers || {}, submittedAt: row.submittedAt, status: row.status });
     });
     return () => { cancelled = true; };
-  }, [formId, acting]);
+  }, [formId, acting, screenLoaded, isPrivateForm, loadError]);
 
   // Guard page navigation/refresh while there are unsaved editor changes (mirrors DashboardBuilder).
   useEffect(() => {
@@ -378,7 +389,7 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
 
   /** Save BOTH slots merged over the stored screen, so neither can clobber the other. */
   const save = async () => {
-    if (!formId || saving) return;
+    if (!formId || saving || isPrivateForm) return;
     const toSave: CustomScreen = { ...(storedRef.current ?? {}), ...meta, enabled: true };
     delete toSave._trust;
     delete toSave._provenance;
@@ -440,6 +451,24 @@ function CustomScreenStudioInner({ formId }: { formId: string | undefined }) {
     }`;
 
   const chatDockOffset = useChatDockOffset();
+
+  if (isPrivateForm) {
+    return (
+      <div className={`min-h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex items-center justify-center bg-gray-50 dark:bg-slate-950 p-6 transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>
+        <div className="max-w-md w-full rounded-2xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 text-center shadow-sm space-y-4">
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Custom screens aren&rsquo;t available for private forms</h1>
+          <p className="text-sm text-gray-600 dark:text-slate-400">
+            Responses on {title ? `“${title}”` : 'this form'} are end-to-end encrypted and can only be decrypted in your browser with your unlocked vault, so custom screens cannot read or render them.
+          </p>
+          <div className="pt-1">
+            <Button variant="outline" onClick={leaveEditor} leftIcon={<ArrowLeft className="h-4 w-4" />}>
+              Back to form
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`h-[calc(100dvh-var(--fl-demo-banner-h,0px))] flex flex-col bg-gray-50 dark:bg-slate-950 transition-[margin] duration-200 ${chatDockOffset ? 'mr-96' : ''}`}>

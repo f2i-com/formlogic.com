@@ -242,7 +242,10 @@ class NativeAppUploadsService
                 throw new InvalidArgumentException(sprintf('App upload storage quota (%d MB) would be exceeded. Delete old files or increase the quota.', $policy['maxTotalStorageMb']));
             }
 
-            // Enforce account plan storage limit when PlanService is available
+            // Enforce hosted cloud plan gate & account plan storage limit when PlanService is available
+            if ($this->plans !== null && $ownerId !== '' && $this->plans->isEnforced() && !$this->plans->isCloudActive($ownerId)) {
+                throw new RuntimeException('An active cloud plan is required to upload files.', 402);
+            }
             if ($this->plans !== null && $ownerId !== '' && !$this->plans->canUpload($ownerId, $size)) {
                 throw new RuntimeException('Account storage quota exceeded.', 413);
             }

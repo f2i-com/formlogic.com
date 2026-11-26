@@ -474,7 +474,7 @@ class PackService
 
             // 6. FormLogic Flows: flow definitions + event bindings for the imported app(s), created
             //    inside the SAME transaction with @pack: form refs remapped to the new form ids.
-            $this->importPackFlows($packData, $appIdByPackId, $formIdMap, $userId);
+            $this->importPackFlows($packData, $appIdByPackId, $formIdMap, $userId, $approvedSet, $withheldGrants);
 
             // 7. Record the installation
             $installationId = $this->generateUuid();
@@ -542,10 +542,12 @@ class PackService
      * Raw (non-@pack:) form refs from a pack are never trusted: the binding formId is dropped and
      * an action pointing at an unknown pack form fails the import loudly.
      *
-     * @param array<string,string> $appIdByPackId packAppId => new app id
-     * @param array<string,string> $formIdMap     packFormId => new form id
+     * @param array<string,string>    $appIdByPackId  packAppId => new app id
+     * @param array<string,string>    $formIdMap      packFormId => new form id
+     * @param array<string,bool>|null $approvedSet    APP-502 approved connector grants (null = no review)
+     * @param array<string,bool>      $withheldGrants accumulator for declined connector grants
      */
-    private function importPackFlows(array $packData, array $appIdByPackId, array $formIdMap, string $userId): void
+    private function importPackFlows(array $packData, array $appIdByPackId, array $formIdMap, string $userId, ?array $approvedSet = null, array &$withheldGrants = []): void
     {
         $packFlows = is_array($packData['flows'] ?? null) ? $packData['flows'] : [];
         $packBindings = is_array($packData['flowBindings'] ?? null) ? $packData['flowBindings'] : [];
@@ -579,6 +581,9 @@ class PackService
             $nodeCaps = null;
             if (is_array($packFlow['nodeCapabilities'] ?? null)) {
                 $caps = array_values(array_filter($packFlow['nodeCapabilities'], static fn ($c) => is_string($c) && $c !== '' && strlen($c) <= 128));
+                if ($approvedSet !== null) {
+                    $caps = $this->filterGrantList($caps, $approvedSet, $withheldGrants);
+                }
                 $nodeCaps = $caps !== [] ? array_slice($caps, 0, 64) : null;
             }
             $flowId = $this->generateUuid();
@@ -622,9 +627,30 @@ class PackService
             }
 
             // outputActions[].form: remap @pack: refs; an unknown ref fails loudly, a raw id is dropped.
+            // APP-502: when a grant review ran, strip unapproved connector.request / call.speak actions.
             $actions = $clean['outputActions'];
             if ($actions !== null) {
-                foreach ($actions as &$action) {
+                $keptActions = [];
+                foreach ($actions as $action) {
+                    if ($approvedSet !== null && is_array($action)) {
+                        $aType = (string) ($action['type'] ?? '');
+                        if ($aType === 'connector.request') {
+                            $cid = is_string($action['connectorId'] ?? null) ? trim($action['connectorId']) : '';
+                            $cmd = is_string($action['command'] ?? null) && trim($action['command']) !== '' ? trim($action['command']) : '*';
+                            $grant = $cid !== '' ? ('connector.' . $cid . '.' . $cmd) : 'connector.*';
+                            $cidWild = $cid !== '' ? ('connector.' . $cid . '.*') : null;
+                            if (!isset($approvedSet[$grant]) && ($cidWild === null || !isset($approvedSet[$cidWild])) && !isset($approvedSet['connector.*'])) {
+                                $withheldGrants[$grant] = true;
+                                continue;
+                            }
+                        } elseif ($aType === 'call.speak') {
+                            $grant = 'connector.aokie.speak';
+                            if (!isset($approvedSet[$grant]) && !isset($approvedSet['connector.aokie.*']) && !isset($approvedSet['connector.*'])) {
+                                $withheldGrants[$grant] = true;
+                                continue;
+                            }
+                        }
+                    }
                     $ref = $action['form'] ?? null;
                     if (is_string($ref) && str_starts_with($ref, '@pack:')) {
                         $action['form'] = $formIdMap[substr($ref, 6)]
@@ -632,8 +658,9 @@ class PackService
                     } elseif ($ref !== null) {
                         unset($action['form']);
                     }
+                    $keptActions[] = $action;
                 }
-                unset($action);
+                $actions = $keptActions;
             }
 
             $connectorId = (isset($packBinding['connectorId']) && is_string($packBinding['connectorId']) && $packBinding['connectorId'] !== '')
@@ -688,6 +715,9 @@ class PackService
                         ?? throw new \RuntimeException(
                             "Flow '{$flowSlug}' node '" . ($node['id'] ?? '?') . "' references unknown packFormId '" . substr($ref, 6) . "'"
                         );
+                } elseif (is_string($ref) && $ref !== '' && !str_starts_with($ref, '$') && !str_contains($ref, '{{')) {
+                    // Never trust a raw (non-@pack:, non-selector) form UUID embedded by a pack.
+                    unset($node['data'][$key]);
                 }
             }
         }
@@ -1193,8 +1223,8 @@ class PackService
             PackFileService::assertSafeArchive($zip);
 
             // 2. pack.json is the atomic importer's source of truth (required).
-            $packJson = $zip->getFromName('pack.json');
-            if ($packJson === false) {
+            $packJson = PackFileService::readEntryBounded($zip, 'pack.json', PackFileService::MAX_ASSET_BYTES, 'pack.json');
+            if ($packJson === null) {
                 throw new \RuntimeException('Application package is missing pack.json');
             }
             $pack = json_decode($packJson, true, 128);
@@ -1210,14 +1240,14 @@ class PackService
             $trust = 'community';
             $exporter = null;
             $signatureCovers = null;
-            $sigRaw = $zip->getFromName('signature.json');
-            if ($sigRaw !== false) {
+            $sigRaw = PackFileService::readEntryBounded($zip, 'signature.json', 64 * 1024, 'signature.json');
+            if ($sigRaw !== null) {
                 $sig = json_decode($sigRaw, true);
                 if (!is_array($sig) || !isset($sig['signature'], $sig['alg'])) {
                     throw new \RuntimeException('signature.json is malformed');
                 }
 
-                $manifestRaw = $zip->getFromName('manifest.json');
+                $manifestRaw = PackFileService::readEntryBounded($zip, 'manifest.json', PackFileService::MAX_ASSET_BYTES, 'manifest.json');
                 $manifest = is_string($manifestRaw) ? json_decode($manifestRaw, true) : null;
                 if (!is_array($manifest)) {
                     throw new \RuntimeException('Application package signature verification failed: manifest.json is missing or invalid');
@@ -1311,8 +1341,8 @@ class PackService
                     "contributions.flowNodes[$index] {$entry} is not covered by the package signature — refusing an unsigned contribution inside a signed package"
                 );
             }
-            $raw = $zip->getFromName($entry);
-            if ($raw === false) {
+            $raw = PackFileService::readEntryBounded($zip, $entry, PackFileService::MAX_ASSET_BYTES, $entry);
+            if ($raw === null) {
                 throw new \RuntimeException("contributions.flowNodes[$index] references {$entry}, which is not in the package");
             }
             $definition = json_decode($raw, true, 64);
@@ -1394,8 +1424,8 @@ class PackService
         $signed = $signatureCovers !== null;
         $envelope = [];
         foreach (['customLogic' => 'quickjs/customLogic.json', 'launch' => 'launch.json', 'native' => 'native.json'] as $key => $entry) {
-            $raw = $zip->getFromName($entry);
-            if ($raw === false) {
+            $raw = PackFileService::readEntryBounded($zip, $entry, PackFileService::MAX_ASSET_BYTES, $entry);
+            if ($raw === null) {
                 continue;
             }
             // A signed archive may only carry envelope files hashed into the verified manifest; an
@@ -1428,7 +1458,7 @@ class PackService
             }
             $assets[$assetKey] = true;
             if (!isset($envelope['logo']) && preg_match('/^logo\.(png|jpe?g|gif|webp|svg)$/i', $assetKey, $m)) {
-                $raw = $zip->getFromName($name);
+                $raw = PackFileService::readEntryBounded($zip, $name, PackFileService::MAX_ASSET_BYTES, $name);
                 if (is_string($raw) && $raw !== '' && strlen($raw) <= PackFileService::MAX_ASSET_BYTES) {
                     $mime = strtolower($m[1]);
                     $mime = $mime === 'svg' ? 'image/svg+xml' : ($mime === 'jpg' ? 'image/jpeg' : 'image/' . $mime);
@@ -1465,8 +1495,8 @@ class PackService
             if (!PackFileService::isSafeZipEntryName($entryName)) {
                 throw new \RuntimeException('Application package signature verification failed: the signed manifest lists an unsafe entry name');
             }
-            $bytes = $zip->getFromName($entryName);
-            if ($bytes === false) {
+            $bytes = PackFileService::readEntryBounded($zip, $entryName, PackFileService::MAX_ASSET_BYTES, $entryName);
+            if ($bytes === null) {
                 throw new \RuntimeException('Application package signature verification failed: covered entry "' . $entryName . '" is missing from the archive');
             }
             if (!hash_equals(strtolower($expected), hash('sha256', $bytes))) {

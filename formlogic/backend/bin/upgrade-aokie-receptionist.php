@@ -76,6 +76,7 @@ try {
     if (class_exists(\Dotenv\Dotenv::class) && is_file(__DIR__ . '/../.env')) {
         \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
     }
+    \FormLogic\Support\Environment::bootstrap();
     $config = require __DIR__ . '/../config/settings.php';
     $packFile = __DIR__ . '/../resources/marketplace-packs/aokie-receptionist.json';
     $raw = file_get_contents($packFile);

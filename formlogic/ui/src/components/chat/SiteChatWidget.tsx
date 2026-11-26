@@ -44,6 +44,7 @@ import { refreshFormFields } from '../../lib/formFields';
 import { cn, generateId } from '../../lib/utils';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
+import { currentSessionGeneration, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { pathClaimsBottomEdge } from '../../lib/bottomEdgeClaim';
 import { toast } from '../../stores/toastStore';
 import { getAiPreferences, type AiPreferences } from '../../client-runtime/flows/aiDefault';
@@ -73,6 +74,15 @@ const PAGE_SIZE = 30;
  * this one, and moving to another thread lets Send go without stopping the turn.
  */
 const runningTurns = new Set<{ threadId: string; controller: AbortController }>();
+// Abort every in-flight chat turn immediately across logout, account switch, or account
+// deletion so late SSE chunks or completions can never navigate, hand off, or recreate
+// a deleted user's IndexedDB chat store.
+subscribeSessionGeneration(() => {
+  for (const turn of runningTurns) {
+    try { turn.controller.abort(); } catch { /* ignore */ }
+  }
+  runningTurns.clear();
+});
 
 // ---------------------------------------------------------------------------
 // Per-turn transient state (tool cards + notes are live-turn only; history is text).
@@ -646,6 +656,7 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
   const runTurn = useCallback(
     async (threadId: string, history: ChatWireMessage[]) => {
       if (!userId) return;
+      const sessionGen = currentSessionGeneration();
       const turnId = generateId();
       lastSendRef.current = { threadId, history };
       clientSeqRef.current[threadId] = (clientSeqRef.current[threadId] ?? 0) + 1;
@@ -654,8 +665,10 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
       lastFollowedRef.current = null;
       setLiveTurn({ id: turnId, threadId, streamText: '', activities: [], proposals: [], note: null, error: null, status: 'running' });
 
-      const patchTurn = (patch: (turn: LiveTurn) => LiveTurn) =>
+      const patchTurn = (patch: (turn: LiveTurn) => LiveTurn) => {
+        if (!isSessionGenerationCurrent(sessionGen)) return;
         setLiveTurn((turn) => (turn && turn.id === turnId ? patch(turn) : turn));
+      };
 
       let outcome: ChatTurnOutcome;
       try {
@@ -668,8 +681,12 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
           signal: held.controller.signal,
           clientSeq: clientSeqRef.current[threadId],
           events: {
-            onDelta: (_delta, accumulated) => patchTurn((turn) => ({ ...turn, streamText: accumulated })),
+            onDelta: (_delta, accumulated) => {
+              if (!isSessionGenerationCurrent(sessionGen)) return;
+              patchTurn((turn) => ({ ...turn, streamText: accumulated }));
+            },
             onToolActivity: (activity) => {
+              if (!isSessionGenerationCurrent(sessionGen)) return;
               followActivity(activity);
               if (activity.name === 'update_form' && activity.status === 'done' && activity.link?.kind === 'form') void refreshFormFields(activity.link.id);
               patchTurn((turn) => {
@@ -679,7 +696,10 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
                 return { ...turn, activities };
               });
             },
-            onToolProposal: (proposal) => patchTurn((turn) => ({ ...turn, proposals: [...turn.proposals, proposal] })),
+            onToolProposal: (proposal) => {
+              if (!isSessionGenerationCurrent(sessionGen)) return;
+              patchTurn((turn) => ({ ...turn, proposals: [...turn.proposals, proposal] }));
+            },
           },
         });
       } catch (e) {
@@ -687,19 +707,31 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
         outcome = { ok: false, source: null, error: { code: 'request_failed', message: e instanceof Error ? e.message : 'The AI request failed.' } };
       }
 
+      if (!isSessionGenerationCurrent(sessionGen)) {
+        endTurn(held);
+        return;
+      }
+
       if (outcome.ok) {
         setLastSource(outcome.source);
         try {
           const store = getChatStore(userId);
           const assistant = await store.appendMessage(threadId, 'assistant', outcome.content);
+          if (!isSessionGenerationCurrent(sessionGen)) {
+            endTurn(held);
+            return;
+          }
           setStorePersistent(store.persistent);
           if (activeThreadIdRef.current === threadId) setMessages((prev) => [...prev, assistant]);
           patchTurn((turn) => ({ ...turn, streamText: '', note: outcome.note ?? null, status: 'done' }));
-          setThreads(await store.listThreads());
+          const updatedThreads = await store.listThreads();
+          if (isSessionGenerationCurrent(sessionGen)) setThreads(updatedThreads);
         } catch (e) {
-          // Only saving failed: the reply stays on screen, and Send must not stay locked.
-          patchTurn((turn) => ({ ...turn, streamText: outcome.content, note: outcome.note ?? null, status: 'done' }));
-          toast.error('Could not save this reply', e instanceof Error ? e.message : undefined);
+          if (isSessionGenerationCurrent(sessionGen)) {
+            // Only saving failed: the reply stays on screen, and Send must not stay locked.
+            patchTurn((turn) => ({ ...turn, streamText: outcome.content, note: outcome.note ?? null, status: 'done' }));
+            toast.error('Could not save this reply', e instanceof Error ? e.message : undefined);
+          }
         }
       } else {
         if (outcome.source) setLastSource(outcome.source);
@@ -737,6 +769,7 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
     const text = (textOverride ?? input).trim();
     const images = textOverride === undefined ? pendingImages : (imageOverride ?? []);
     if ((text === '' && images.length === 0) || sending || demoRunning || !userId) return false;
+    const sessionGen = currentSessionGeneration();
     if (textOverride === undefined) {
       setInput('');
       setPendingImages([]);
@@ -746,6 +779,7 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
     let prior = messages;
     if (!threadId || newThread) {
       const thread = await store.createThread(chatThreadTitle(text !== '' ? text : 'Image attachment'));
+      if (!isSessionGenerationCurrent(sessionGen)) return false;
       threadId = thread.id;
       prior = [];
       setThreads((existing) => [thread, ...existing]);
@@ -756,6 +790,7 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
       setConfirmingDeleteId(null);
     }
     const userMessage = await store.appendMessage(threadId, 'user', text, undefined, images);
+    if (!isSessionGenerationCurrent(sessionGen)) return false;
     setStorePersistent(store.persistent);
     const next = [...prior, userMessage];
     setMessages(next);
@@ -795,6 +830,7 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
   const uncompactedCount = sinceLastSummary(messages).tail.length;
   const compactConversation = useCallback(async () => {
     if (sending || !userId || !activeThreadId) return;
+    const sessionGen = currentSessionGeneration();
     const threadId = activeThreadId;
     const held = holdSend(threadId);
     try {
@@ -813,17 +849,21 @@ function AccountChatWidget({ inlineTarget }: { inlineTarget: HTMLDivElement | nu
         signal: held.controller.signal,
         clientSeq: clientSeqRef.current[threadId],
       });
+      if (!isSessionGenerationCurrent(sessionGen)) return;
       if (!outcome.ok) {
         if (outcome.error.code !== 'stopped') toast.error('Could not compact the chat', outcome.error.message);
         return;
       }
       const store = getChatStore(userId);
       const marker = await store.appendMessage(threadId, 'assistant', `${SUMMARY_PREFIX}\n${outcome.content.trim()}`);
+      if (!isSessionGenerationCurrent(sessionGen)) return;
       setStorePersistent(store.persistent);
       if (activeThreadIdRef.current === threadId) setMessages((current) => [...current, marker]);
       toast.success('Chat compacted', 'Earlier messages stay in the thread; the summary carries the context forward.');
     } catch (e) {
-      toast.error('Could not compact the chat', e instanceof Error ? e.message : undefined);
+      if (isSessionGenerationCurrent(sessionGen)) {
+        toast.error('Could not compact the chat', e instanceof Error ? e.message : undefined);
+      }
     } finally {
       endTurn(held);
     }

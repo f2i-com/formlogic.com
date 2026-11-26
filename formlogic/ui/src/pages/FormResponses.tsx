@@ -513,11 +513,18 @@ function FormResponses() {
     navigate(`/responses/${formId}/${response.id}`, { state: { responseIds } });
   };
 
+  const canEditRow = (response: ResponseWithStatus): boolean => {
+    const r = response as { _encrypted?: boolean; _decryptError?: string };
+    if (r._decryptError) return false;
+    if (isPrivateForm && (vaultLocked || decrypted.decrypting || !r._encrypted)) return false;
+    return true;
+  };
+
   // Handle edit response
   const handleEdit = (response: ResponseWithStatus) => {
-    // Never open the editor on a record that failed to decrypt / is corrupt —
-    // its answers are empty placeholders and saving would destroy the record.
-    if ((response as { _decryptError?: string })._decryptError) return;
+    // Never open the editor on a private record that is locked, still decrypting,
+    // not decrypted yet, or failed to decrypt — its answers are placeholders/ciphertext.
+    if (!canEditRow(response)) return;
     setSelectedResponse(response);
     setEditedAnswers(response.answers && typeof response.answers === 'object' && !Array.isArray(response.answers) ? { ...response.answers } : {});
     setIsEditModalOpen(true);
@@ -530,8 +537,13 @@ function FormResponses() {
     setIsSaving(true);
     try {
       // PRIVATE form: re-seal the COMPLETE record (rev+1) and CAS on expectedRev.
+      // Fail closed — never fall through to the plaintext update endpoint.
       const enc = selectedResponse as unknown as { _encrypted?: boolean; _rev?: number; _encMeta?: { completionTime?: number; language?: string; clientAt?: string } };
-      if (isPrivateForm && enc._encrypted) {
+      if (isPrivateForm) {
+        if (!enc._encrypted || vaultLocked || decrypted.decrypting) {
+          toast.error('Cannot update encrypted response', 'Unlock your vault and wait for decryption to finish before saving.');
+          return;
+        }
         const expectedRev = enc._rev ?? 1;
         const inner = {
           v: 1 as const,
@@ -866,10 +878,12 @@ function FormResponses() {
               <Share2 className="h-4 w-4" />
               <span className="ml-2 hidden @4xl/header:inline">Share</span>
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV" className="hidden @lg/header:flex">
-              <Upload className="h-4 w-4" />
-              <span className="ml-2 hidden @4xl/header:inline">Import</span>
-            </Button>
+            {!isPrivateForm && (
+              <Button variant="outline" size="sm" onClick={() => setShowCsvImport(true)} title="Import CSV" className="hidden @lg/header:flex">
+                <Upload className="h-4 w-4" />
+                <span className="ml-2 hidden @4xl/header:inline">Import</span>
+              </Button>
+            )}
             <div className="relative" ref={exportRef}>
               <Button
                 variant="outline"
@@ -949,8 +963,8 @@ function FormResponses() {
                     role="menuitem"
                     type="button"
                     onClick={handleExportFilteredCsv}
-                    disabled={filteredResponses.length === 0 || vaultLocked}
-                    title={vaultLocked ? 'Unlock your vault to export' : filteredResponses.length === 0 ? 'No responses match the current search and status filters' : 'Export only the rows matching the current filters'}
+                    disabled={filteredResponses.length === 0 || vaultLocked || (isPrivateForm && decrypted.decrypting)}
+                    title={vaultLocked ? 'Unlock your vault to export' : isPrivateForm && decrypted.decrypting ? 'Wait for responses to finish decrypting' : filteredResponses.length === 0 ? 'No responses match the current search and status filters' : 'Export only the rows matching the current filters'}
                     className="w-full px-3 py-2 text-sm text-left hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2 text-gray-700 dark:text-slate-300 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                   >
                     <Filter className="h-4 w-4 text-amber-500 dark:text-amber-400" />
@@ -1174,10 +1188,10 @@ function FormResponses() {
                       </button>
                       <button
                         onClick={() => handleEdit(response)}
-                        disabled={isPrivateForm && vaultLocked}
+                        disabled={!canEditRow(response)}
                         className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
                         aria-label="Edit response"
-                        title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
+                        title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : isPrivateForm && decrypted.decrypting ? 'Decrypting responses…' : (response as { _decryptError?: string })._decryptError ? 'This record could not be decrypted' : 'Edit response'}
                       >
                         <Edit2 className="h-4 w-4" />
                       </button>
@@ -1323,9 +1337,9 @@ function FormResponses() {
                           </button>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleEdit(response); }}
-                            disabled={isPrivateForm && vaultLocked}
+                            disabled={!canEditRow(response)}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-blue-50 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500 dark:hover:bg-blue-500/10"
-                            title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : 'Edit response'}
+                            title={isPrivateForm && vaultLocked ? 'Unlock your vault to edit' : isPrivateForm && decrypted.decrypting ? 'Decrypting responses…' : (response as { _decryptError?: string })._decryptError ? 'This record could not be decrypted' : 'Edit response'}
                             aria-label="Edit response"
                           >
                             <Edit2 className="h-4 w-4" />
@@ -1470,27 +1484,29 @@ function FormResponses() {
         publicUnfillableFields={publicUnfillableFieldLabels(form.fields)}
       />
 
-      {/* CSV Import Wizard */}
-      <CsvImportWizard
-        isOpen={showCsvImport}
-        onClose={() => setShowCsvImport(false)}
-        formId={form.id}
-        fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
-        onImportComplete={async () => {
-          // Reload responses and refresh form list counts after import
-          if (storageMode === 'api' && formId) {
-            try {
-              const { responses: all, privateCap } = await fetchAllApiResponses(formId);
-              setResponses(all);
-              setPrivateCapInfo(privateCap);
-            } catch {
-              // Responses will refresh on next page load
+      {/* CSV Import Wizard (disabled on E2EE private forms — server refuses plaintext bulk import) */}
+      {!isPrivateForm && (
+        <CsvImportWizard
+          isOpen={showCsvImport}
+          onClose={() => setShowCsvImport(false)}
+          formId={form.id}
+          fields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
+          onImportComplete={async () => {
+            // Reload responses and refresh form list counts after import
+            if (storageMode === 'api' && formId) {
+              try {
+                const { responses: all, privateCap } = await fetchAllApiResponses(formId);
+                setResponses(all);
+                setPrivateCapInfo(privateCap);
+              } catch {
+                // Responses will refresh on next page load
+              }
+              // Refresh forms list so response counts are updated
+              refreshForms();
             }
-            // Refresh forms list so response counts are updated
-            refreshForms();
-          }
-        }}
-      />
+          }}
+        />
+      )}
 
       {/* E2EE: unlock dialog for the locked-state banner. */}
       <VaultUnlockDialog isOpen={showUnlockDialog} onClose={() => setShowUnlockDialog(false)} />

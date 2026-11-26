@@ -775,8 +775,12 @@ function generationTrees(paths, expected, releaseInfo, hostedRuntime = null, { r
         // archive's modes are not carried over by extraction; NativeAppService and install.php
         // put the bit back as well, for a copy that lost it on the way to the server.
         if (process.platform !== 'win32') {
+          const binDir = resolve(dir, 'bin');
           for (const name of Object.keys(provenance.runner?.files ?? {})) {
-            if (!name.endsWith('.exe') && existsSync(resolve(dir, 'bin', name))) await chmod(resolve(dir, 'bin', name), 0o755);
+            if (/^softn-runner-[a-z0-9_-]+$/.test(name)) {
+              const target = safeJoin(binDir, name);
+              if (existsSync(target)) await chmod(target, 0o755);
+            }
           }
         }
         provenance.release = { tag: releaseInfo.tag, commit: releaseInfo.commit };

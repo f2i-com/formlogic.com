@@ -47,6 +47,8 @@ class FileStorageService
      */
     public function storeFile(string $formId, array $uploadedFile, array $constraints = [], ?string $uploaderUserId = null): array
     {
+        $safeFormId = $this->requireSafeFormId($formId);
+
         // Validate upload
         if (empty($uploadedFile['tmp_name']) || $uploadedFile['error'] !== UPLOAD_ERR_OK) {
             throw new \RuntimeException('File upload failed');
@@ -88,7 +90,7 @@ class FileStorageService
         }
 
         // Create form directory
-        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $formDir = $this->storagePath . '/' . $safeFormId;
         if (!is_dir($formDir)) {
             mkdir($formDir, 0700, true);
         }
@@ -264,7 +266,11 @@ class FileStorageService
      */
     public function commitResponseFiles(string $formId, array $answers): void
     {
-        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $safeId = $this->sanitizeId($formId);
+        if ($safeId === '') {
+            return;
+        }
+        $formDir = $this->storagePath . '/' . $safeId;
         $pendingDir = $formDir . '/.pending';
         if (!is_dir($pendingDir)) {
             return;
@@ -294,7 +300,11 @@ class FileStorageService
      */
     public function sweepAbandonedUploads(string $formId, int $ttlSeconds = self::PENDING_TTL_SECONDS, ?callable $isReferenced = null, bool $ignoreThrottle = false): int
     {
-        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $safeId = $this->sanitizeId($formId);
+        if ($safeId === '') {
+            return 0;
+        }
+        $formDir = $this->storagePath . '/' . $safeId;
         $pendingDir = $formDir . '/.pending';
         if (!is_dir($pendingDir)) {
             return 0;
@@ -363,7 +373,11 @@ class FileStorageService
      */
     public function sweepOrphanedFiles(string $formId, callable $isReferenced, int $graceSeconds = self::ORPHAN_GRACE_SECONDS, bool $ignoreThrottle = false): int
     {
-        $formDir = $this->storagePath . '/' . $this->sanitizeId($formId);
+        $safeId = $this->sanitizeId($formId);
+        if ($safeId === '') {
+            return 0;
+        }
+        $formDir = $this->storagePath . '/' . $safeId;
         $orphanDir = $formDir . '/.orphaned';
         if (!is_dir($orphanDir)) {
             return 0;
@@ -520,6 +534,15 @@ class FileStorageService
         return preg_replace('/[^a-zA-Z0-9\-]/', '', $id);
     }
 
+    private function requireSafeFormId(string $formId): string
+    {
+        $safe = $this->sanitizeId($formId);
+        if ($safe === '') {
+            throw new \InvalidArgumentException('Invalid form id');
+        }
+        return $safe;
+    }
+
     /**
      * Does the file match at least one of the field's accepted types? Accepts
      * extensions ('.pdf'), wildcard MIME ('image/*'), or exact MIME.
@@ -558,7 +581,11 @@ class FileStorageService
     {
         $total = 0;
         foreach ($formIds as $formId) {
-            $dir = $this->storagePath . '/' . $this->sanitizeId((string) $formId);
+            $safeId = $this->sanitizeId((string) $formId);
+            if ($safeId === '') {
+                continue;
+            }
+            $dir = $this->storagePath . '/' . $safeId;
             if (is_dir($dir)) {
                 $total += $this->formDirBytes($dir);
             }

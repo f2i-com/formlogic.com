@@ -223,7 +223,7 @@ abstract class E2eeTestCase extends TestCase
     protected function makeEnableBody(string $formId, string $userId, array $vault, ?array $form = null): array
     {
         $form ??= self::$forms->getForm($formId);
-        $schemaJson = (string) json_encode($form['fields'] ?? [], JSON_UNESCAPED_SLASHES);
+        $schemaJson = (string) json_encode($form['fields'] ?? [], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         $schemaHash = hash('sha256', $schemaJson);
 
         $ingest = sodium_crypto_box_keypair();

@@ -24,6 +24,7 @@ if (isset($_SERVER['REQUEST_METHOD'])) {
 
 require __DIR__ . '/../vendor/autoload.php';
 Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
+\FormLogic\Support\Environment::bootstrap();
 
 use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;

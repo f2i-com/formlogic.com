@@ -523,11 +523,34 @@ class MarketplaceController
         try {
             $result = $this->sandbox->handleBackendRequest($catalog, $token, $body);
             if ($result['isRaw']) {
+                $safeContentTypes = [
+                    'application/json',
+                    'application/problem+json',
+                    'application/vnd.api+json',
+                    'text/plain',
+                    'text/csv',
+                    'text/tab-separated-values',
+                    'application/octet-stream',
+                    'image/png',
+                    'image/jpeg',
+                    'image/gif',
+                    'image/webp',
+                ];
+                $rawCt = preg_replace('/[\r\n\0]+/', '', (string) ($result['contentType'] ?? '')) ?? '';
+                $baseMime = strtolower(trim(explode(';', $rawCt, 2)[0]));
+                $forceAttachment = !in_array($baseMime, $safeContentTypes, true);
+                $chosenContentType = $forceAttachment ? 'application/octet-stream' : $rawCt;
+
                 $response->getBody()->write((string) $result['body']);
-                return $response
+                $resp = $response
                     ->withStatus($result['status'])
-                    ->withHeader('Content-Type', $result['contentType'])
+                    ->withHeader('Content-Type', $chosenContentType)
+                    ->withHeader('X-Content-Type-Options', 'nosniff')
                     ->withHeader('Cache-Control', 'no-store');
+                if ($forceAttachment) {
+                    $resp = $resp->withHeader('Content-Disposition', 'attachment; filename="response.bin"');
+                }
+                return $resp;
             }
             return $this->jsonResponse(
                 $response->withHeader('Cache-Control', 'no-store'),
