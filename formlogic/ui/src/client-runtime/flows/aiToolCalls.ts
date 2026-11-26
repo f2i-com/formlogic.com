@@ -245,6 +245,31 @@ export function editorUsage(inputTokens: unknown, outputTokens: unknown): Editor
   return { inputTokens: count(inputTokens), outputTokens: count(outputTokens) };
 }
 
+/** Extract plain text from an OpenAI `content` value (string or array of text parts). */
+export function extractOpenAiMessageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  let text = '';
+  for (const part of content) {
+    if (!isPlainObject(part)) continue;
+    const type = part.type;
+    if (type !== undefined && type !== 'text' && type !== 'output_text') continue;
+    if (typeof part.text === 'string') text += part.text;
+  }
+  return text;
+}
+
+/** Extract reasoning and refusal text from an OpenAI chat completion for empty-reply diagnostics. */
+export function extractOpenAiChatDiagnostics(payload: unknown): { reasoning: string; refusal: string } {
+  if (!isPlainObject(payload) || !Array.isArray(payload.choices)) return { reasoning: '', refusal: '' };
+  const choice = payload.choices[0];
+  if (!isPlainObject(choice) || !isPlainObject(choice.message)) return { reasoning: '', refusal: '' };
+  const message = choice.message;
+  const reasoning = extractOpenAiMessageText(message.reasoning_content) || extractOpenAiMessageText(message.reasoning);
+  const refusal = extractOpenAiMessageText(message.refusal);
+  return { reasoning, refusal };
+}
+
 /** An OpenAI chat completion → the bridge's reply; null when it has no message to read. */
 export function fromOpenAiChatCompletion(payload: unknown): EditorAiReply | null {
   if (!isPlainObject(payload) || !Array.isArray(payload.choices)) return null;
@@ -262,7 +287,7 @@ export function fromOpenAiChatCompletion(payload: unknown): EditorAiReply | null
   }
   const usage = isPlainObject(payload.usage) ? editorUsage(payload.usage.prompt_tokens, payload.usage.completion_tokens) : undefined;
   return {
-    text: typeof message.content === 'string' ? message.content : '',
+    text: extractOpenAiMessageText(message.content),
     toolCalls,
     stopReason: typeof choice.finish_reason === 'string' ? choice.finish_reason : null,
     ...(usage ? { usage } : {}),

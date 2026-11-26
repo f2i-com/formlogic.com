@@ -269,4 +269,39 @@ describe('resolveDefaultLlmTools — Desktop', () => {
     expect(body.max_tokens).toBe(16384);
     expect(res).toEqual({ ok: true, data: { source: 'desktop', content: '<tool_call name="finish">{"summary":"ok"}</tool_call>' } });
   });
+
+  it('fails clearly instead of returning empty text when local OAIY or custom editor providers emit reasoning only', async () => {
+    const { resolveDefaultLlm } = await import('./aiDefault');
+    const oaiyRes = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], editor: true },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' }) }),
+        oaiyAvailable: () => true,
+        oaiyChat: vi.fn(async () => ({
+          ok: true as const,
+          data: { choices: [{ message: { content: '', reasoning_content: 'Thinking about the edit...' }, finish_reason: 'stop' }] },
+        })),
+      },
+    );
+    expect(oaiyRes.ok).toBe(false);
+    if (!oaiyRes.ok) expect(oaiyRes.error.message).toMatch(/finished reasoning without writing a reply/i);
+
+    const customFetch = vi.fn(async () =>
+      jsonResponse({
+        choices: [{ message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"index.html"}' } }] }, finish_reason: 'tool_calls' }],
+      }),
+    );
+    const customRes = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], editor: true },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'custom', customProviderId: 'svc' }) }),
+        resolveCustomProvider: async () => provider({ kind: 'ollama' }),
+        fetchFn: customFetch as unknown as typeof fetch,
+      },
+    );
+    expect(customRes.ok).toBe(true);
+    if (customRes.ok) expect(customRes.data.content).toContain('<tool_call name="read_file">');
+    const [, init] = customFetch.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).max_tokens).toBe(16384);
+  });
 });

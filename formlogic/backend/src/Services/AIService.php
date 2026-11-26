@@ -1054,14 +1054,66 @@ PROMPT;
         // continuous_usage_stats, some proxies). Returning usage alone dropped
         // the delta — silent truncation of the reply. Report whatever is there.
         $frame = [];
-        $delta = $json['choices'][0]['delta']['content'] ?? null;
-        if (is_string($delta) && $delta !== '') {
+        $delta = self::extractMessageText($json['choices'][0]['delta']['content'] ?? null);
+        if ($delta !== null && $delta !== '') {
             $frame['delta'] = $delta;
         }
         if (isset($json['usage']) && is_array($json['usage'])) {
             $frame['usage'] = self::normalizeUsage($json['usage']);
         }
         return $frame === [] ? null : $frame;
+    }
+
+    /** Extract text from an OpenAI string or content-part array; null when neither is present. */
+    private static function extractMessageText(mixed $content): ?string
+    {
+        if (is_string($content)) {
+            return $content;
+        }
+        if (!is_array($content)) {
+            return null;
+        }
+        $text = '';
+        $found = false;
+        foreach ($content as $part) {
+            if (!is_array($part)) {
+                continue;
+            }
+            $type = $part['type'] ?? null;
+            if ($type !== null && $type !== 'text' && $type !== 'output_text') {
+                continue;
+            }
+            if (is_string($part['text'] ?? null)) {
+                $text .= $part['text'];
+                $found = true;
+            }
+        }
+        return $found ? $text : '';
+    }
+
+    /** Format native OpenAI tool_calls into text-protocol `<tool_call>` blocks when content is empty. */
+    private static function formatToolCallsAsMarkup(mixed $toolCalls): string
+    {
+        if (!is_array($toolCalls)) {
+            return '';
+        }
+        $blocks = [];
+        foreach ($toolCalls as $tc) {
+            if (!is_array($tc) || !is_array($tc['function'] ?? null)) {
+                continue;
+            }
+            $name = is_string($tc['function']['name'] ?? null) ? trim($tc['function']['name']) : '';
+            if ($name === '' || preg_match('/^[A-Za-z0-9_.-]+$/', $name) !== 1) {
+                continue;
+            }
+            $rawArgs = $tc['function']['arguments'] ?? '{}';
+            $args = is_string($rawArgs) ? trim($rawArgs) : (json_encode($rawArgs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}');
+            if ($args === '') {
+                $args = '{}';
+            }
+            $blocks[] = "<tool_call name=\"{$name}\">\n{$args}\n</tool_call>";
+        }
+        return implode("\n\n", $blocks);
     }
 
     /** OpenAI usage object → camelCase {promptTokens, completionTokens, totalTokens} (zeros when absent). */
@@ -1199,11 +1251,38 @@ PROMPT;
 
         if (!$stream) {
             $data = json_decode((string) $response, true);
-            if (!isset($data['choices'][0]['message']['content'])) {
+            $choice = is_array($data['choices'][0] ?? null) ? $data['choices'][0] : null;
+            $message = is_array($choice['message'] ?? null) ? $choice['message'] : null;
+            if ($message === null) {
                 throw new \Exception('Invalid API response format');
             }
+            $content = self::extractMessageText($message['content'] ?? null);
+            $finishReason = is_string($choice['finish_reason'] ?? null) ? $choice['finish_reason'] : null;
+            $refusal = self::extractMessageText($message['refusal'] ?? null) ?? '';
+            $reasoning = self::extractMessageText($message['reasoning_content'] ?? null)
+                ?? self::extractMessageText($message['reasoning'] ?? null)
+                ?? '';
+            $hasToolCalls = is_array($message['tool_calls'] ?? null) && $message['tool_calls'] !== [];
+            if ($content === null && !$hasToolCalls && trim($refusal) === '' && trim($reasoning) === '' && $finishReason !== 'length') {
+                throw new \Exception('Invalid API response format');
+            }
+            $content ??= '';
+            if (trim($content) === '' && $hasToolCalls) {
+                $content = self::formatToolCallsAsMarkup($message['tool_calls']);
+            }
+            if (trim($content) === '') {
+                if ($finishReason === 'length') {
+                    throw new \Exception('The AI reached its output token limit before producing a reply.');
+                }
+                if (trim($refusal) !== '' || $finishReason === 'content_filter') {
+                    throw new \Exception(trim($refusal) !== '' ? trim($refusal) : 'The AI refused to answer this request.');
+                }
+                if (trim($reasoning) !== '') {
+                    throw new \Exception('The AI finished reasoning without producing a reply.');
+                }
+            }
             return [
-                'content' => (string) $data['choices'][0]['message']['content'],
+                'content' => $content,
                 'usage' => self::normalizeUsage($data['usage'] ?? null),
             ];
         }
@@ -1281,7 +1360,7 @@ PROMPT;
             ];
         }
         return [
-            'content' => is_string($message['content'] ?? null) ? $message['content'] : '',
+            'content' => self::extractMessageText($message['content'] ?? null) ?? '',
             'toolCalls' => $calls,
             'usage' => self::normalizeUsage(is_array($data['usage'] ?? null) ? $data['usage'] : null),
         ];
@@ -1599,7 +1678,7 @@ PROMPT;
             ];
         }
         return [
-            'content' => is_string($message['content'] ?? null) ? $message['content'] : '',
+            'content' => self::extractMessageText($message['content'] ?? null) ?? '',
             'toolCalls' => $calls,
             'stopReason' => is_string($choice['finish_reason'] ?? null) ? $choice['finish_reason'] : null,
             'usage' => self::normalizeUsage(is_array($data['usage'] ?? null) ? $data['usage'] : null),

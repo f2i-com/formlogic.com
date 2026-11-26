@@ -1323,6 +1323,39 @@ describe('postInput', () => {
       expect(recovered.data.finalText).toContain('</tool_call>');
     }
   });
+
+  it('extracts multi-part content arrays and fails clearly on reasoning-only or refused empty replies', async () => {
+    mockTunnelBackend(DESKTOP, (ephPub) => [
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { choices: [{ index: 0, delta: { reasoning_content: 'Planning edits...' }, finish_reason: null }] } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'delta', delta: { choices: [{ index: 0, delta: { content: '' }, finish_reason: 'stop' }] } })}\n\n`,
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'done' })}\n\n`,
+    ]);
+
+    const reasoningOnly = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'oaiy-engine',
+      messages: [{ role: 'user', content: 'Edit the app' }],
+    });
+    expect(reasoningOnly.ok).toBe(false);
+    if (!reasoningOnly.ok) {
+      expect(reasoningOnly.error.message).toMatch(/finished reasoning without writing a reply/i);
+    }
+
+    DESKTOP.reset();
+    mockTunnelBackend(DESKTOP, (ephPub) => [
+      `data: ${DESKTOP.sealOutFrame(ephPub, { v: 1, type: 'done', completion: { choices: [{ index: 0, message: { content: [{ type: 'text', text: '<tool_call name="finish">{"summary":"ok"}</tool_call>' }] }, finish_reason: 'stop' }] } })}\n\n`,
+    ]);
+
+    const multipart = await chatViaTunnel({
+      instanceId: INSTANCE,
+      providerId: 'oaiy-engine',
+      messages: [{ role: 'user', content: 'Edit the app' }],
+    });
+    expect(multipart.ok).toBe(true);
+    if (multipart.ok) {
+      expect(multipart.data.finalText).toContain('<tool_call name="finish">');
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

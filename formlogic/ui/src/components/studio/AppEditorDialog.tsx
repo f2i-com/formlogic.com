@@ -109,7 +109,13 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, p
         if (data?.kind === 'agent-status') { const status = agentRuns ? readAgentStatus(data) : null; if (status && !disposed) setAgent(status); return; }
         if (data?.kind === 'ai-cancel' && typeof data.id === 'string') { aiRequests.get(data.id)?.abort(); aiRequests.delete(data.id); setAiPending(false); return; }
         if (data?.kind === 'ai-request' && typeof data.id === 'string') {
-          const reply = (ok: boolean, value: unknown, code?: string) => { if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value, ...(code ? { code } : {}) }) }); };
+          const finishRequest = () => {
+            if (aiRequests.delete(data.id) && !disposed) setAiPending(aiRequests.size > 0);
+          };
+          const reply = (ok: boolean, value: unknown, code?: string) => {
+            finishRequest();
+            if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value, ...(code ? { code } : {}) }) });
+          };
           const structured = data.aiTools !== undefined;
           let ask: (signal: AbortSignal) => Promise<void>;
           if (!structured) {
@@ -135,7 +141,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, p
             });
           }
           const controller = new AbortController(); aiRequests.set(data.id, controller); setAiPending(true);
-          void ask(controller.signal).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(() => { aiRequests.delete(data.id); if (!disposed) setAiPending(aiRequests.size > 0); });
+          void ask(controller.signal).catch(error => reply(false, error instanceof Error ? error.message : 'Could not contact your AI provider.')).finally(finishRequest);
           return;
         }
         if (data?.kind === 'save-requested') { applyRef.current(typeof data.id === 'string' ? data.id : undefined); return; }

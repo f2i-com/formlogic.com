@@ -392,7 +392,9 @@ final class SiteDesktopAi
         $listed = [];
         $finishReason = null;
         $toolCalls = [];
-        $this->readFrames($id, $owner, $pair, 0, -1, static function (array $frame) use (&$content, &$final, &$error, &$listed, &$finishReason, &$toolCalls, $enough): bool {
+        $reasoning = '';
+        $refusal = '';
+        $this->readFrames($id, $owner, $pair, 0, -1, static function (array $frame) use (&$content, &$final, &$error, &$listed, &$finishReason, &$toolCalls, &$reasoning, &$refusal, $enough): bool {
             $kind = $frame['kind'] ?? $frame['type'] ?? null;
             if ($kind === 'delta') {
                 $chunkErr = self::chunkError($frame['delta'] ?? null);
@@ -400,7 +402,7 @@ final class SiteDesktopAi
                     $error = $chunkErr;
                     return false;
                 }
-                self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls);
+                self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls, $reasoning, $refusal);
                 $content .= self::text($frame['delta'] ?? $frame['text'] ?? null);
             } elseif ($kind === 'models' || $kind === 'providers') {
                 if (is_array($frame[$kind] ?? null)) {
@@ -412,21 +414,28 @@ final class SiteDesktopAi
                     $error = $chunkErr;
                     return false;
                 }
-                self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls);
+                self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls, $reasoning, $refusal);
                 $final = $frame;
-                if ($content === '') {
-                    $content = self::text($frame['completion'] ?? $frame['text'] ?? null);
+                if (trim($content) === '') {
+                    $finalText = self::text($frame['completion'] ?? $frame['text'] ?? null);
+                    if ($finalText !== '') {
+                        $content = $finalText;
+                    }
                 }
             } elseif ($kind === 'error' || $kind === 'failed') {
                 $error = is_string($frame['message'] ?? null) ? $frame['message'] : 'OAIY could not answer.';
             }
             return strlen($content) < $enough;
         }, $gapless);
-        if ($error === null && $content === '') {
+        if ($error === null && trim($content) === '') {
             if ($toolCalls !== []) {
                 $content = self::formatToolCallsAsMarkup($toolCalls);
             } elseif ($finishReason === 'length') {
                 $error = 'The model reached its output token limit before producing a reply.';
+            } elseif (trim($refusal) !== '' || $finishReason === 'content_filter') {
+                $error = trim($refusal) !== '' ? trim($refusal) : 'The AI refused to answer this request.';
+            } elseif (trim($reasoning) !== '') {
+                $error = 'The model finished reasoning without producing a reply. Check the model\'s context/output budget or try another model in OAIY.';
             }
         }
         return [
@@ -530,6 +539,8 @@ final class SiteDesktopAi
         $failure = null;
         $finishReason = null;
         $toolCalls = [];
+        $reasoning = '';
+        $refusal = '';
         $since = 0;
         $last = -1;
         $deadline = microtime(true) + max(5, $timeoutSeconds);
@@ -538,7 +549,7 @@ final class SiteDesktopAi
         while (true) {
             // The status before the frames: a computer sends its frames before it completes a turn.
             $status = $this->relay->getStatus($id, $owner);
-            [$since, $last] = $this->readFrames($id, $owner, $pair, $since, $last, static function (array $frame) use (&$content, &$listed, &$final, &$failure, &$finishReason, &$toolCalls, $onDelta): bool {
+            [$since, $last] = $this->readFrames($id, $owner, $pair, $since, $last, static function (array $frame) use (&$content, &$listed, &$final, &$failure, &$finishReason, &$toolCalls, &$reasoning, &$refusal, $onDelta): bool {
                 $kind = $frame['kind'] ?? $frame['type'] ?? null;
                 if ($kind === 'delta') {
                     // Upstream OpenAI-compatible streams (including OAIY's local engine) can report
@@ -549,7 +560,7 @@ final class SiteDesktopAi
                         $failure = $chunkErr;
                         return false;
                     }
-                    self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls);
+                    self::collectChunkMeta($frame['delta'] ?? null, $finishReason, $toolCalls, $reasoning, $refusal);
                     $text = self::text($frame['delta'] ?? $frame['text'] ?? null);
                     if ($text !== '') {
                         $content .= $text;
@@ -568,7 +579,7 @@ final class SiteDesktopAi
                         $failure = $chunkErr;
                         return false;
                     }
-                    self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls);
+                    self::collectChunkMeta($frame['completion'] ?? null, $finishReason, $toolCalls, $reasoning, $refusal);
                     $final = $frame;
                     return false;
                 } elseif ($kind === 'error' || $kind === 'failed') {
@@ -582,17 +593,28 @@ final class SiteDesktopAi
             }
             if ($final !== null) {
                 // A final frame after a stream is empty; one without a stream holds the answer.
-                if ($content === '') {
-                    $content = self::text($final['completion'] ?? $final['text'] ?? null);
-                    if ($content === '' && $toolCalls !== []) {
+                if (trim($content) === '') {
+                    $finalText = self::text($final['completion'] ?? $final['text'] ?? null);
+                    if ($finalText !== '') {
+                        $content = $finalText;
+                    }
+                    if (trim($content) === '' && $toolCalls !== []) {
                         $content = self::formatToolCallsAsMarkup($toolCalls);
                     }
-                    if ($content !== '' && $onDelta !== null) {
+                    if (trim($content) !== '' && $onDelta !== null) {
                         $onDelta($content);
                     }
                 }
-                if ($content === '' && $finishReason === 'length') {
-                    throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
+                if (trim($content) === '') {
+                    if ($finishReason === 'length') {
+                        throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
+                    }
+                    if (trim($refusal) !== '' || $finishReason === 'content_filter') {
+                        throw new \RuntimeException(trim($refusal) !== '' ? trim($refusal) : (($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' refused to answer this request.'));
+                    }
+                    if (trim($reasoning) !== '') {
+                        throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' finished reasoning without producing a reply. Check the model\'s context/output budget or try another model in OAIY.');
+                    }
                 }
                 return ['content' => $content, 'usage' => $usage, 'final' => $final + $listed];
             }
@@ -606,14 +628,22 @@ final class SiteDesktopAi
             }
             if ($status === 'done') {
                 // Done before every frame above was read: the answer is what came.
-                if ($content === '' && $toolCalls !== []) {
+                if (trim($content) === '' && $toolCalls !== []) {
                     $content = self::formatToolCallsAsMarkup($toolCalls);
-                    if ($content !== '' && $onDelta !== null) {
+                    if (trim($content) !== '' && $onDelta !== null) {
                         $onDelta($content);
                     }
                 }
-                if ($content === '' && $finishReason === 'length') {
-                    throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
+                if (trim($content) === '') {
+                    if ($finishReason === 'length') {
+                        throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' reached its output token limit before producing a reply. Try a shorter request or increase the model\'s output limit in OAIY.');
+                    }
+                    if (trim($refusal) !== '' || $finishReason === 'content_filter') {
+                        throw new \RuntimeException(trim($refusal) !== '' ? trim($refusal) : (($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' refused to answer this request.'));
+                    }
+                    if (trim($reasoning) !== '') {
+                        throw new \RuntimeException(($own ? 'OAIY on that computer' : 'The site\'s AI (OAIY)') . ' finished reasoning without producing a reply. Check the model\'s context/output budget or try another model in OAIY.');
+                    }
                 }
                 return ['content' => $content, 'usage' => $usage, 'final' => $listed];
             }
@@ -756,6 +786,31 @@ final class SiteDesktopAi
         return chr($direction) . str_repeat("\0", 15) . pack('J', $counter);
     }
 
+    /** Extract text from an OpenAI string or content-part array. */
+    private static function contentText(mixed $piece): string
+    {
+        if (is_string($piece)) {
+            return $piece;
+        }
+        if (!is_array($piece)) {
+            return '';
+        }
+        $text = '';
+        foreach ($piece as $part) {
+            if (!is_array($part)) {
+                continue;
+            }
+            $type = $part['type'] ?? null;
+            if ($type !== null && $type !== 'text' && $type !== 'output_text') {
+                continue;
+            }
+            if (is_string($part['text'] ?? null)) {
+                $text .= $part['text'];
+            }
+        }
+        return $text;
+    }
+
     /** Text from a frame's value: a string, or an OpenAI completion or chunk. */
     private static function text(mixed $value): string
     {
@@ -771,7 +826,7 @@ final class SiteDesktopAi
                 continue;
             }
             $piece = $choice['delta']['content'] ?? $choice['message']['content'] ?? $choice['text'] ?? null;
-            $text .= is_string($piece) ? $piece : '';
+            $text .= self::contentText($piece);
         }
         return $text;
     }
@@ -804,12 +859,13 @@ final class SiteDesktopAi
     }
 
     /**
-     * Collect finish_reason and any OpenAI tool_calls from a chunk or completion so an empty
-     * `content` can either reconstruct text-protocol `<tool_call>` blocks or report a token-limit stop.
+     * Collect finish_reason, reasoning/refusal diagnostics, and any OpenAI tool_calls from a chunk
+     * or completion so an empty `content` can reconstruct text-protocol `<tool_call>` blocks or
+     * report a token-limit/refusal/reasoning-only stop.
      *
      * @param array<int, array{name: string, args: string}> $toolCalls
      */
-    private static function collectChunkMeta(mixed $value, ?string &$finishReason, array &$toolCalls): void
+    private static function collectChunkMeta(mixed $value, ?string &$finishReason, array &$toolCalls, string &$reasoning, string &$refusal): void
     {
         if (!is_array($value) || !is_array($value['choices'] ?? null)) {
             return;
@@ -820,6 +876,18 @@ final class SiteDesktopAi
             }
             if (is_string($choice['finish_reason'] ?? null) && $choice['finish_reason'] !== '') {
                 $finishReason = $choice['finish_reason'];
+            }
+            $reasonPiece = self::contentText($choice['delta']['reasoning_content'] ?? null)
+                ?: self::contentText($choice['delta']['reasoning'] ?? null)
+                ?: self::contentText($choice['message']['reasoning_content'] ?? null)
+                ?: self::contentText($choice['message']['reasoning'] ?? null);
+            if ($reasonPiece !== '') {
+                $reasoning .= $reasonPiece;
+            }
+            $refusalPiece = self::contentText($choice['delta']['refusal'] ?? null)
+                ?: self::contentText($choice['message']['refusal'] ?? null);
+            if ($refusalPiece !== '') {
+                $refusal .= $refusalPiece;
             }
             $deltaCalls = is_array($choice['delta']['tool_calls'] ?? null) ? $choice['delta']['tool_calls'] : null;
             if ($deltaCalls !== null) {

@@ -136,6 +136,7 @@ describe('OpenAI-compatible mapping', () => {
 
   it('reads a final text reply without usage, and refuses a body with no message', () => {
     expect(fromOpenAiChatCompletion({ choices: [{ message: { content: 'Done.' }, finish_reason: 'length' }] })).toEqual({ text: 'Done.', toolCalls: [], stopReason: 'length' });
+    expect(fromOpenAiChatCompletion({ choices: [{ message: { content: [{ type: 'text', text: 'Part 1 ' }, { type: 'output_text', text: 'Part 2' }] }, finish_reason: 'stop' }] })).toEqual({ text: 'Part 1 Part 2', toolCalls: [], stopReason: 'stop' });
     expect(fromOpenAiChatCompletion({ choices: [] })).toBeNull();
     expect(fromOpenAiChatCompletion('nope')).toBeNull();
   });

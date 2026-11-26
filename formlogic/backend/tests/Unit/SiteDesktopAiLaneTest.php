@@ -500,4 +500,44 @@ final class SiteDesktopAiLaneTest extends TestCase
         $this->assertStringContainsString('"path":"ui/main.ui"', $answer['content']);
         $this->assertStringContainsString('</tool_call>', $answer['content']);
     }
+
+    public function testChatHandlesWhitespaceBeforeToolCallsAndFailsOnReasoningOnlyEmptyReply(): void
+    {
+        $answer = $this->site(function (string $id, array $turn, string $pair): void {
+            $this->relay->answer($id, [
+                'v' => 1,
+                'kind' => 'delta',
+                'delta' => ['choices' => [['index' => 0, 'delta' => ['content' => "\n\n"]]]],
+            ], 0, $pair);
+            $this->relay->answer($id, [
+                'v' => 1,
+                'kind' => 'delta',
+                'delta' => ['choices' => [['index' => 0, 'delta' => ['tool_calls' => [['index' => 0, 'function' => ['name' => 'read_file', 'arguments' => '{"path":"index.html"}']]]], 'finish_reason' => 'tool_calls']]],
+            ], 1, $pair);
+            $this->relay->answer($id, ['v' => 1, 'kind' => 'final'], 2, $pair);
+            $this->relay->finish($id);
+        })->chat(self::SAY_HELLO, $this->member, null, null, 30);
+        $this->assertStringContainsString('<tool_call name="read_file">', $answer['content']);
+
+        $this->relay = new InMemoryAiRelay();
+        try {
+            $this->site(function (string $id, array $turn, string $pair): void {
+                $this->relay->answer($id, [
+                    'v' => 1,
+                    'kind' => 'delta',
+                    'delta' => ['choices' => [['index' => 0, 'delta' => ['reasoning_content' => 'Thinking...']]]],
+                ], 0, $pair);
+                $this->relay->answer($id, [
+                    'v' => 1,
+                    'kind' => 'delta',
+                    'delta' => ['choices' => [['index' => 0, 'delta' => ['content' => '  '], 'finish_reason' => 'stop']]],
+                ], 1, $pair);
+                $this->relay->answer($id, ['v' => 1, 'kind' => 'final'], 2, $pair);
+                $this->relay->finish($id);
+            })->chat(self::SAY_HELLO, $this->member, null, null, 30);
+            $this->fail('reasoning-only reply with whitespace content must throw');
+        } catch (\RuntimeException $e) {
+            $this->assertStringContainsString('finished reasoning without producing a reply', $e->getMessage());
+        }
+    }
 }

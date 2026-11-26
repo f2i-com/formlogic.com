@@ -656,6 +656,8 @@ interface TunnelRunAccum {
   text: string;
   finalText?: string;
   finishReason?: string | null;
+  reasoning: string;
+  refusal: string;
   toolCalls: Map<number, { name: string; args: string }>;
   threadId?: string;
   models: unknown[] | null;
@@ -770,7 +772,7 @@ async function settleFromStatus(
 
 async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTunnelResult<TunnelRunOutcome>> {
   const { onState } = params;
-  const accum: TunnelRunAccum = { text: '', toolCalls: new Map(), models: null, providers: null };
+  const accum: TunnelRunAccum = { text: '', reasoning: '', refusal: '', toolCalls: new Map(), models: null, providers: null };
 
   const fail = (error: DesktopTunnelError, terminalState?: DesktopTunnelState): DesktopTunnelResult<TunnelRunOutcome> => {
     safeCall(() =>
@@ -870,6 +872,18 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
             message: 'The AI reached its output limit before writing a reply. Try a smaller change or raise the model output limit in OAIY.',
           });
         }
+        if (finalText.trim() === '' && (accum.refusal.trim() !== '' || accum.finishReason === 'content_filter')) {
+          return fail({
+            code: 'upstream_error',
+            message: accum.refusal.trim() || 'The AI refused to answer this request.',
+          });
+        }
+        if (finalText.trim() === '' && accum.reasoning.trim() !== '') {
+          return fail({
+            code: 'upstream_error',
+            message: 'The AI finished reasoning without writing a reply. Check the model\'s context/output budget or try another model in OAIY.',
+          });
+        }
         safeCall(() => onState({ state: 'done' }));
         return {
           ok: true,
@@ -909,7 +923,22 @@ function extractChunkError(value: unknown): { code: string; message: string } | 
   return { code, message };
 }
 
-/** Capture finish_reason and any tool_calls from an OpenAI-shaped chunk or completion. */
+/** Extract text from an OpenAI `content`/`reasoning`/`refusal` value (string or content-part array). */
+function extractPartText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  let text = '';
+  for (const part of value) {
+    const rec = asRecord(part);
+    if (!rec) continue;
+    const type = rec.type;
+    if (type !== undefined && type !== 'text' && type !== 'output_text') continue;
+    if (typeof rec.text === 'string') text += rec.text;
+  }
+  return text;
+}
+
+/** Capture finish_reason, reasoning/refusal diagnostics, and tool_calls from an OpenAI-shaped chunk or completion. */
 function collectChunkMetadata(value: unknown, accum: TunnelRunAccum): void {
   const completion = asRecord(value);
   const choices = completion?.choices;
@@ -922,6 +951,14 @@ function collectChunkMetadata(value: unknown, accum: TunnelRunAccum): void {
     }
     const delta = asRecord(c.delta);
     const message = asRecord(c.message);
+    const reasoning =
+      extractPartText(delta?.reasoning_content) ||
+      extractPartText(delta?.reasoning) ||
+      extractPartText(message?.reasoning_content) ||
+      extractPartText(message?.reasoning);
+    if (reasoning !== '') accum.reasoning += reasoning;
+    const refusal = extractPartText(delta?.refusal) || extractPartText(message?.refusal);
+    if (refusal !== '') accum.refusal += refusal;
     const rawCalls = Array.isArray(delta?.tool_calls)
       ? delta!.tool_calls
       : Array.isArray(message?.tool_calls)
@@ -958,7 +995,7 @@ function extractCompletionText(value: unknown): string | undefined {
     const c = asRecord(choice);
     const delta = asRecord(c?.delta);
     const message = asRecord(c?.message);
-    text += firstString(delta?.content, message?.content, c?.text) ?? '';
+    text += extractPartText(delta?.content) || extractPartText(message?.content) || extractPartText(c?.text);
   }
   return text === '' ? undefined : text;
 }

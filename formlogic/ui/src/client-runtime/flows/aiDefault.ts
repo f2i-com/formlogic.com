@@ -40,6 +40,8 @@ import {
   EDITOR_AI_TOOLS_VERSION,
   editorToolCall,
   editorUsage,
+  extractOpenAiChatDiagnostics,
+  extractOpenAiMessageText,
   fromOpenAiChatCompletion,
   toOpenAiChatMessages,
   toOpenAiTools,
@@ -618,6 +620,13 @@ async function runCustomSource(
   const messages = opts.messages;
   const system = messages.find((m) => m.role === 'system')?.content;
   const prompt = [...messages].reverse().find((m) => m.role === 'user')?.content;
+  const standardOpenAi = !provider.requestTemplate && (provider.responsePath ?? OPENAI_CHAT_RESPONSE_PATH) === OPENAI_CHAT_RESPONSE_PATH;
+  const editorOutputCap =
+    opts.editor && standardOpenAi
+      ? provider.kind === 'openai'
+        ? { max_completion_tokens: 16_384 }
+        : { max_tokens: 16_384 }
+      : {};
   const requestBody = provider.requestTemplate
     ? renderRequestTemplate(provider.requestTemplate, {
         model: provider.model,
@@ -626,7 +635,7 @@ async function runCustomSource(
         messages,
         apiKey: provider.apiKey,
       })
-    : { messages, ...(provider.model ? { model: provider.model } : {}) };
+    : { messages, ...(provider.model ? { model: provider.model } : {}), ...editorOutputCap };
 
   const doFetch = deps.fetchFn ?? fetch;
   let res: Response;
@@ -661,8 +670,45 @@ async function runCustomSource(
   } catch {
     return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' returned a non-JSON body.`, status: res.status });
   }
-  const content = extractByPath(payload, provider.responsePath ?? 'choices.0.message.content');
-  if (typeof content !== 'string') {
+  if (standardOpenAi) {
+    const reply = fromOpenAiChatCompletion(payload);
+    if (reply) {
+      let content = reply.text;
+      if (!content.trim() && reply.toolCalls.length > 0) {
+        content = reply.toolCalls
+          .map((c) => `<tool_call name="${c.name}">\n${typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments)}\n</tool_call>`)
+          .join('\n\n');
+      }
+      if (!content.trim()) {
+        if (reply.stopReason === 'length') {
+          return failure({
+            code: 'request_failed',
+            message: `Default AI service '${provider.name}' reached its output limit before writing a reply.`,
+            status: res.status,
+          });
+        }
+        const diag = extractOpenAiChatDiagnostics(payload);
+        if (diag.refusal.trim() !== '' || reply.stopReason === 'content_filter') {
+          return failure({
+            code: 'request_failed',
+            message: diag.refusal.trim() || `Default AI service '${provider.name}' refused to answer this request.`,
+            status: res.status,
+          });
+        }
+        if (diag.reasoning.trim() !== '') {
+          return failure({
+            code: 'request_failed',
+            message: `Default AI service '${provider.name}' finished reasoning without writing a reply. Check its context/output budget or try another model.`,
+            status: res.status,
+          });
+        }
+      }
+      return { ok: true, data: { source: 'custom', content } };
+    }
+  }
+  const rawContent = extractByPath(payload, provider.responsePath ?? 'choices.0.message.content');
+  const content = typeof rawContent === 'string' ? rawContent : Array.isArray(rawContent) ? extractOpenAiMessageText(rawContent) : null;
+  if (content === null) {
     return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' returned no text.`, status: res.status });
   }
   return { ok: true, data: { source: 'custom', content } };
@@ -742,6 +788,21 @@ export async function resolveDefaultLlm(
                 code: 'request_failed',
                 message: 'The AI reached its output limit before writing a reply. Try a smaller change or raise the model output limit in OAIY.',
               });
+            }
+            if (!content.trim()) {
+              const diag = extractOpenAiChatDiagnostics(localRes.data);
+              if (diag.refusal.trim() !== '' || reply.stopReason === 'content_filter') {
+                return failure({
+                  code: 'request_failed',
+                  message: diag.refusal.trim() || 'The AI refused to answer this request.',
+                });
+              }
+              if (diag.reasoning.trim() !== '') {
+                return failure({
+                  code: 'request_failed',
+                  message: 'The AI finished reasoning without writing a reply. Check the model\'s context/output budget or try another model in OAIY.',
+                });
+              }
             }
             return { ok: true, data: { source: 'desktop', content } };
           }
