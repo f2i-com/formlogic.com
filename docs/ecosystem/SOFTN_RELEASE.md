@@ -39,7 +39,10 @@ and its `.sha256`, built once by Softn's release workflow and verified there.
 2. Downloads the archive and its sidecar to `.runtime-source/softn-release/<tag>/`
    (ignored by Git, reused while its digest matches).
 3. Verifies: the sidecar SHA-256 of the archive; the archive reads back as a
-   sound zip; every file's digest in the archive's own `softn-release.json`;
+   sound zip; in Softn releases after v0.0.52 (`softn-release.json` `formatVersion` 2) the
+   files the archive stores once are filled in at every other place its
+   `copies` names, before anything else is read, so each tree is checked and
+   installed whole; every file's digest in the archive's own `softn-release.json`;
    the archive was built from the commit the tag points at; the engine (below);
    the release's protocol versions equal `formlogic/ui/src/lib/softn/protocol.json`;
    the adapter the release ships is the one this tree has vendored; the native

@@ -21,6 +21,11 @@
  *   native-runtime/  -> formlogic/backend/resources/softn-native/
  *   zipp-torch/      -> (verified, not installed: see below)
  *
+ * In Softn releases after v0.0.52 (softn-release.json formatVersion 2) a file several of those trees carry
+ * byte for byte is stored in the archive once, and `copies` names where else it goes. It is filled
+ * in there before anything is checked, so every check and every tree installed are what they were
+ * when the archive wrote each copy out.
+ *
  * The torch package (release.zipp.packages.torch, since Softn v0.0.16 and
  * ZIPP v0.0.21) is ZIPP's web-torch build of the same release, a Python
  * package the runtime adds to the engine only for an app that declares
@@ -365,6 +370,42 @@ function entryText(entries, name) {
 }
 
 /**
+ * The softn-release.json formats this FormLogic reads. 2 (Softn releases after v0.0.52) is 1 plus `copies`:
+ * a file several trees carry byte for byte (the engine in zipp/ and native-runtime/wasm/, the
+ * container engines in hosted-runtime/ and native-runtime/wasm/container/, the torch package, the
+ * chunks Builder and Studio share) is stored in the archive once, and `copies` names each other
+ * place it goes, { "<where it goes>": "<the entry holding its bytes>" }. `files` still lists every
+ * one of those places with its digest.
+ */
+const RELEASE_FORMATS = [1, 2];
+
+/**
+ * The archive's entries with its copies filled in: each one the bytes and mode of the entry it
+ * names, under its own name. Every check after this one, and the install, then read the trees
+ * whole, exactly as from an archive that wrote each copy out; the digest check holds each copy to
+ * `files` like any other file. Refused: copies at formatVersion 1, a copy the archive also
+ * stores, a copy of something it does not store (another copy included), and a copy `files`
+ * does not list.
+ */
+function withCopies(stored, release) {
+  const copies = release.copies;
+  if (release.formatVersion === 1) {
+    if (copies !== undefined) throw new ReleaseError('softn-release.json names copies, which only formatVersion 2 has.');
+    return stored;
+  }
+  if (!copies || typeof copies !== 'object' || Array.isArray(copies)) throw new ReleaseError('softn-release.json (formatVersion 2) has no copies object.');
+  const entries = new Map(stored);
+  for (const [name, from] of Object.entries(copies)) {
+    if (name.startsWith('/') || name.includes('\\') || name.split('/').some((segment) => segment === '..' || segment === '' || segment === '.')) throw new ReleaseError(`softn-release.json names a copy at ${JSON.stringify(name)}, which is not a name an archive entry can have.`);
+    if (typeof from !== 'string' || from.endsWith('/') || !stored.has(from)) throw new ReleaseError(`softn-release.json copies ${name} from ${JSON.stringify(from)}, which the archive does not store.`);
+    if (stored.has(name)) throw new ReleaseError(`${name} is in the archive and also named as a copy of ${from}.`);
+    if (!Object.hasOwn(release.files, name)) throw new ReleaseError(`softn-release.json names ${name} as a copy of ${from} but does not list it.`);
+    entries.set(name, { ...stored.get(from) });
+  }
+  return entries;
+}
+
+/**
  * Read the archive as an extractor would, check every digest the release
  * manifest records, check every engine copy is the one ZIPP release the
  * manifest records, and check the release fits this tree: protocol versions,
@@ -373,16 +414,18 @@ function entryText(entries, name) {
 export async function verifyArchive(zip, { sidecarDigest, paths, archiveName }) {
   const zipDigest = sha256(zip);
   if (sidecarDigest && sidecarDigest !== zipDigest) throw new ReleaseError(`${archiveName} does not match its .sha256 sidecar (archive ${zipDigest.slice(0, 12)}, sidecar ${sidecarDigest.slice(0, 12)}); the download is corrupt or not the file the release page describes.`);
-  const { entries, problems } = readArchive(zip);
+  const { entries: stored, problems } = readArchive(zip);
   if (problems.length) throw new ReleaseError(`${archiveName} does not read back as a sound zip:\n  ${problems.join('\n  ')}`);
 
   let release;
-  try { release = JSON.parse(entryText(entries, 'softn-release.json')); }
+  try { release = JSON.parse(entryText(stored, 'softn-release.json')); }
   catch (error) { throw error instanceof ReleaseError ? error : new ReleaseError(`softn-release.json is not JSON: ${error.message}`); }
-  if (release.formatVersion !== 1) throw new ReleaseError(`softn-release.json formatVersion ${release.formatVersion} is not the 1 this FormLogic reads.`);
+  if (!RELEASE_FORMATS.includes(release.formatVersion)) throw new ReleaseError(`softn-release.json formatVersion ${release.formatVersion} is not one this FormLogic reads (${RELEASE_FORMATS.join(' or ')}).`);
   for (const key of ['tag', 'commit', 'version']) if (typeof release[key] !== 'string' || !release[key]) throw new ReleaseError(`softn-release.json has no ${key}.`);
   if (!/^[0-9a-f]{40}$/.test(release.commit)) throw new ReleaseError(`softn-release.json commit is not a 40-hex revision.`);
   if (!release.files || typeof release.files !== 'object') throw new ReleaseError('softn-release.json lists no files.');
+  // From here on the archive is read with the files it stores once filled in where else they go.
+  const entries = withCopies(stored, release);
 
   // Every file in the archive is listed with the digest it has, and nothing listed is missing.
   const listed = new Set(Object.keys(release.files));

@@ -270,6 +270,54 @@ test('a file whose bytes differ from softn-release.json is refused', async (t) =
   await assert.rejects(fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }), /hosted-runtime\/assets\/app\.js has digest/);
 });
 
+/**
+ * The fixture as Softn releases after v0.0.52 package it: softn-release.json at formatVersion 2, the
+ * entries `copies` names left out of the archive (`files` still lists them). `adjust` changes the
+ * manifest last, so one rule at a time can be broken.
+ */
+async function writeCopiesArchive(dir, copies, { adjust = (release) => release, keep = [] } = {}) {
+  return writeFixtureArchive(dir, {}, (entries) => {
+    const release = JSON.parse(entries['softn-release.json'].toString('utf8'));
+    for (const name of Object.keys(copies)) if (!keep.includes(name)) delete entries[name];
+    entries['softn-release.json'] = Buffer.from(JSON.stringify(adjust({ ...release, formatVersion: 2, copies }), null, 2) + '\n');
+  });
+}
+
+test('an archive that stores a file once and names where else it goes installs every tree whole', async (t) => {
+  const root = await formlogicRoot(t);
+  const fixture = await writeCopiesArchive(root, { 'native-runtime/wasm/zipp_wasm_bg.wasm': 'zipp/zipp_wasm_bg.wasm' });
+  assert.ok(!readArchive(await readFile(fixture.path)).entries.has('native-runtime/wasm/zipp_wasm_bg.wasm'), 'the copy is not stored');
+  const record = await fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet });
+  assert.equal(record.tag, 'v0.0.13');
+  // The native runtime has its engine, the browser engine's bytes, and the generation records it.
+  assert.ok((await readFile(resolve(root, 'formlogic/backend/resources/softn-native/wasm/zipp_wasm_bg.wasm'))).equals(ZIPP_RELEASE.wasm));
+  assert.ok((await readFile(engineFile(root))).equals(ZIPP_RELEASE.wasm));
+  const current = JSON.parse(await readFile(resolve(root, '.runtime-source/softn-release/current.json'), 'utf8'));
+  assert.equal(current.generation.inventory['native-runtime']['wasm/zipp_wasm_bg.wasm'], ZIPP_RELEASE.source.sha256);
+  await checkInstalled({ root, ...quiet });
+});
+
+test('copies that are not sound are refused before anything is installed', async (t) => {
+  const root = await formlogicRoot(t);
+  const engineCopy = { 'native-runtime/wasm/zipp_wasm_bg.wasm': 'zipp/zipp_wasm_bg.wasm' };
+  const cases = [
+    [{ adjust: (release) => ({ ...release, formatVersion: 1 }) }, engineCopy, /names copies, which only formatVersion 2 has/],
+    [{ adjust: (release) => ({ ...release, formatVersion: 3 }) }, engineCopy, /formatVersion 3 is not one this FormLogic reads \(1 or 2\)/],
+    [{ adjust: (release) => ({ ...release, copies: undefined }) }, engineCopy, /has no copies object/],
+    [{}, { 'native-runtime/wasm/zipp_wasm_bg.wasm': 'zipp/not-there.wasm' }, /copies native-runtime\/wasm\/zipp_wasm_bg\.wasm from "zipp\/not-there\.wasm", which the archive does not store/],
+    [{ keep: ['native-runtime/wasm/zipp_wasm_bg.wasm'] }, engineCopy, /is in the archive and also named as a copy/],
+    [{ adjust: (release) => ({ ...release, copies: { ...release.copies, 'native-runtime/extra.wasm': 'zipp/zipp_wasm_bg.wasm' } }) }, engineCopy, /names native-runtime\/extra\.wasm as a copy .* but does not list it/],
+    [{ adjust: (release) => ({ ...release, copies: { '../outside.wasm': 'zipp/zipp_wasm_bg.wasm' }, files: { ...release.files, '../outside.wasm': release.files['zipp/zipp_wasm_bg.wasm'] } }) }, engineCopy, /not a name an archive entry can have/],
+    // A copy is held to the digest `files` lists for it, like any other file.
+    [{}, { 'hosted-runtime/assets/app.js': 'zipp/zipp_wasm_bg.wasm' }, /hosted-runtime\/assets\/app\.js has digest/],
+  ];
+  for (const [index, [options, copies, refusal]] of cases.entries()) {
+    const fixture = await writeCopiesArchive(resolve(root, `case-${index}`), copies, options);
+    await assert.rejects(fetchSoftnRelease({ root, archivePath: fixture.path, ...quiet }), (e) => e instanceof ReleaseError && refusal.test(e.message), `case ${index}`);
+    assert.ok(!existsSync(resolve(root, 'formlogic/ui/public/hosted-runtime')), `case ${index} installed nothing`);
+  }
+});
+
 test('a release with a new ZIPP installs with no change to this tree, and --check holds the engine tree to it', async (t) => {
   const root = await formlogicRoot(t);
   const first = await writeFixtureArchive(resolve(root, 'a'), { tag: 'v0.0.15' });
