@@ -64,6 +64,30 @@ it('follows the app to another page, and comes Back to the entry with its query 
   expect(window.history.length).toBe(after);
 });
 
+it('writes an app’s named start page over the entry Back showed, keeping Forward', async () => {
+  // An app whose logic starts on a named page tells `/` and then `/#home` when it is run again.
+  await says('/');
+  await says('/#home');
+  await says('/about.html');
+  const entries = window.history.length;
+
+  // Back to the first entry: the frame is sent to `/`, and the app tells `/` and then `/#home`.
+  await act(async () => {
+    window.history.replaceState(null, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(frame().navigateTo?.place).toBe('/');
+  await says('/');
+  await says('/#home');
+  // Written over the entry: pushing it would have dropped /about.html ahead of it.
+  expect(window.history.length).toBe(entries);
+  expect(address()).toBe('/#home');
+
+  // A step of the person's own after that is a step of history again.
+  await says('/contact.html');
+  expect(window.history.length).toBe(entries + 1);
+});
+
 it('sends the frame nowhere for an address that differs from where the app is only by its query', async () => {
   await says('/pricing.html');
   await act(async () => {

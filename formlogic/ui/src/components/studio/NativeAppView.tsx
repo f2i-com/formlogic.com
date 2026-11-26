@@ -280,6 +280,11 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   const fromPopstateRef = useRef<string | null>(null);
   const initialPlaceSyncedRef = useRef<boolean>(false);
   const navSeqRef = useRef<number>(0);
+  // After Back or Forward the frame is sent to the entry's place. An app whose logic starts on a
+  // named page then tells that place and, right after, a named page of it (`/`, then `/#home`).
+  // That second step is still the entry Back or Forward showed: it is written over the entry, as
+  // pushing it would drop every entry ahead of it (Forward then went nowhere).
+  const settlingRef = useRef<{ page: string; until: number } | null>(null);
   const [navigateTo, setNavigateTo] = useState<{ place: string; seq: number } | null>(null);
   const initialCanonicalRef = useRef<string | null>(null);
   useEffect(() => {
@@ -308,6 +313,16 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const wasPopstate = fromPopstateRef.current === path;
     if (wasPopstate) fromPopstateRef.current = null;
+    let settling = settlingRef.current;
+    if (settling && Date.now() >= settling.until) {
+      settling = null;
+      settlingRef.current = null;
+    }
+    const settles = !wasPopstate && settling !== null && path !== settling.page && path.split('#')[0] === settling.page;
+    if (settles) {
+      settlingRef.current = null;
+      fromPopstateRef.current = null;
+    }
     const isInitialSync = !initialPlaceSyncedRef.current;
     initialPlaceSyncedRef.current = true;
     lastPlaceRef.current = path;
@@ -317,7 +332,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     // than rewritten without the query.
     const here = readCurrentPlace();
     if (here !== null && here !== path && framePlace(here) === path) return;
-    const shouldPush = !isSite && !wasPopstate && !isInitialSync;
+    const shouldPush = !isSite && !wasPopstate && !isInitialSync && !settles;
     try {
       // Defense-in-depth containment: assert resolved target stays inside the app prefix (or non-reserved domain route).
       const resolved = new URL(nextUrl, window.location.origin);
@@ -357,6 +372,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       if (target === framePlace(lastPlaceRef.current)) return;
       fromPopstateRef.current = target;
       lastPlaceRef.current = target;
+      settlingRef.current = { page: target.split('#')[0], until: Date.now() + 2000 };
       setNavigateTo({ place: target, seq: ++navSeqRef.current });
     };
     window.addEventListener('popstate', onPopState);
