@@ -180,7 +180,10 @@ class DbContextCapture
 
         $intent = ['slug' => $slug];
         if (is_array($input)) {
-            $encoded = json_encode($input);
+            // As UTF-8 text, as the run keeps its inputs (FlowService): with PHP's default escapes
+            // each non-ASCII character is six bytes and each `/` two, and an input in any language
+            // but English was refused at a third of the limit.
+            $encoded = json_encode($input, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($encoded === false || strlen($encoded) > self::MAX_FLOW_INPUT_BYTES) {
                 return ['queued' => false, 'error' => 'flow input exceeds the 16KB limit'];
             }

@@ -2,9 +2,8 @@
 //! for a plugin is not one to trust. The script goes in on stdin and not as an argument, so the
 //! twelve words never appear in a process listing.
 
-use std::io::Write as _;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 pub const CAN_ASK: bool = true;
 
@@ -20,17 +19,12 @@ fn quoted(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"").replace('\r', " ").replace('\n', "\" & return & \""))
 }
 
+/// Runs a script and waits for it. Through `child`, so a window still open when the plugin is told
+/// to stop is closed with it and not left on the screen.
 fn run(script: &str) -> Result<Output, String> {
-    let mut child = Command::new("/usr/bin/osascript")
-        .arg("-")
-        .env("__CF_USER_TEXT_ENCODING", TEXT_ENCODING)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("Could not show a window: {e}"))?;
-    child.stdin.take().ok_or("Could not show a window.")?.write_all(script.as_bytes()).map_err(|e| format!("Could not show a window: {e}"))?;
-    child.wait_with_output().map_err(|e| format!("Could not show a window: {e}"))
+    let mut osascript = Command::new("/usr/bin/osascript");
+    osascript.arg("-").env("__CF_USER_TEXT_ENCODING", TEXT_ENCODING);
+    super::child::output(osascript, script.as_bytes()).map_err(|e| format!("Could not show a window: {e}"))
 }
 
 /// `true` if the script ran through, `false` if the person cancelled, and an error otherwise: a
@@ -130,6 +124,8 @@ mod tests {
 
     #[test]
     fn the_scripts_compile_and_a_window_that_cannot_open_is_an_error() {
+        // In turn with the test that ends whatever window is open (child.rs).
+        let _turn = super::super::child::ONE_TEST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         // No window here: `run script` of an invalid line stands in for a failure that isn't Cancel.
         let output = run("this is not applescript at all (\n").unwrap();
         assert!(finished(&output).is_err());

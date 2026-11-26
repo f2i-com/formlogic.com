@@ -267,17 +267,64 @@ final class NativeAppControllerTest extends TestCase
         $call = static fn (string $address): ServerRequestInterface => (new ServerRequestFactory())->createServerRequest('POST', $address, ['REMOTE_ADDR' => '203.0.113.5'])
             ->withHeader('X-Forwarded-Proto', 'https')
             ->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef')
-            ->withParsedBody(['method' => 'GET', 'path' => '/api/items', 'headers' => ['Host' => 'elsewhere.example', 'X-Forwarded-Host' => 'elsewhere.example', 'Accept' => 'application/json']]);
+            ->withParsedBody(['method' => 'GET', 'path' => '/api/items', 'headers' => [
+                'Host' => 'elsewhere.example', 'X-Forwarded-Host' => 'elsewhere.example', 'Accept' => 'application/json',
+                // Where the caller is, and the method, are the host's to say, for a container backend
+                // too (AppRequestHeaders): the page passed both on, and the app's API never did.
+                'Forwarded' => 'for=198.51.100.9', 'X-Method-Override' => 'DELETE',
+            ]]);
 
         $response = $controller->runtime($call('https://forms.example.test/api/app/notes/native'), new Response(), ['slug' => 'notes']);
         $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
         $this->assertSame('forms.example.test', $sent[0]['host']);
         $this->assertTrue($sent[0]['https']);
-        $this->assertSame(['accept' => 'application/json'], (array) $sent[0]['headers'], 'the page names no host of its own');
+        $this->assertSame(['accept' => 'application/json'], (array) $sent[0]['headers'], 'the page names no host, address or method of its own');
 
         // A port that is not the scheme's own is part of the name, as a backend's HTTP_HOST has it.
         $controller->runtime($call('https://forms.example.test:8443/api/app/notes/native'), new Response(), ['slug' => 'notes']);
         $this->assertSame('forms.example.test:8443', $sent[1]['host']);
+    }
+
+    /**
+     * The path a container backend is given is the one its rules and its router read: decoded once,
+     * as SoftN's hosts and this site's API decode it. Handed on as it came, `/api/%61dmin` passed a
+     * `.htaccess` rule written for `/api/admin` that the PHP app's own router, which decodes, served.
+     */
+    public function testAContainerBackendIsGivenThePathDecodedOnce(): void
+    {
+        $project = ['access' => 'application', 'version' => 1, 'assets' => [], 'files' => [
+            'manifest.json' => '{"id":"orders","engine":2,"main":"index.html","backend":{"runtime":"php","entry":"backend/index.php","routes":["/api/"]}}',
+            'index.html' => '<h1>Orders</h1>', 'backend/index.php' => '<?php echo 1;',
+        ]];
+        $sent = [];
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn($project);
+        $native->method('runtimeProject')->willReturn(['project' => $project, 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]);
+        $native->method('containerRequest')->willReturnCallback(static function (string $appId, array $request) use (&$sent): array {
+            $sent[] = $request['path'];
+            return ['status' => 200, 'headers' => [['content-type', 'text/plain']], 'bodyBase64' => base64_encode('ok')];
+        });
+        [$controller] = $this->fixture('application', $native);
+        $call = static fn (string $path) => $controller->runtime(
+            (new ServerRequestFactory())->createServerRequest('POST', 'https://forms.example.test/api/app/notes/native', ['REMOTE_ADDR' => '203.0.113.5'])
+                ->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef')
+                ->withParsedBody(['method' => 'GET', 'path' => $path]),
+            new Response(),
+            ['slug' => 'notes'],
+        );
+
+        $this->assertSame(200, $call('/api/%61dmin/users')->getStatusCode());
+        $this->assertSame(200, $call('/api/caf%C3%A9')->getStatusCode());
+        $this->assertSame(200, $call('/api/items')->getStatusCode());
+        $this->assertSame(['/api/admin/users', '/api/café', '/api/items'], $sent);
+
+        // What would decode into something else, or into what no path holds, is refused before any
+        // backend is asked: a double encoding, an encoded `?` or `#`, a control, a broken escape, bytes
+        // that are not UTF-8.
+        foreach (['/api/%2561dmin', '/api/a%3Fb', '/api/a%23b', '/api/%0a', '/api/%zz', '/api/%4', '/api/%C3%28'] as $bad) {
+            $this->assertNotSame(200, $call($bad)->getStatusCode(), $bad);
+        }
+        $this->assertCount(3, $sent, 'none of those reached the backend');
     }
 
     public function testAnAppWhoseLogicThisInstallCannotRunIsNotServedAtAll(): void
@@ -331,6 +378,8 @@ final class NativeAppControllerTest extends TestCase
     public function testAHandlerIsGivenItsAppsOwnHeadersAndNoneTheHostSpeaksFor(): void
     {
         [$controller, , $native] = $this->fixture('application');
+        // Each call asks for a worker, and says first whose app it is (the account's share of them).
+        $native->expects($this->atLeastOnce())->method('ownedBy')->with('notes', 'owner');
         $given = [];
         $native->method('request')->willReturnCallback(static function (string $appId, array $input) use (&$given): array {
             $given[] = (array) $input['headers'];
@@ -990,5 +1039,23 @@ final class NativeAppControllerTest extends TestCase
         $this->assertStringContainsString('matched exactly', NativeAppService::startupFailure('route_configuration'));
         $this->assertStringContainsString('Ask your administrator', NativeAppService::startupFailure('wasm_initialization'));
         $this->assertStringNotContainsString('()', NativeAppService::startupFailure(''));
+    }
+
+    public function testAContainerBackendThatDidNotStartIsToldWhatInItsManifestToCheck(): void
+    {
+        // Its own start failing (a backend.entry that is not there, a seedSql that does not run) is
+        // the author's to fix: "ask your administrator to check the runtime" sent them to nobody.
+        $said = NativeAppService::startupFailure('container_backend', true);
+        $this->assertStringContainsString('backend.entry', $said);
+        $this->assertStringContainsString('seedSql', $said);
+        $this->assertStringNotContainsString('administrator', $said);
+        $this->assertStringEndsWith('(container_backend)', $said);
+        // It has no server block to be told about.
+        $this->assertStringNotContainsString('server block', NativeAppService::startupFailure('manifest_read', true));
+        $this->assertStringNotContainsString('server block', NativeAppService::startupFailure('application_identity', true));
+        // A stage every app shares keeps its words, and an app with a server block is told as before.
+        $this->assertSame(NativeAppService::startupFailure('wasm_initialization'), NativeAppService::startupFailure('wasm_initialization', true));
+        $this->assertStringContainsString('server block', NativeAppService::startupFailure('manifest_read'));
+        $this->assertStringContainsString('Ask your administrator', NativeAppService::startupFailure('container_backend'));
     }
 }

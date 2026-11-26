@@ -9,6 +9,8 @@ use FormLogic\Services\AuditService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
 use FormLogic\Services\ApiKeyService;
+use FormLogic\Services\RateLimiterUnavailableException;
+use FormLogic\Services\SecondFactorLockedException;
 use FormLogic\Helpers\IpResolver;
 use FormLogic\Helpers\AppUrl;
 use FormLogic\Middleware\CsrfMiddleware;
@@ -189,12 +191,7 @@ class AuthController
                     // No new prompt while the account is over its budget of code answers: each
                     // prompt would be refused unread anyway (MfaService::secondFactorAttempt).
                     if ($this->mfaService->secondFactorLocked($userId)) {
-                        $this->audit($request, 'auth.mfa.failed', 'user', $userId, ['reason' => 'account_budget']);
-                        return $this->jsonResponse($response, [
-                            'error' => true,
-                            'message' => 'Too many incorrect verification codes for this account. Please try again in '
-                                . $this->mfaService->secondFactorMinutesLeft() . ' minute(s).',
-                        ], 429);
+                        return $this->codeNotRead($request, $response, $userId, new SecondFactorLockedException($this->mfaService->secondFactorMinutesLeft()));
                     }
                     $mfaToken = '';
                     if ($user !== null) {
@@ -1001,22 +998,10 @@ class AuthController
         // bound nobody who can sign in with the password again for a fresh one. Counted before
         // the code is read, and refused if it cannot be counted.
         $withinBudget = $this->mfaService->secondFactorAttempt($user->id);
-        if ($withinBudget === null) {
-            $this->logger->error('MFA verify refused: rate-limit store unavailable (failing closed)');
-            return $this->jsonResponse($response, [
-                'error' => true,
-                'message' => (new \FormLogic\Services\RateLimiterUnavailableException())->getMessage(),
-                'retryable' => true,
-            ], 503);
-        }
-        if (!$withinBudget) {
-            $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'account_budget']);
-            return $this->jsonError(
-                $response,
-                'Too many incorrect verification codes for this account. Please try again in '
-                    . $this->mfaService->secondFactorMinutesLeft() . ' minute(s).',
-                429
-            );
+        if ($withinBudget !== true) {
+            return $this->codeNotRead($request, $response, $user->id, $withinBudget === null
+                ? new RateLimiterUnavailableException()
+                : new SecondFactorLockedException($this->mfaService->secondFactorMinutesLeft()));
         }
         if (!$this->mfaService->verifyChallenge($user->id, $code)) {
             $this->audit($request, 'auth.mfa.failed', 'user', $user->id);
@@ -1040,6 +1025,25 @@ class AuthController
         }
         $this->audit($request, 'auth.login', 'user', $user->id, ['mfa' => true, 'rememberedBrowser' => $remember]);
         return $this->jsonResponse($response, ['user' => $this->authService->userPayload($user)]);
+    }
+
+    /**
+     * The answer to a code that was not read, wherever it was asked for: the account is over its
+     * budget of code answers (429, the wait in the message), or the answer could not be counted
+     * (a retryable 503 — the caller did nothing wrong, and an outage is not a free run at the code).
+     */
+    private function codeNotRead(Request $request, Response $response, string $userId, SecondFactorLockedException|RateLimiterUnavailableException $refusal): Response
+    {
+        if ($refusal instanceof RateLimiterUnavailableException) {
+            $this->logger->error('Two-factor code refused: rate-limit store unavailable (failing closed)');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => $refusal->getMessage(),
+                'retryable' => true,
+            ], 503);
+        }
+        $this->audit($request, 'auth.mfa.failed', 'user', $userId, ['reason' => 'account_budget']);
+        return $this->jsonError($response, $refusal->getMessage(), 429);
     }
 
     /** Settings payload: enabled/pending state, recovery-code count, trusted browsers. GET /api/auth/mfa */
@@ -1104,6 +1108,9 @@ class AuthController
             }
             $this->audit($request, 'auth.mfa.enabled', 'user', $user->id);
             return $this->jsonResponse($response, ['enabled' => true, 'recoveryCodes' => $codes]);
+        } catch (SecondFactorLockedException | RateLimiterUnavailableException $e) {
+            // The setup's code is counted against the account like any other (MfaService::enable).
+            return $this->codeNotRead($request, $response, $user->id, $e);
         } catch (\RuntimeException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);
         }
@@ -1129,7 +1136,14 @@ class AuthController
         if (!is_array($data) || !array_key_exists('code', $data)) {
             return $this->jsonError($response, 'This page is out of date, so it did not ask for your code. Reload it and try again.', 403, 'mfa_code_required');
         }
-        if (!$this->mfaService->verifyChallenge($user->id, self::field($data, 'code'))) {
+        // Counted against the account's budget of code answers, as at sign-in: the password this
+        // route also takes is no bound on whoever knows it.
+        try {
+            $matched = $this->mfaService->verifySessionCode($user->id, self::field($data, 'code'));
+        } catch (SecondFactorLockedException | RateLimiterUnavailableException $e) {
+            return $this->codeNotRead($request, $response, $user->id, $e);
+        }
+        if (!$matched) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $this->mfaService->disable($user->id);
@@ -1155,7 +1169,14 @@ class AuthController
             return $blocked;
         }
         $data = $request->getParsedBody();
-        if (!$this->mfaService->verifyChallenge($user->id, self::field($data, 'code'))) {
+        // The code is all this route asks of a session, so its answers are counted against the
+        // account's budget as at sign-in: a session someone else holds gets no more guesses.
+        try {
+            $matched = $this->mfaService->verifySessionCode($user->id, self::field($data, 'code'));
+        } catch (SecondFactorLockedException | RateLimiterUnavailableException $e) {
+            return $this->codeNotRead($request, $response, $user->id, $e);
+        }
+        if (!$matched) {
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 403, 'mfa_code_required');
         }
         $codes = $this->mfaService->regenerateRecoveryCodes($user->id);

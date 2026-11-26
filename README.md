@@ -338,6 +338,8 @@ Serve the repository from your web root and open:
 http://localhost/<your-folder>/formlogic/install.php
 ```
 
+A first install opens at the server's own `localhost` address, as above. To install over the network (a remote server, or one behind a proxy or tunnel), set `INSTALL_TOKEN` to a long random secret in the server environment (`SetEnv INSTALL_TOKEN <secret>` in the web-root `.htaccess`) and open `install.php?token=<secret>`: whoever finishes the wizard owns the site.
+
 > [!WARNING]
 > Delete `install.php` after setup, serve only the backend `public/` directory and use HTTPS in production.
 

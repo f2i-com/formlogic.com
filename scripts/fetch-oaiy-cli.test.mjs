@@ -1,6 +1,6 @@
 /**
- * scripts/fetch-oaiy-cli.mjs against releases built to the contract
- * (oaiy.com/scripts/pack-cli-asset.mjs writes the real asset, release.yml
+ * scripts/fetch-oaiy-cli.mjs against releases built to the contract (oaiy.com's
+ * platform/scripts/pack-cli-asset.mjs writes the real asset, release.yml
  * publishes the SHA256SUMS.txt and the attested evidence beside it): what is
  * refused, what is installed, and what the frozen record carries. Fixtures
  * only — no network, no oaiy.com checkout — and a temporary FormLogic-shaped
@@ -42,7 +42,7 @@ const PROTOCOLS = { script: 1, profile: 1 };
 
 // ── A release, shaped like the real one ─────────────────────────────────────
 
-// The ustar writer from oaiy.com/scripts/pack-cli-asset.mjs (Apache-2.0),
+// The ustar writer from oaiy.com's platform/scripts/pack-cli-asset.mjs (Apache-2.0),
 // kept here so the fixtures are the format the real packer emits — headers
 // with a correct checksum, a directory entry per folder, two zero blocks at
 // the end. `type` is a parameter because the reader's refusals (a symbolic

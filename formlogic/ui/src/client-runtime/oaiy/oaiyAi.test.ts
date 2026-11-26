@@ -4,7 +4,7 @@ import {
   __setOaiyBaseUrlForTests,
   setOaiyToken,
 } from './oaiyRuntime';
-import { listOaiySources, oaiyAiChat } from './oaiyAi';
+import { listOaiySources, oaiyAiChat, oaiyEngineImage } from './oaiyAi';
 
 const BASE = 'http://127.0.0.1:19993';
 
@@ -170,6 +170,57 @@ describe('oaiyAiChat — credential-hidden chat', () => {
       const res = await asked;
       expect(res).toEqual({ ok: false, error: { code: 'connector_uncertain', message: 'OAIY Desktop did not answer in time.' } });
       expect((res as { transportFailure?: boolean }).transportFailure).toBeUndefined();
+    });
+  });
+});
+
+// A picture can take minutes, so this waits ten of them. Giving up was reported as OAIY not being
+// there (a transport failure), of an OAIY that had the request and an engine at work on it.
+describe('oaiyEngineImage — a picture from OAIY\'s own engine', () => {
+  const UNANSWERED = { ok: false, error: { code: 'connector_uncertain', message: 'OAIY Desktop did not answer in time.' } };
+  /** An OAIY that has taken the request and is still drawing. */
+  function stillDrawing() {
+    const fn = vi.fn((_input: RequestInfo | URL, init: RequestInit = {}) => new Promise<Response>((_resolve, reject) => {
+      const stop = () => reject(new DOMException('Aborted', 'AbortError'));
+      // As fetch does: a signal already aborted ends the request before it is sent.
+      if (init.signal?.aborted) stop();
+      else init.signal?.addEventListener('abort', stop, { once: true });
+    }));
+    vi.stubGlobal('fetch', fn);
+    return fn;
+  }
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('says a picture it gave up on after ten minutes was not answered, and is not a transport failure', async () => {
+    vi.useFakeTimers();
+    const fetchFn = stillDrawing();
+    let done = false;
+    const asked = oaiyEngineImage({ prompt: 'a fox' });
+    void asked.then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 1_000);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const res = await asked;
+    expect(res).toEqual(UNANSWERED);
+    expect((res as { transportFailure?: boolean }).transportFailure).toBeUndefined();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the same when the caller stops waiting, before it asked or after', async () => {
+    stillDrawing();
+    const run = new AbortController();
+    const asked = oaiyEngineImage({ prompt: 'a fox' }, { signal: run.signal });
+    run.abort();
+    expect(await asked).toEqual(UNANSWERED);
+    expect(await oaiyEngineImage({ prompt: 'a fox' }, { signal: run.signal })).toEqual(UNANSWERED);
+  });
+
+  it('still marks a request that never reached OAIY as a transport failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    expect(await oaiyEngineImage({ prompt: 'a fox' })).toEqual({
+      ok: false,
+      transportFailure: true,
+      error: { code: 'connector_unavailable', message: 'OAIY Desktop did not respond.' },
     });
   });
 });

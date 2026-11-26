@@ -126,6 +126,7 @@ Every node reads the **run scope** (`$inputs.*`, `$event.*`, `$app.*`, and prior
 - **`return`** — an editor-only hint (`first` \| `all`) that tells the author which output to read and adjusts the "Output" hint. It does **not** change execution — the node always returns the full structured result.
 - **`limit`** — max rows to **fetch** (default `200`, hard cap `500`). `eq` and `phone_eq` filters with string values are ALSO **pushed down to the database** (`answers.<field>` / `answersPhone.<field>` query params), so an exact or phone lookup is answered by the server and never silently missed beyond the fetch window; the other ops filter client-side over the fetched page.
 - **Output** (structured): `{ responses: row[], count: number, first: row|null, found: boolean }`, where each `row` = `{ id: string, answers: object, submittedAt?: string, status?: string }`. Reference the first match as `$nodes.<id>.first.answers.<field>`, all matches as `$nodes.<id>.responses`, the total as `$nodes.<id>.count`, or whether any matched as `$nodes.<id>.found`.
+- **A form kept in an app's table** answers the lookup from that table, and refuses one it cannot answer rather than return other rows ([API](API.md): `response_list_unsupported`, `response_list_offset_limit`). In the cloud runner that is the node's failure: `node_failed` on the node, its message the refusal's own words followed by its code, such as `Node 'lookup': … (response_list_unsupported)`.
 
 **Worked example — caller lookup** (the `caller-lookup` starter template): `Trigger(callerPhone)` → **Find records** first `Customers` where `phone eq $inputs.callerPhone` → a `condition` on `$nodes.lookup.found` → a `template` greeting `Welcome back, {{nodes.lookup.first.answers.name}}!` on the **True** branch → `output`. Note the filter reads **`$inputs.callerPhone`**, not `$event.data.callerPhone`: the Trigger declares `callerPhone` and the binding's `inputMap` maps the event onto it, so the flow has one visible source of inputs. This is the canonical "find a record and branch on it" shape.
 
@@ -188,7 +189,7 @@ Flows are first-class per USER, not only per app: a **workspace flow** is a `flo
 
 Small persistent key/value state for flows (counters, cursors, dedupe markers, connector state) in the `flow_kv` table, keyed by `(owner, app, scope, key)`. Scopes are free-form labels, by convention `flow:<slug>` for per-flow state and `app` for app-wide state.
 
-- **Caps** (enforced in `FlowKvService`, every write path): encoded value ≤ **64 KiB**, ≤ **500 keys per (owner, app, scope)** and ≤ **5000 keys per (owner, app) across scopes** (the caller names the scope, so the per-scope cap alone bounded nothing; a store already past it can update its keys and add none). Scope `^[a-z][a-z0-9:_.-]{0,63}$`; key ≤ 190 chars of `[A-Za-z0-9:_./-]`.
+- **Caps** (enforced in `FlowKvService`, every write path): encoded value ≤ **64 KiB**, measured and stored as UTF-8 JSON (a non-ASCII character counts its own bytes, never a six-byte `\uXXXX`), ≤ **500 keys per (owner, app, scope)** and ≤ **5000 keys per (owner, app) across scopes** (the caller names the scope, so the per-scope cap alone bounded nothing; a store already past it can update its keys and add none). Scope `^[a-z][a-z0-9:_.-]{0,63}$`; key ≤ 190 chars of `[A-Za-z0-9:_./-]`.
 - **Owner surface** (session auth): `GET /api/flow-kv?scope=&k=&appId=` (one entry with `k`, else the list), `PUT /api/flow-kv {scope, k, v, appId?}`, `DELETE /api/flow-kv?scope=&k=&appId=`. `appId` must be an app the caller owns; omitted = the caller's workspace store.
 - **Runtime surface** (member-gated + `flow_run` rate limit, like flow-runs): `GET/PUT /api/app/{slug}/flow-kv`. Rows are keyed by the APP OWNER + app id, so all members share one app-wide store.
 - Storage note: `app_id` is `''` (empty string, NOT NULL) for the workspace store so the UNIQUE key actually dedupes; the API maps `appId: null ↔ ''`.
@@ -219,7 +220,7 @@ Runs can be **enqueued server-side** (`status 'queued'`, `started_at NULL`) and 
 - After the response persists, `ResponseService` calls `FlowService::enqueueScriptFlowRuns` (best-effort — a flow failure never fails a saved submission): the slug resolves **within the form's app scope first** (an enabled flow in any app containing the form), else the form owner's **workspace scope**; unknown slugs are dropped.
 - Idempotency key: `script:<responseId>:<slug>` — replays AND repeated `run()` calls for the same slug dedupe to one queued run. `trigger_event` is `script.run`.
 - When a flow run wrote the submission, the intent's run is that run's child, as a binding's is (§12).
-- Caps: **max 3 intents per submission** (one per slug), intent input ≤ 16 KiB.
+- Caps: **max 3 intents per submission** (one per slug), intent input ≤ 16 KiB of UTF-8 JSON.
 - Editor "Test" runs (`testScript`) capture intents into the result but never enqueue; client-side previews don't execute `onSubmit` at all, so the API is safely absent there.
 
 ## 12. `form.submitted` bindings (app + standalone forms)

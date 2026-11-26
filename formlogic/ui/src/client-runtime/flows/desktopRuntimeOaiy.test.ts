@@ -158,6 +158,21 @@ describe('a picture from the paired OAIY', () => {
     expect(await generateDesktopImage({ prompt: 'a fox' })).toEqual({ ok: false, message: 'OAIY answered HTTP 502' });
   });
 
+  // The step's own deadline, or OAIY's ten minutes: the request went out and the engine may be
+  // drawing still. That is told apart from OAIY not being there at all.
+  it('says a picture it stopped waiting for was not answered, and one OAIY was not there for was not sent', async () => {
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init: RequestInit = {}) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    })));
+    const run = new AbortController();
+    const asked = generateDesktopImage({ prompt: 'a fox' }, run.signal);
+    run.abort();
+    expect(await asked).toEqual({ ok: false, message: 'OAIY Desktop did not answer in time.', unanswered: true });
+
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
+    expect(await generateDesktopImage({ prompt: 'a fox' })).toEqual({ ok: false, message: 'OAIY Desktop did not respond.' });
+  });
+
   it('is null, and asks nothing, when no OAIY is paired with this browser', async () => {
     const calls = answerImages(200, { data: [] });
     setOaiyToken(null);

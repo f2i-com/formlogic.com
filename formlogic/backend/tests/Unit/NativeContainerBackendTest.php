@@ -189,6 +189,51 @@ PHP;
     }
 
     /**
+     * A PHP app's `.htaccess` files are installed with it, where the runner reads them, and what
+     * they deny is not run by its address. SoftN runs any `.php` outside its private folders by its
+     * path unless an `.htaccess` denies it; the files were dropped at import, so `install.php` and
+     * `includes/config.php` ran for anyone who asked.
+     */
+    public function testAPhpAppsHtaccessIsInstalledWithItAndRefusesWhatItDenies(): void
+    {
+        $script = static fn (string $name): string => "<?php header('Content-Type: application/json'); echo json_encode(['ran' => '{$name}']);";
+        $project = ['access' => 'application', 'assets' => [], 'files' => [
+            'manifest.json' => json_encode(['id' => 'test.php-shop', 'name' => 'Shop', 'version' => '1.0.0', 'engine' => 2, 'main' => 'index.html', 'backend' => ['runtime' => 'php', 'entry' => 'index.php']], JSON_THROW_ON_ERROR),
+            'index.html' => '<h1>Shop</h1>',
+            'index.php' => $script('index'),
+            'install.php' => $script('install'),
+            'status.php' => $script('status'),
+            'includes/config.php' => $script('config'),
+            '.htaccess' => "<Files \"install.php\">\n  Require all denied\n</Files>\n",
+            'includes/.htaccess' => "Require all denied\n",
+        ]];
+        $this->service->install('shop', $project, 0);
+        $root = $this->storage . '/' . hash('sha256', 'shop');
+        // Where the runner reads the app from.
+        $this->assertSame($project['files']['.htaccess'], file_get_contents($root . '/app/.htaccess'));
+        $this->assertSame($project['files']['includes/.htaccess'], file_get_contents($root . '/app/includes/.htaccess'));
+
+        $ask = fn (string $path): array => $this->service->containerRequest('shop', ['method' => 'GET', 'path' => $path, 'query' => '', 'headers' => [], 'bodyBase64' => ''], [], 1);
+        $ran = static fn (array $answer): array => [$answer['status'], json_decode((string) base64_decode($answer['bodyBase64'], true), true)];
+        $forbidden = [403, ['error' => 'Forbidden.', 'code' => 'forbidden']];
+
+        // What nothing denies runs: a script by its address, and the entry for any other.
+        $this->assertSame([200, ['ran' => 'status']], $ran($ask('/status.php')));
+        $this->assertSame([200, ['ran' => 'index']], $ran($ask('/api/items')));
+        // A script a <Files> block names, by its name and by the name without its ending.
+        $this->assertSame($forbidden, $ran($ask('/install.php')));
+        $this->assertSame($forbidden, $ran($ask('/install')));
+        // A folder denied whole.
+        $this->assertSame($forbidden, $ran($ask('/includes/config.php')));
+        $this->assertSame($forbidden, $ran($ask('/includes/config')));
+
+        // The runner reads the same files: asked without this host's own check, it refuses the
+        // script the <Files> block names, so the rules did reach it.
+        $runner = new \ReflectionMethod(NativeAppService::class, 'invokeContainer');
+        $this->assertSame($forbidden, $ran($runner->invoke($this->service, $root, ['method' => 'GET', 'path' => '/install.php', 'query' => '', 'headers' => [], 'bodyBase64' => ''])));
+    }
+
+    /**
      * The runner answers for itself in another shape than a backend does: /api/meta, and every
      * refusal made before the backend ran. Each is the JSON response it says it is.
      */

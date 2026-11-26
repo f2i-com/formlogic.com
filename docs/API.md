@@ -119,6 +119,17 @@ either the app's UUID or its slug.
 - **Forwarding app-level auth:** on `/routes/{path}` passthrough calls, FormLogic strips its own
   `Authorization` header so `flk_` keys are never exposed to app code. Pass an app-specific token
   in `X-App-Authorization` and FormLogic forwards it to the backend as `Authorization`.
+- **Other request headers:** the backend (a `.logic` handler or a container backend) is also given
+  the request's other headers (on `/invoke`, the envelope's `headers`), by the rule an app's own
+  page is held to ([Hosted apps](HOSTED_APPS.md)): a `.logic` handler's `req.headers` always has
+  `authorization` and `idempotency-key`, and with them `content-type`, `accept-language` or the
+  caller's own `x-…` names, up to 64 of 8 KB each (a longer one is left out, not cut). What the
+  caller says to FormLogic alone never reaches app code: `Cookie`, `X-CSRF-Token`,
+  `X-Admin-Confirmation`, `X-Demo-Sandbox-Token`, `Mcp-Session-Id` and any `X-FormLogic-*`; nor
+  do the names the host speaks for (`host`, `origin`, `referer`, `forwarded`, `x-forwarded-*`,
+  `x-real-ip`, `x-http-method-override`, `x-method-override`, `proxy-*`, `sec-*`, and the
+  connection's own, such as `connection`, `content-length` and `transfer-encoding`). A container
+  backend is also given a `cookie` listed in an `/invoke` envelope's `headers`.
 - **Sync vs. async flow runs:** cloud-eligible flows run synchronously and return `200` with
   `{ "runId", "status", "result", "error", "executionLocation": "cloud" }`. Setting `"async": true`
   (or calling a desktop/browser flow) enqueues the run and returns `202` with
@@ -258,7 +269,12 @@ web UI:
 Reserve-first on `idempotencyKey`: a duplicate enqueue returns the existing command (`200` with
 `idempotent:true`). The `connector.<connectorId>.<command>` gate is the SAME permission the in-app
 connector client checks — a per-connector wildcard `connector.<connectorId>.*` or the bare
-`connector.<connectorId>` grant also satisfies it, and the app owner always passes.
+`connector.<connectorId>` grant also satisfies it, and the app owner always passes. A grant for one
+command is matched without regard to case, and the command is queued **as the grant spells it**:
+a member granted `connector.aokie.call.hangup` who sends `call.HANGUP` queues `call.hangup`. The
+desktop matches a command's name exactly, so the other spelling is a command nobody granted them.
+The owner and a wildcard or bare grant queue the command as written. A member who did not queue a
+command reads its outcome only with a grant for that command as it was queued.
 
 **Cleanup cron note:** pending commands are expired opportunistically as each poll starts and, while a
 poll is held, every few seconds (`SWEEP_INTERVAL_SECONDS`, not on every 500 ms round; a row past its
@@ -448,3 +464,28 @@ Error bodies use a consistent shape: `{ "error": true, "message": "…", "errors
   `responses:read`; a `responses:manage`-only key gets `{ "success": true, "id": "…" }`.
 - A successful API submission triggers the form's "new response" email notification and is recorded
   in the audit log, just like a browser submission.
+- A form whose records are kept in an app's own table (a form made from a hosted app's SQLite table)
+  lists them by that table's columns: `status`, `from`/`to`, `answers.<field>`, `answersGte.<field>`,
+  `answersLte.<field>`, `answersPhone.<field>`, `updatedSince`, `limit` and `offset` all apply. What
+  the table cannot answer is refused with `400` and `code: "response_list_unsupported"`, never
+  answered with other rows: `from`/`to` when no column says when a row was made, `updatedSince` when
+  the table has no `updated_at` column, and `afterId` (page with `offset`). Such a table is read by
+  `offset` no further than 100,000 rows in; past that the answer is `400` with
+  `code: "response_list_offset_limit"`. With `updatedSince`, its `deleted` lists only the records
+  deleted through the form, never the rows the app deletes itself, so `deletedComplete` is always
+  `false` (see `docs/FORMLOGIC_DESKTOP.md` §9). `If-Match` on a `PUT` is checked against the row as
+  for any form: `412` with `code: "version_conflict"` when it has changed.
+- Such a form's answers are the table's values whole, in a list, one record and an export alike:
+  a text however long, a number as a number, a binary value as `"[binary]"`, and bytes that are not
+  UTF-8 replaced. A record's `status` is its status column's value as text (`"2"` in a column of
+  numbers), or `"submitted"` where the row has none; `status=` lists exactly the records given that
+  status, and `status=submitted` the ones with none. A status given with a new record (an
+  `onSubmit` script's, a batch import row's `status`) is written to that column only where it can
+  be read back: never `"submitted"` (the column keeps its default), never a word into a column of
+  numbers, and never over an answer given for the same column. A CSV import writes no status.
+- A form's `retentionDays` deletes its records once they are that old, by when they were made. For
+  a form kept in a table that was made for it (a Form App's Unified SQLite database) that is the
+  table's created-at column, and each record goes as one delete does (its tombstone, its links);
+  a table with no such column is not purged. A form bound to a table of an app's own is never
+  purged: those rows are the app's data. `GET /forms/{formId}` says which, for a form with a
+  period: `retention: { "days": 90, "applies": true }`, or `"applies": false` with a `reason`.

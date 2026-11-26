@@ -613,6 +613,29 @@ async function defaultSiteChat(
  */
 const OUTPUT_CAP_REFUSED = /max_(?:completion_|output_)?tokens|context[ _-]?(?:length|window|size)/i;
 
+/**
+ * Sends a custom AI service `body`, which carries the editor's output cap when `withoutCap` is
+ * given, and gives back its answer. The cap is the editor's wish, not the service's limit. A
+ * service that holds it to its model (an output limit under the cap, a context the cap does not
+ * fit in beside the messages) answers 400 to a request it would answer without one. That one is
+ * asked once more as `withoutCap`; a 400 about anything else, or a second one, is the service's
+ * answer. The plain chat and the chat with tools both ask through here.
+ */
+async function postWithOutputCap(
+  post: (body: unknown) => Promise<Response>,
+  body: unknown,
+  withoutCap: unknown,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const res = await post(body);
+  if (res.status !== 400 || withoutCap === undefined) return res;
+  const said = await res.text().catch((err: unknown) => {
+    if (signal?.aborted) throw err;
+    return '';
+  });
+  return OUTPUT_CAP_REFUSED.test(said) ? post(withoutCap) : res;
+}
+
 async function runCustomSource(
   prefs: AiPreferences,
   opts: ResolveDefaultLlmOptions,
@@ -670,20 +693,10 @@ async function runCustomSource(
   });
   let res: Response;
   try {
-    res = await post(requestBody);
-    // The cap is the editor's wish, not the service's limit. A service that holds it to its model
-    // (an output limit under 16,384, a context the cap does not fit in beside the messages)
-    // answers 400 to a request it answered before the editor sent a cap. That one is asked once
-    // more as it was asked then; a 400 about anything else is the service's answer.
-    if (res.status === 400 && opts.editor && standardOpenAi) {
-      const said = await res.text().catch((err: unknown) => {
-        if (opts.signal?.aborted) throw err;
-        return '';
-      });
-      if (OUTPUT_CAP_REFUSED.test(said)) {
-        res = await post({ messages, ...(provider.model ? { model: provider.model } : {}) });
-      }
-    }
+    // Only the editor's request carries a cap, and only in the standard body: a service asked
+    // without one before the editor sent a cap is asked that way again if it refuses the cap.
+    const withoutCap = opts.editor && standardOpenAi ? { messages, ...(provider.model ? { model: provider.model } : {}) } : undefined;
+    res = await postWithOutputCap(post, requestBody, withoutCap, opts.signal);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return failure({
@@ -996,16 +1009,18 @@ async function runCustomSourceTools(
   const outputCap = opts.maxOutputTokens === undefined
     ? {}
     : provider.kind === 'openai' ? { max_completion_tokens: opts.maxOutputTokens } : { max_tokens: opts.maxOutputTokens };
-  const body = {
+  const uncapped = {
     ...(provider.model ? { model: provider.model } : {}),
     messages: toOpenAiChatMessages(opts.messages),
     ...(opts.tools.length ? { tools: toOpenAiTools(opts.tools) } : {}),
-    ...outputCap,
   };
   const doFetch = deps.fetchFn ?? fetch;
+  const post = (body: unknown) => doFetch(provider.url, { method: 'POST', headers: provider.headers, body: JSON.stringify(body), credentials: 'omit', signal: opts.signal });
   let res: Response;
   try {
-    res = await doFetch(provider.url, { method: 'POST', headers: provider.headers, body: JSON.stringify(body), credentials: 'omit', signal: opts.signal });
+    // As the plain chat: a service that refuses the editor's cap is asked once more without it,
+    // where its refusal used to end the editor's turn as a failed request.
+    res = await postWithOutputCap(post, { ...uncapped, ...outputCap }, opts.maxOutputTokens === undefined ? undefined : uncapped, opts.signal);
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return failure({

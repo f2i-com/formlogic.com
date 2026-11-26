@@ -650,6 +650,10 @@ class PackService
 
             // outputActions[].form: remap @pack: refs; an unknown ref fails loudly, a raw id is dropped.
             // APP-502: when a grant review ran, strip unapproved connector.request / call.speak actions.
+            // An action is kept by the approval of the line the review lists it under
+            // (PackCapabilities::describe), as a node's grant and a capability are, and by no
+            // other: a wildcard that is approved is another line's (a role's or a script's
+            // `connector.<id>.*`), and counted here it kept an action whose own line was declined.
             $actions = $clean['outputActions'];
             if ($actions !== null) {
                 $keptActions = [];
@@ -660,14 +664,13 @@ class PackService
                             $cid = is_string($action['connectorId'] ?? null) ? trim($action['connectorId']) : '';
                             $cmd = is_string($action['command'] ?? null) && trim($action['command']) !== '' ? trim($action['command']) : '*';
                             $grant = $cid !== '' ? ('connector.' . $cid . '.' . $cmd) : 'connector.*';
-                            $cidWild = $cid !== '' ? ('connector.' . $cid . '.*') : null;
-                            if (!isset($approvedSet[$grant]) && ($cidWild === null || !isset($approvedSet[$cidWild])) && !isset($approvedSet['connector.*'])) {
+                            if (!isset($approvedSet[$grant])) {
                                 $withheldGrants[$grant] = true;
                                 continue;
                             }
                         } elseif ($aType === 'call.speak') {
                             $grant = PackCapabilities::AOKIE_SPEAK_GRANT;
-                            if (!isset($approvedSet[$grant]) && !isset($approvedSet['connector.aokie.*']) && !isset($approvedSet['connector.*'])) {
+                            if (!isset($approvedSet[$grant])) {
                                 $withheldGrants[$grant] = true;
                                 continue;
                             }
@@ -2146,25 +2149,25 @@ class PackService
                 throw new \RuntimeException("Form '{$form['packFormId']}' logic script exceeds 100KB limit");
             }
             if (isset($form['fields']) && is_array($form['fields'])) {
-                $fieldsJson = json_encode($form['fields']);
+                $fieldsJson = json_encode($form['fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($fieldsJson !== false && strlen($fieldsJson) > 2097152) {
                     throw new \RuntimeException("Form '{$form['packFormId']}' fields data exceeds 2MB limit");
                 }
             }
             if (isset($form['settings'])) {
-                $settingsJson = json_encode($form['settings']);
+                $settingsJson = json_encode($form['settings'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($settingsJson !== false && strlen($settingsJson) > 10240) {
                     throw new \RuntimeException("Form '{$form['packFormId']}' settings exceeds 10KB limit");
                 }
             }
             if (isset($form['theme'])) {
-                $themeJson = json_encode($form['theme']);
+                $themeJson = json_encode($form['theme'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
                     throw new \RuntimeException("Form '{$form['packFormId']}' theme exceeds 256KB limit");
                 }
             }
             if (isset($form['customScreen'])) {
-                $screenJson = json_encode($form['customScreen']);
+                $screenJson = json_encode($form['customScreen'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 // 2MB: screens may carry image assets as data: URIs in `files`.
                 if ($screenJson !== false && strlen($screenJson) > 2097152) {
                     throw new \RuntimeException("Form '{$form['packFormId']}' custom screen exceeds 2MB limit");
@@ -2238,7 +2241,7 @@ class PackService
             }
             // Per-app size caps (mirror the form caps) — the app home screen ships executable HTML/CSS/JS.
             if (isset($app['customScreen'])) {
-                $screenJson = json_encode($app['customScreen']);
+                $screenJson = json_encode($app['customScreen'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 // 2MB: screens may carry image assets as data: URIs in `files`.
                 if ($screenJson !== false && strlen($screenJson) > 2097152) {
                     throw new \RuntimeException("App '{$app['packAppId']}' custom screen exceeds 2MB limit");
@@ -2247,7 +2250,7 @@ class PackService
             // Custom app-logic is code (sandboxed at runtime); 256KB covers the sandboxed
             // scripts plus an optional pack connector demo driver (CustomLogicSanitizer caps).
             if (isset($app['customLogic'])) {
-                $logicJson = json_encode($app['customLogic']);
+                $logicJson = json_encode($app['customLogic'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($logicJson !== false && strlen($logicJson) > CustomLogicSanitizer::MAX_BUNDLE_BYTES) {
                     throw new \RuntimeException("App '{$app['packAppId']}' custom logic exceeds 256KB limit");
                 }
@@ -2260,7 +2263,9 @@ class PackService
             }
             foreach (['navConfig' => 10240, 'settings' => 10240, 'theme' => 10240, 'reports' => 262144] as $key => $cap) {
                 if (isset($app[$key])) {
-                    $json = json_encode($app[$key]);
+                    // As UTF-8 text, as an app's own save measures its reports (AppController): an
+                    // app's export is imported whatever language its reports are written in.
+                    $json = json_encode($app[$key], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                     if ($json !== false && strlen($json) > $cap) {
                         throw new \RuntimeException("App '{$app['packAppId']}' {$key} exceeds " . ($cap / 1024) . "KB limit");
                     }

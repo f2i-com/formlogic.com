@@ -10,6 +10,7 @@ import { __resetDesktopDetectionForTests } from './desktopDetection';
 import { clearDesktopToken } from './desktopPairing';
 import { setOaiyToken, __resetOaiyDetectionForTests } from '../oaiy/oaiyRuntime';
 import { __resetOaiyDetectionLoopForTests } from '../oaiy/oaiyDetection';
+import { envelopeMatchesFilter } from '../../components/custom-screen/screenSubscriptions';
 import type { DesktopEventEnvelope } from './desktopTypes';
 
 // Event hub: minimal envelope validation, central dedupe on idempotencyKey (LRU 512),
@@ -136,6 +137,31 @@ describe('desktop event hub', () => {
 
     // 'k:first' is now the 513th-oldest key — evicted, so it dispatches again.
     expect(ingestDesktopEvent(envelope({ idempotencyKey: 'k:first' }))).toBe(true);
+  });
+
+  // OAIY says how its own flows' runs ended as events from "flows" (host.rs outcome_event), under
+  // the names FormLogic's outcome bindings listen for. The run may be of a flow that is nothing of
+  // the app on screen, and every listener reads an envelope with no connectorId as its source's:
+  // a screen that asks for the connector "flows" would be handed it, as the filter shows.
+  it('keeps the end of a run OAIY made of its own flow from every listener', () => {
+    (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(() => Promise.reject(new Error('offline')));
+    const ended = { schemaVersion: 1, source: 'flows', name: 'flow.failed', correlationId: 'run-9', idempotencyKey: 'flow:run-9:failed', occurredAt: '2026-11-01T00:00:00Z', data: { runId: 'run-9', status: 'failed' } };
+    expect(isValidDesktopEvent(ended)).toBe(true);
+    expect(envelopeMatchesFilter(ended, { connectorId: 'flows' })).toBe(true);
+    const a: string[] = [];
+    const b: string[] = [];
+    const unsubA = subscribeDesktopEvents((e) => a.push(e.name));
+    const unsubB = subscribeDesktopEvents((e) => b.push(e.name));
+
+    expect(ingestDesktopEvent(ended)).toBe(false);
+    expect(emitLocalDesktopEvent(ended as DesktopEventEnvelope)).toBe(false);
+    // A plugin's event is still everyone's, one that happens to use the same key included.
+    expect(ingestDesktopEvent(envelope({ idempotencyKey: ended.idempotencyKey }))).toBe(true);
+
+    expect(a).toEqual(['aokie.call.incoming']);
+    expect(b).toEqual(['aokie.call.incoming']);
+    unsubA();
+    unsubB();
   });
 
   it('a throwing listener does not break fan-out to the others', () => {

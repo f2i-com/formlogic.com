@@ -239,7 +239,9 @@ class ExternalAppApiController
                 $headers['authorization'] = implode(', ', $values);
                 continue;
             }
-            if (in_array($ln, ['authorization', 'host', 'cookie', 'content-length'], true) || str_starts_with($ln, 'x-formlogic-')) {
+            // These are the headers of a request to this site, so what the caller says to the site
+            // alone stops here: its API key, its session cookie and the token that goes with it.
+            if (in_array($ln, ['host', 'content-length'], true) || in_array($ln, \FormLogic\Helpers\AppRequestHeaders::SITE_OWN, true) || str_starts_with($ln, 'x-formlogic-')) {
                 continue;
             }
             $headers[$ln] = implode(', ', $values);
@@ -603,31 +605,11 @@ class ExternalAppApiController
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($userId)) {
             return $decorate($this->jsonError($response, 'Cloud access has expired. Read requests remain available.', 402), $rateRemaining);
         }
-        $blockedForwardHeaders = [
-            'host' => true, 'origin' => true, 'referer' => true, 'forwarded' => true,
-            'x-real-ip' => true, 'x-original-url' => true, 'x-rewrite-url' => true,
-            'x-http-method-override' => true, 'x-method-override' => true,
-            'x-formlogic' => true,
-        ];
-        $headers = [];
-        foreach ($headersIn as $k => $v) {
-            if (!is_string($k) || !is_scalar($v)) continue;
-            $lk = strtolower(trim($k));
-            if (
-                $lk === ''
-                || strlen($lk) > 128
-                || !preg_match('/^[a-z0-9-]+$/', $lk)
-                || isset($blockedForwardHeaders[$lk])
-                || str_starts_with($lk, 'x-formlogic-')
-                || str_starts_with($lk, 'x-forwarded-')
-                || str_starts_with($lk, 'proxy-')
-            ) {
-                continue;
-            }
-            $val = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
-            $headers[$lk] = substr($val, 0, 8192);
-            if (count($headers) >= 64) break;
-        }
+        // The call asks for one of the site's workers: counted in its account's share of them.
+        $this->native->ownedBy($appId, (string) ($app['ownerId'] ?? $userId));
+        // The headers a backend is given, by the one rule its app's own page is held to
+        // (AppRequestHeaders), so a handler reads the same headers whichever way it was called.
+        $headers = \FormLogic\Helpers\AppRequestHeaders::fromApp($headersIn);
         $identity = $via === 'public_api'
             ? [
                 'appId' => $appId,
@@ -675,19 +657,17 @@ class ExternalAppApiController
                     $bodyBase64 = base64_encode($rawBody);
                 }
                 // The name and scheme this site was reached by (McpOAuthService::publicOrigin),
-                // never a caller's own `host` header (refused above): without them the runner
-                // tells a PHP backend it is http://localhost.
-                $publicOrigin = \FormLogic\Services\McpOAuthService::publicOrigin($request);
+                // never a caller's own `host` header (refused above), as every caller of a
+                // container backend gives them (NativeAppService::containerAddress): without them
+                // the runner tells a PHP backend it is http://localhost.
                 $result = $this->native->containerRequest($appId, [
                     'method' => $method,
                     'path' => $path,
                     'query' => $queryStr,
                     'headers' => (object) $headers,
                     'bodyBase64' => $bodyBase64,
-                    'host' => (string) substr($publicOrigin, (int) strpos($publicOrigin, '://') + 3),
-                    'https' => str_starts_with($publicOrigin, 'https://'),
                     'client_ip' => $clientIp,
-                ], $identity, (int) ($project['version'] ?? 0), $subscriptions);
+                ] + NativeAppService::containerAddress(\FormLogic\Services\McpOAuthService::publicOrigin($request)), $identity, (int) ($project['version'] ?? 0), $subscriptions);
 
                 $extractedHeaders = NativeRecordEventRouter::extractContainerTriggers($result['headers']);
                 $result['headers'] = $extractedHeaders['headers'];
@@ -779,10 +759,14 @@ class ExternalAppApiController
                 'path' => $path,
                 'query' => (object) (is_array($query) ? $query : []),
                 'body' => $nativeBody,
-                'headers' => (object) [
+                // Both always present, empty when not sent. With them, the request's other headers,
+                // by the rule the app's own page is held to (AppRequestHeaders): a handler reads
+                // `content-type` or its own `x-device-id` here as it does there and on SoftN's
+                // hosts, and never a cookie or a name the host speaks for.
+                'headers' => (object) ([
                     'authorization' => (string) ($headers['authorization'] ?? ''),
                     'idempotency-key' => (string) ($headers['idempotency-key'] ?? ''),
-                ],
+                ] + \FormLogic\Helpers\AppRequestHeaders::fromApp($headers, false)),
                 'client_ip' => $clientIp,
                 'photos' => false,
             ], $identity, $subscriptions, (int) ($project['version'] ?? 0));

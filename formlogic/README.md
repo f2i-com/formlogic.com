@@ -45,6 +45,8 @@ For the default checkout under your web root that's:
 http://localhost/formlogic.com/formlogic/install.php
 ```
 
+A first install opens only there: on the server itself, at its own `localhost` (or `127.0.0.1`) address. A request for any other name (a custom local domain, the site's public address), or one that arrives through a proxy or tunnel, counts as remote, even from the same machine. To install that way, set `INSTALL_TOKEN` to a long random secret in the server environment (`SetEnv INSTALL_TOKEN <secret>` at the top of the web-root `.htaccess`), open `install.php?token=<secret>`, and remove the line when you are done. Whoever finishes the wizard owns the site, so the secret is what keeps a stranger from finishing it first; `INSTALL_ENABLE=1` does not open a first install.
+
 The wizard checks requirements and file permissions (fixing what it can — including the execute bit on the Linux sandbox launcher), tests the MySQL connection, and writes the config files, database, and security keys. It then tells you which of `composer install` / `npm install` are still outstanding, and prints cron lines for the maintenance CLIs. On an already-installed deployment it instead offers an **"Upgrade existing installation"** mode (same guarded migrations as `backend/bin/upgrade.php`; requires `INSTALL_ENABLE=1` since the wizard locks itself once installed). The wizard also ships at the root of the release zip (`install.php` beside `api/`). **Delete `install.php` when done.**
 
 ### Option 2: Install script (Linux / macOS / Git Bash)

@@ -73,8 +73,13 @@ class NativeAppService
      * An app's media, by path: the kinds the SoftN frame serves its page (SoftN's
      * apps/formlogic-host/src/media.ts; the UI's HOSTED_MEDIA is the same list). From SoftN
      * v0.0.41 that includes WebAssembly modules, which the page runs in workers of their own.
+     * And `.softn` archives: apps a web app's page nests (`<softn-app src>`), which SoftN's web
+     * frame puts in the app's archive under their own paths and runs, from the SoftN release after
+     * v0.0.52, each in a container of its own. Here one is a media file like any other: bytes kept
+     * under assets/, held to MAX_MEDIA_FILE_BYTES and the project's MAX_PROJECT_BYTES, sent to the
+     * page in its media pack, never source, never unpacked and never run by this server.
      */
-    public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md|wasm)$~Di';
+    public const MEDIA_PATH = '~^assets/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md|wasm|softn)$~Di';
     /**
      * A JavaScript app's built files, by path: someone's compiled front end (the dist or build
      * folder of their project), kept whole under site/ whatever its layout. Unlike everything
@@ -138,8 +143,24 @@ class NativeAppService
      * import reads the same list first (ui/src/lib/nativeHosting.ts).
      */
     public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$~D';
+    /**
+     * An `.htaccess` an app with a container backend keeps, in any folder of the project: the
+     * rules its author wrote for who may ask for its files. Kept with the source, handed to the
+     * runner with it (which refuses a PHP script its `<Files>` rules deny) and never sent to a
+     * page; what it denies is not sent to a page either (clientFiles, htaccessRules). The app
+     * page's import reads the same name first (ui/src/lib/nativeHosting.ts).
+     */
+    public const HTACCESS_PATH = '~^(?:[a-zA-Z0-9_-]+/)*\.htaccess$~D';
+    /** The most of one `.htaccess` SoftN's runner reads; it skips a longer one whole, rules and all, so one is refused. */
+    public const MAX_HTACCESS_BYTES = 64 * 1024;
     /** Sandboxed v2 container backend runtimes executed strictly inside ZIPP WASM safe-sandbox. */
     public const CONTAINER_BACKEND_RUNTIMES = ['php', 'javascript', 'typescript', 'rust', 'python'];
+    /**
+     * Folders named for what a page loads. A container backend whose entry is kept in one, with
+     * no `backend.root` declared, keeps only that entry private and not the folder around it
+     * (manifestPrivatePaths). The list is SoftN's (softn-host-rust's container_backend.rs).
+     */
+    private const ENTRY_FOLDERS_OF_THE_PAGE = ['public', 'assets', 'static', 'js', 'css'];
     /**
      * The longest id a manifest may declare. It is kept in the project and the host configuration,
      * both JSON files, and never in a column or a file's name. An editable copy FormLogic exports
@@ -226,9 +247,11 @@ class NativeAppService
      * Workers across every app here, and how many of them any one app may hold. A worker is held
      * for a whole request, and a query can run for about twenty seconds, so without the second
      * number one app's visitors could turn every other app away. A site with one busy app can
-     * raise it with NATIVE_WORKERS_PER_APP. The share is each app's, not each owner's: two apps
-     * of one account hold all four between them, so a site that hosts apps for many accounts
-     * sets NATIVE_WORKERS to what its server can run at once (at most MAX_WORKERS).
+     * raise it with NATIVE_WORKERS_PER_APP. That share is each app's, so two apps of one account
+     * held all four between them and every other account's apps were answered busy: an account
+     * has a share of its own (NATIVE_WORKERS_PER_OWNER, ownerShare()), every worker but one unless
+     * the site says otherwise. A site that hosts apps for many accounts sets NATIVE_WORKERS to
+     * what its server can run at once (at most MAX_WORKERS).
      */
     private const WORKERS = 4;
     private const WORKERS_PER_APP = 2;
@@ -1615,12 +1638,18 @@ class NativeAppService
         // A container's backend need not live under server/, backend/ or private/: its manifest
         // says where it is, and what it names is as private as those folders are.
         $declared = self::manifestPrivatePaths(is_string($files['manifest.json'] ?? null) ? json_decode($files['manifest.json']) : null);
-        $publicPath = static function ($path) use ($declared): bool {
+        // What the app's own `.htaccess` files deny. SoftN's hosts answer 403 for such a file; here
+        // a page is handed its files rather than asking for them, so one that is denied is not handed over.
+        $rules = self::htaccessRules($files);
+        $publicPath = static function ($path) use ($declared, $rules): bool {
             if (!is_string($path)) return true;
             if (preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.(?:sql|php|phtml|rs)$|(?:^|/)Cargo\.toml$~i', $path)) return false;
             $name = strtolower(ltrim(str_replace('\\', '/', $path), '/'));
             // The manifest is the frame's own, sent with its private parts taken out below.
             if ($name === 'manifest.json') return true;
+            // The rules themselves are the host's to read, and say what their author keeps private.
+            if (preg_match('~(?:^|/)\.htaccess$~', $name)) return false;
+            if ($rules !== [] && self::htaccessDeniedBy($rules, $path)) return false;
             if (isset($declared['exact'][$name])) return false;
             if ($declared['root'] !== '' && str_starts_with($name, $declared['root'])) return false;
             // Beside a backend, SoftN keeps these folders and seed names for it, and no page of
@@ -1667,6 +1696,14 @@ class NativeAppService
      * as SoftN compares them — lower case, forward slashes, no leading slash — and `root` ends in
      * a slash, so it is a folder and never a name that merely begins the same way.
      *
+     * A backend that declares no root is taken to live in the folder its entry is kept in, as
+     * SoftN's own host takes it (softn-host-rust, where a static file is refused): what sits
+     * beside `api/handler.js` (`api/lib/keys.js`) is the backend's too, and no page is sent it.
+     * By that host's exceptions the entry alone stays private when hiding its folder would hide
+     * the app: an entry at the top of the project, one kept in the manifest's `frontendRoot`, or
+     * one in a folder named for what a page loads (ENTRY_FOLDERS_OF_THE_PAGE). An app that keeps
+     * page files beside its entry says where its backend really is with `backend.root`.
+     *
      * @return array{exact: array<string, true>, root: string, backend: bool}
      */
     private static function manifestPrivatePaths(mixed $manifest): array
@@ -1681,6 +1718,16 @@ class NativeAppService
                 if (is_string($entry) && $name($entry) !== '') $private['exact'][$name($entry)] = true;
             }
             $root = is_string($backend->root ?? null) ? trim($name($backend->root), '/') : '';
+            if ($root === '') {
+                // The entry the backend is started from. `entrypoint` is the name this host once
+                // took for it (validateProject refuses it now): a project installed with it keeps
+                // its backend out of the page all the same.
+                $entry = $backend->entry ?? $backend->entrypoint ?? null;
+                $entry = is_string($entry) ? $name($entry) : '';
+                $folder = str_contains($entry, '/') ? substr($entry, 0, (int) strrpos($entry, '/')) : '';
+                $frontend = is_string($manifest->frontendRoot ?? null) ? trim($name($manifest->frontendRoot), '/') : '';
+                if ($folder !== '' && $folder !== $frontend && !in_array($folder, self::ENTRY_FOLDERS_OF_THE_PAGE, true)) $root = $folder;
+            }
             if ($root !== '') $private['root'] = $root . '/';
         }
         foreach (is_array($manifest->databases ?? null) ? $manifest->databases : [] as $database) {
@@ -1692,6 +1739,145 @@ class NativeAppService
             }
         }
         return $private;
+    }
+
+    /**
+     * What a project's `.htaccess` files deny, by the folder each is kept in ('' for the project's
+     * own). Read by the rule SoftN's hosts read one for access (softn-host-rust's parse_htaccess,
+     * softn-host-php's isDeniedByHtaccess): `Require all denied` or `Deny from all` written for the
+     * folder denies everything under it; written inside `<Files name>`, `<Files ~ regex>` or
+     * `<FilesMatch regex>`, it denies the files so named, there and below. As on those hosts a deny
+     * is never lifted by a later `granted`, a section whose condition is not evaluated (`<Limit>`,
+     * `<LimitExcept>`, `<If>` and its `<ElseIf>`/`<Else>`) is skipped, `<IfModule>` and the like
+     * apply as written, and a pattern that cannot be read denies nothing. Rewrites and redirects
+     * are the runner's, and are not read here.
+     *
+     * @param array<array-key, mixed> $files
+     * @return array<string, array{all: bool, names: list<string>}>
+     */
+    private static function htaccessRules(array $files): array
+    {
+        $rules = [];
+        foreach ($files as $path => $text) {
+            if (!is_string($path) || !is_string($text) || preg_match(self::HTACCESS_PATH, $path) !== 1) continue;
+            $denials = ['all' => false, 'names' => []];
+            // The <Files>/<FilesMatch> block being read: [its pattern, or null when it cannot be read; whether it denies].
+            $block = null;
+            $unevaluated = 0;
+            foreach (preg_split('/\r?\n/', $text) ?: [] as $raw) {
+                $line = trim($raw);
+                if ($line === '' || $line[0] === '#') continue;
+                if (preg_match('~^<(/?)([A-Za-z]+)(.*)$~s', $line, $tag) === 1) {
+                    $section = strtolower($tag[2]);
+                    $args = trim($tag[3]);
+                    if (str_ends_with($args, '>')) $args = trim(substr($args, 0, -1));
+                    if (in_array($section, ['limit', 'limitexcept', 'if', 'elseif', 'else'], true)) {
+                        $unevaluated = $tag[1] === '/' ? max(0, $unevaluated - 1) : $unevaluated + 1;
+                    } elseif ($unevaluated === 0 && ($section === 'files' || $section === 'filesmatch')) {
+                        if ($tag[1] !== '/') {
+                            $block = [self::htaccessNamePattern($section, $args), false];
+                        } else {
+                            if ($block !== null && $block[1] && $block[0] !== null) $denials['names'][] = $block[0];
+                            $block = null;
+                        }
+                    }
+                    continue;
+                }
+                if ($unevaluated > 0 || preg_match('/^(?:Require\s+all\s+denied|Deny\s+from\s+all)\b/i', $line) !== 1) continue;
+                if ($block === null) $denials['all'] = true;
+                else $block[1] = true;
+            }
+            $rules[$path === '.htaccess' ? '' : substr($path, 0, -strlen('/.htaccess'))] = $denials;
+        }
+        return $rules;
+    }
+
+    /**
+     * The pattern a `<Files>` or `<FilesMatch>` header names files by, for preg_match against a
+     * file's own name: `<Files name>` takes a wildcard name, `<FilesMatch regex>` and
+     * `<Files ~ regex>` a regular expression. Without regard to case, as SoftN's hosts match one.
+     * Null for one that cannot be read (too long, or not a pattern), which then denies nothing.
+     */
+    private static function htaccessNamePattern(string $section, string $args): ?string
+    {
+        $tilde = $section === 'files' && preg_match('/^~\s/', $args) === 1;
+        $pattern = trim(trim($tilde ? substr($args, 1) : $args), "\"'");
+        // \x01 delimits the pattern: nothing an author writes in one, where any printable mark might be.
+        if ($pattern === '' || strlen($pattern) > 256 || str_contains($pattern, "\x01")) return null;
+        if ($section === 'files' && !$tilde) {
+            return "\x01^" . str_replace(['\\*', '\\?'], ['.*', '.'], preg_quote($pattern)) . "$\x01iD";
+        }
+        $compiled = "\x01" . $pattern . "\x01i";
+        return @preg_match($compiled, '') === false ? null : $compiled;
+    }
+
+    /**
+     * A path's folders and its name, as the runner reads an address for a file of the bundle (its
+     * normalizeVfsKey): either slash, no empty or `.` part, and `..` taking the part before it.
+     *
+     * @return list<string>
+     */
+    private static function pathSegments(string $path): array
+    {
+        $segments = [];
+        foreach (explode('/', str_replace('\\', '/', $path)) as $segment) {
+            if ($segment === '' || $segment === '.') continue;
+            if ($segment === '..') array_pop($segments);
+            else $segments[] = $segment;
+        }
+        return $segments;
+    }
+
+    /**
+     * Whether the rules (htaccessRules) deny the file or the address at $path: those of the
+     * project's own folder and of every folder on the way to it.
+     *
+     * @param array<string, array{all: bool, names: list<string>}> $rules
+     */
+    private static function htaccessDeniedBy(array $rules, string $path): bool
+    {
+        $segments = self::pathSegments($path);
+        if ($segments === []) return false;
+        $name = $segments[count($segments) - 1];
+        $folder = '';
+        foreach ($segments as $segment) {
+            $rule = $rules[$folder] ?? null;
+            if ($rule !== null) {
+                if ($rule['all']) return true;
+                foreach ($rule['names'] as $pattern) {
+                    if (@preg_match($pattern, $name) === 1) return true;
+                }
+            }
+            $folder = $folder === '' ? $segment : $folder . '/' . $segment;
+        }
+        return false;
+    }
+
+    /**
+     * The answer to a request for a PHP container backend that the app's `.htaccess` refuses, as
+     * the runner words its own refusal, or null when nothing refuses it. The runner this host is
+     * given reads the same files and refuses a script a `<Files>` block denies by the name asked
+     * for; up to SoftN v0.0.52 it does not read a deny written for a whole folder, nor look again
+     * at the script a name without its ending resolves to (`/install` for `install.php`). Both
+     * are asked here first, so `includes/.htaccess` saying `Require all denied` keeps
+     * `includes/config.php` from being run by its address whichever runner is installed. Only
+     * PHP runs a script by its address: every other backend answers all of its routes itself.
+     *
+     * @param array<string, mixed> $project
+     * @param array<string, mixed> $request
+     * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string}|null
+     */
+    private static function refusedByHtaccess(array $project, array $request): ?array
+    {
+        $files = is_array($project['files'] ?? null) ? $project['files'] : [];
+        $manifest = is_string($files['manifest.json'] ?? null) ? json_decode($files['manifest.json'], true) : null;
+        $backend = is_array($manifest) && is_array($manifest['backend'] ?? null) ? $manifest['backend'] : [];
+        if (strtolower(trim((string) ($backend['runtime'] ?? $backend['engine'] ?? ''))) !== 'php') return null;
+        $rules = self::htaccessRules($files);
+        $path = implode('/', self::pathSegments(is_string($request['path'] ?? null) ? $request['path'] : ''));
+        if ($rules === [] || $path === '') return null;
+        if (!self::htaccessDeniedBy($rules, $path) && !(isset($files[$path . '.php']) && self::htaccessDeniedBy($rules, $path . '.php'))) return null;
+        return ['status' => 403, 'headers' => [['Content-Type', 'application/json; charset=utf-8']], 'bodyBase64' => base64_encode('{"error":"Forbidden.","code":"forbidden"}')];
     }
 
     /**
@@ -2484,9 +2670,19 @@ class NativeAppService
         $files = $project['files'] ?? null;
         if (!is_array($files) || count($files) > self::MAX_SOURCE_FILES || !is_string($files['manifest.json'] ?? null)) throw new InvalidArgumentException('Include the app manifest and at most ' . self::MAX_SOURCE_FILES . ' source files');
         $bytes = 0;
+        // The project's `.htaccess` files, held to a container backend once the manifest is read.
+        $rules = [];
         foreach ($files as $path => $source) {
             if (is_string($path) && self::isHostConfig($path)) {
                 throw new InvalidArgumentException('private/config.json is a host key file. Remove it from the project source. Use the data import to bring an existing host key.');
+            }
+            // An `.htaccess` is not a source file by its name, and is kept as its author's rules.
+            if (is_string($path) && preg_match(self::HTACCESS_PATH, $path) === 1 && is_string($source)) {
+                // The runner reads no rule of a longer one, and would run what it was written to refuse.
+                if (strlen($source) > self::MAX_HTACCESS_BYTES) throw new InvalidArgumentException("{$path} is larger than this host reads of an .htaccess (64 KB), so none of its rules would be applied. Shorten it.");
+                $rules[] = $path;
+                $bytes += strlen($source);
+                continue;
             }
             // `.xdb` is an app's seed data (its local collections), JSON text the app is shipped with.
             // `.html`, `.js` and `.css` are a SoftN app's pages, page logic and stylesheets as SoftN has
@@ -2595,9 +2791,26 @@ class NativeAppService
         if ($hasServer && $hasContainerBackend) {
             throw new InvalidArgumentException('Declare either a server block or a backend block in manifest.json, not both.');
         }
+        // SoftN reads a backend's `runtime` and `entry`, and nothing else for them. This host once
+        // took `engine` and `entrypoint` in their place: the runner did not, so such an app passed
+        // here, was refused as it was installed for a capability it never asked for, and would
+        // run on no other SoftN host either. Said here, by the name to write. (An installed
+        // project that has one is still read as a backend: hasContainerBackend, clientFiles.)
+        if ($hasContainerBackend && is_array($manifest['backend']) && !array_is_list($manifest['backend'])) {
+            foreach (['engine' => 'runtime', 'entrypoint' => 'entry'] as $alias => $key) {
+                if (array_key_exists($alias, $manifest['backend']) && !array_key_exists($key, $manifest['backend'])) {
+                    throw new InvalidArgumentException("manifest.json's backend names its {$key} as \"{$alias}\", which SoftN does not read, so the app would run on no SoftN host. Rename \"{$alias}\" to \"{$key}\".");
+                }
+            }
+        }
         $containerRuntime = $hasContainerBackend && is_array($manifest['backend']) && !array_is_list($manifest['backend'])
-            ? strtolower(trim((string) ($manifest['backend']['runtime'] ?? $manifest['backend']['engine'] ?? '')))
+            ? strtolower(trim((string) ($manifest['backend']['runtime'] ?? '')))
             : '';
+        // An `.htaccess` is read only for a container backend. Kept for any other app, its rules
+        // would be applied by nothing and its author would not know.
+        if ($rules !== [] && !$hasContainerBackend) {
+            throw new InvalidArgumentException("{$rules[0]}: this host applies an .htaccess only for an app with a container backend (a \"backend\" block in manifest.json). Remove it, since nothing here would apply its rules.");
+        }
         // `.py` under server/backend/private is only permitted for a Python sandboxed container backend.
         foreach (array_keys($files) as $path) {
             if (is_string($path) && str_ends_with($path, '.py') && preg_match('~^(?:server|backend|private)/~i', $path)) {
@@ -2614,9 +2827,18 @@ class NativeAppService
             if (!in_array($containerRuntime, self::CONTAINER_BACKEND_RUNTIMES, true)) {
                 throw new InvalidArgumentException('manifest.json\'s backend.runtime must be one of: ' . implode(', ', self::CONTAINER_BACKEND_RUNTIMES) . '.');
             }
-            $entry = (string) ($backend['entry'] ?? $backend['entrypoint'] ?? '');
-            if ($entry === '' || str_contains($entry, '..') || !isset($files[$entry])) {
+            $entry = is_string($backend['entry'] ?? null) ? $backend['entry'] : '';
+            if ($entry === '' || str_contains($entry, '..') || !isset($files[$entry]) || preg_match(self::HTACCESS_PATH, $entry) === 1) {
                 throw new InvalidArgumentException('manifest.json\'s backend.entry must name an existing file in the project.');
+            }
+            // The folder the backend lives in, which stays on the server (manifestPrivatePaths): a folder
+            // of the project, named as its folders are, as the importer (nativeHosting.ts backendProblem)
+            // holds it. Pages are kept from what is under it while the runner refuses to run scripts there,
+            // and the runner collapses "..", so a root such as "a/../api" kept different files private on
+            // each side. Missing, null or empty is none declared.
+            $backendRoot = $backend['root'] ?? null;
+            if ($backendRoot !== null && $backendRoot !== '' && (!is_string($backendRoot) || strlen($backendRoot) > 240 || preg_match('~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+/?$~D', $backendRoot) !== 1)) {
+                throw new InvalidArgumentException('manifest.json\'s backend.root must name a folder in the project, such as "api" or "server/api": no "..", no leading "/" or drive letter, and at most 240 characters.');
             }
             if (array_key_exists('routes', $backend)) {
                 if (!is_array($backend['routes']) || !array_is_list($backend['routes']) || count($backend['routes']) > 64) {
@@ -3238,8 +3460,19 @@ JS;
      * What an app's author can do about the startup stage its host stopped at, as the owner reads
      * it where the version was refused. The stage is kept at the end for whoever supports them.
      */
-    public static function startupFailure(string $stage): string
+    public static function startupFailure(string $stage, bool $container = false): string
     {
+        // A container backend (manifest.json's `backend`) has no `server` block, capabilities or
+        // routes file of the kind the messages below speak of, and its own start failing is a
+        // matter of its manifest, not of the runtime: told to "ask your administrator", an author
+        // whose seedSql failed had nothing to fix and nobody to ask.
+        $containerMessage = !$container ? null : match ($stage) {
+            'container_backend' => "The app's container backend could not start: backend.entry must name a file in the project, and each database's seedSql or seedJson must run. Check them in manifest.json, or ask AI Studio to.",
+            'manifest_read' => "manifest.json could not be read: check that it is valid JSON.",
+            'application_identity' => "manifest.json's id is not the id this app was created with. Keep the app's own id, or ask your administrator.",
+            default => null,
+        };
+        if ($containerMessage !== null) return "{$containerMessage} ({$stage})";
         $message = match ($stage) {
             'application_source' => "The app's backend could not start: its code (server/main.logic) has an error, or a route names a function it does not define. Fix it in the source editor, or ask AI Studio to.",
             'route_configuration' => "A route in manifest.json is not one the app host serves: paths are under /api/ and matched exactly, methods are GET, POST, PUT or DELETE, and each route names a function in the backend.",
@@ -3647,7 +3880,7 @@ JS;
                 $sharedDbAppId = $this->sharedDatabaseAppId($appId);
                 $sharedDataDir = $sharedDbAppId !== null ? $this->root($sharedDbAppId) . '/private/data' : null;
                 $health = $this->invoke($root, ['method' => 'GET', 'path' => '/api/meta', 'query' => (object) [], 'body' => (object) [], 'headers' => (object) [], 'client_ip' => '127.0.0.1', 'photos' => false], [], [], false, $isContainerBackend || $sharedDataDir !== null, $sharedDataDir);
-                if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? '')), 422);
+                if (($health['status'] ?? 500) !== 200) throw new RuntimeException(self::startupFailure((string) ($health['body']['diagnostic'] ?? ''), $isContainerBackend), 422);
             }
             $this->advance($root, $journal, 'migrated');
             $saved = ['home' => $project['home'], 'version' => $expectedVersion + 1, 'updatedAt' => gmdate('c'), 'files' => $files, 'assets' => $assets, 'access' => $project['access']];
@@ -4087,11 +4320,73 @@ JS;
     }
 
     /**
-     * One of the app's worker slots and one of the site's, waiting up to three seconds for them: most
-     * requests run in well under a second, so a burst (a screen loading four lists at once) is served,
-     * not answered busy.
+     * The accounts this service has been told own an app, by the app's root (ownedBy).
      *
-     * @return list<resource>
+     * @var array<string, string>
+     */
+    private array $owners = [];
+
+    /**
+     * Whose app this is, for the workers one account may hold at once (takeSlots). This service
+     * keeps apps by their id and knows nothing of accounts, so whoever serves an app and knows its
+     * owner says so before it asks for a worker: the app's own page and its API, a flow that calls
+     * the app, a member's plugin. The answer is kept beside the worker locks, so a request that
+     * comes with no owner to name (a delivery from a worker, a version restored) is counted for
+     * the same account. An app nobody has named an owner for has no account's share to be held
+     * to, only its own.
+     */
+    public function ownedBy(string $appId, string $ownerId): void
+    {
+        if ($ownerId === '') return;
+        $root = $this->root($appId);
+        // Never the id itself in a file's name: what an account is called is not this folder's to say.
+        $account = substr(hash('sha256', $ownerId), 0, 32);
+        if (($this->owners[$root] ?? null) === $account) return;
+        $this->owners[$root] = $account;
+        $note = dirname($root) . '/.runtime-slots/' . basename($root) . '.owner';
+        if (is_file($note) && @file_get_contents($note) === $account) return;
+        try {
+            $this->directory(dirname($note));
+            $pending = $note . '.pending-' . bin2hex(random_bytes(6));
+            // Renamed into place, so a request reading it at this moment reads a whole note or the last one.
+            if (@file_put_contents($pending, $account) === false || !@rename($pending, $note)) @unlink($pending);
+        } catch (\Throwable) {
+            // Storage that cannot be written to refuses the request that follows, in its own words.
+        }
+    }
+
+    /** The account an app's root was last said to belong to (ownedBy), or null when nobody has said. */
+    private function ownerOf(string $root): ?string
+    {
+        if (isset($this->owners[$root])) return $this->owners[$root];
+        $note = dirname($root) . '/.runtime-slots/' . basename($root) . '.owner';
+        $account = is_file($note) ? @file_get_contents($note) : false;
+        return is_string($account) && preg_match('/^[a-f0-9]{32}$/D', $account) === 1 ? $account : null;
+    }
+
+    /**
+     * How many of the site's $workers one account's apps may hold between them, or 0 for no share
+     * of an account's own. NATIVE_WORKERS_PER_OWNER says: a number (at most the workers there
+     * are), or 0 for a site that hosts one account's apps and wants all of them for it. Unset, or
+     * anything else: every worker but one, so one is always left for another account's app; a
+     * site with a single worker has none to leave, and no share.
+     */
+    private static function ownerShare(int $workers): int
+    {
+        $set = Environment::nonEmpty('NATIVE_WORKERS_PER_OWNER');
+        $asked = $set === null ? false : filter_var($set, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
+        $share = $asked === false ? $workers - 1 : $asked;
+        // Every worker is no share at all, and there is nothing to count.
+        return $share >= $workers ? 0 : $share;
+    }
+
+    /**
+     * One of the app's worker slots, one of its account's and one of the site's, waiting up to three
+     * seconds for them: most requests run in well under a second, so a burst (a screen loading four
+     * lists at once) is served, not answered busy. An app or an account already holding its share
+     * waits for one of its own to finish, and is answered busy like any other when none does.
+     *
+     * @return list<resource|null>
      */
     private function takeSlots(string $root): array
     {
@@ -4106,26 +4401,30 @@ JS;
             return null;
         };
         $appSlot = null;
+        $ownerSlot = null;
         $slot = null;
         $workers = filter_var(Environment::nonEmpty('NATIVE_WORKERS'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $workers = min(self::MAX_WORKERS, $workers === false ? self::WORKERS : $workers);
         $perApp = filter_var(Environment::nonEmpty('NATIVE_WORKERS_PER_APP'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $perApp = min($workers, $perApp === false ? self::WORKERS_PER_APP : $perApp);
+        $perOwner = self::ownerShare($workers);
+        $owner = $perOwner > 0 ? $this->ownerOf($root) : null;
         $waitUntil = microtime(true) + 3;
         while (true) {
             $appSlot ??= $take(basename($root) . '-', $perApp);
-            if ($appSlot) $slot = $take('', $workers);
+            if ($appSlot && $owner !== null) $ownerSlot ??= $take('owner-' . $owner . '-', $perOwner);
+            if ($appSlot && ($owner === null || $ownerSlot)) $slot = $take('', $workers);
             if ($slot || microtime(true) >= $waitUntil) break;
             usleep(50000);
         }
         if (!$slot) {
-            if ($appSlot) { flock($appSlot, LOCK_UN); fclose($appSlot); }
+            $this->releaseSlots([$appSlot, $ownerSlot]);
             throw new RuntimeException('The native host is busy. Try again shortly.', 429);
         }
-        return [$slot, $appSlot];
+        return [$slot, $appSlot, $ownerSlot];
     }
 
-    /** @param list<resource> $slots */
+    /** @param list<resource|null> $slots */
     private function releaseSlots(array $slots): void
     {
         foreach ($slots as $lock) {
@@ -4149,12 +4448,37 @@ JS;
             $project = $this->runtimeCache($root)['project'];
             if ($generation !== null && (int) ($project['version'] ?? 0) !== $generation) throw new RuntimeException('The app was updated while this request was in flight. Reload and try again.', 409);
             if (!self::hasContainerBackend($project)) throw new RuntimeException('This app has no container backend', 404);
+            // What the app's own .htaccess refuses is answered here, and no worker is asked for.
+            if (($refused = self::refusedByHtaccess($project, $request)) !== null) return $refused;
             $sharedDataDir = $dbAppId !== $appId ? $dbRoot . '/private/data' : null;
             $containerIdentity = self::normalizeContainerIdentity($identity);
             return $this->invokeContainer($root, $request, $containerIdentity, $subscriptions, $sharedDataDir);
         } finally {
             self::releaseLocks($locks);
         }
+    }
+
+    /**
+     * The `host` and `https` of a container request, from the address this site is reached by
+     * (an origin, or the site's configured URL): the name with its port when that is not the
+     * scheme's own, and whether the scheme is https. Without them the runner tells a PHP backend
+     * it is http://localhost, and every absolute link the backend writes says so. For a caller
+     * that has no request in hand (a flow run in the cloud) or is not a controller (a member's
+     * plugin); the app's page and its API read them from the request. Nothing for no address, so
+     * the request is as it was.
+     *
+     * @return array{}|array{host: string, https: bool}
+     */
+    public static function containerAddress(string $address): array
+    {
+        $parts = parse_url(trim($address));
+        if (!is_array($parts)) return [];
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $host = strtolower((string) ($parts['host'] ?? ''));
+        if ($host === '' || !in_array($scheme, ['http', 'https'], true) || preg_match('/^[a-z0-9.\-\[\]:]+$/', $host) !== 1) return [];
+        $port = $parts['port'] ?? null;
+        $ownPort = $port === null || $port === ($scheme === 'https' ? 443 : 80);
+        return ['host' => $host . ($ownPort ? '' : ':' . $port), 'https' => $scheme === 'https'];
     }
 
     /**
@@ -4725,6 +5049,7 @@ JS;
         try {
             $project = $this->runtimeCache($root)['project'];
             if (!self::hasContainerBackend($project)) throw new RuntimeException('This app has no container backend', 404);
+            if (($refused = self::refusedByHtaccess($project, $request)) !== null) return $refused;
             return $this->invokeContainer($root, $request, self::normalizeContainerIdentity($identity), [], $sandboxDataDir);
         } finally {
             flock($lock, LOCK_UN);
@@ -4771,6 +5096,7 @@ JS;
         }
         $files = [];
         $assets = [];
+        $rules = [];
         $totalBytes = 0;
         try {
             $count = $zip->numFiles;
@@ -4829,6 +5155,8 @@ JS;
                     $files[$norm] = $bytes;
                 } elseif (preg_match(self::MEDIA_PATH, $norm) === 1 || self::isSitePath($norm)) {
                     $assets[$norm] = base64_encode($bytes);
+                } elseif (preg_match(self::HTACCESS_PATH, $norm) === 1) {
+                    $rules[$norm] = $bytes;
                 }
             }
         } finally {
@@ -4837,6 +5165,10 @@ JS;
         if (!isset($files['manifest.json'])) {
             throw new InvalidArgumentException('This .softn archive is missing manifest.json.');
         }
+        // A container backend's app keeps its `.htaccess` files, which the host applies. Any other
+        // archive's is the one a static package carries for the server it was made for, and is
+        // left out as every file of no kind here is.
+        if (self::hasContainerBackend(['files' => $files])) $files += $rules;
         $project = [
             'home' => true,
             'version' => 0,

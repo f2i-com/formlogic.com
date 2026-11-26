@@ -10,6 +10,10 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, TryLockError};
 
+// Only a Mac's windows are another program. Built for the tests everywhere, so what it does is
+// checked on whichever system they run on.
+#[cfg(any(test, all(not(feature = "scripted-dialogs"), target_os = "macos")))]
+mod child;
 #[cfg(all(not(feature = "scripted-dialogs"), target_os = "macos"))]
 #[path = "macos.rs"]
 mod system;
@@ -63,12 +67,36 @@ pub fn choose_folder(prompt: &str) -> Result<Option<PathBuf>, String> {
     system::choose_folder(prompt)
 }
 
+/// How long OAIY is given to say it opened a page: it starts the browser and answers at once.
+#[cfg(windows)]
+const OAIY_OPENS_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Opens the person's browser, for a web address and nothing else.
+///
+/// On Windows the plugin runs inside the job OAIY ends when it exits, and a browser the plugin
+/// starts itself is in that job: one first started by Connect was closed when OAIY was, with every
+/// tab the person had opened in it since. So OAIY opens it, from its own process, where it says it
+/// can (`oaiy.browser.open`). Where it does not, or asking fails, the plugin opens it itself, as it
+/// always did.
 pub fn open_url(url: &str) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err("That isn't a web address.".to_string());
     }
+    #[cfg(windows)]
+    if crate::host::OAIY.answers(crate::host::BROWSER_OPEN)
+        && crate::host::OAIY.ask(crate::host::BROWSER_OPEN, serde_json::json!({"url": url}), OAIY_OPENS_WITHIN).is_ok()
+    {
+        return Ok(());
+    }
     system::open_url(url)
+}
+
+/// Closes a window that is still open, for when the plugin stops. On Windows a window is the
+/// plugin's own and goes with it. On a Mac it is another program, which would stay on the screen
+/// with nobody to answer to (see `child.rs`).
+pub fn close_windows() {
+    #[cfg(all(not(feature = "scripted-dialogs"), target_os = "macos"))]
+    child::end();
 }
 
 /// This computer's name, for FormLogic's list of what is linked.

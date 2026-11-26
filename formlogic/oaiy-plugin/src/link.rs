@@ -53,6 +53,24 @@ pub fn save(data: &Path, account: &Account) -> Result<(), String> {
     secret_file::write(&data.join(FILE), bytes).map_err(|e| format!("Could not save the link: {e}"))
 }
 
+/// Saves a link FormLogic has just made, or ends it there. Until it is saved the key is in this
+/// program's memory and nowhere else: lost, nothing here can use it and the next start finds no
+/// link, while FormLogic goes on holding a key for this computer. So a save that fails ends the
+/// link at FormLogic while the key still works, and says so if that could not be done either.
+pub fn keep(data: &Path, account: &Account) -> Result<(), String> {
+    keep_or(data, account, |account| client::unlink(account).is_ok())
+}
+
+fn keep_or(data: &Path, account: &Account, end: impl FnOnce(&Account) -> bool) -> Result<(), String> {
+    save(data, account).map_err(|failed| {
+        if end(account) {
+            format!("{failed}. Nothing was connected.")
+        } else {
+            format!("{failed}. Nothing was connected here, but FormLogic could not be told and still holds the key it made for this computer. Remove it there, under Settings, API keys.")
+        }
+    })
+}
+
 pub fn remove(data: &Path) -> Result<(), String> {
     match std::fs::remove_file(data.join(FILE)) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Could not forget the link: {e}")),
@@ -204,13 +222,14 @@ fn first_line(stream: &mut TcpStream) -> Option<String> {
 }
 
 const CONNECTED: &str = "FormLogic Backups is connected. You can close this tab.";
-const NOT_CONNECTED: &str = "Nothing was connected: FormLogic did not finish connecting. You can close this tab and try again.";
+const NOT_CONNECTED: &str = "Nothing was connected. FormLogic Backups says why. You can close this tab and try again.";
 
 /// Waits for the browser to come back with this sign-in's code, and has `swap` exchange it while
 /// the browser waits for its page. The code arriving is not the link: FormLogic can still refuse
 /// the exchange (a code used or expired, an account with no room for another computer), and the
-/// tab said "connected" beside a window saying it had failed. So the tab is told once `swap` has
-/// answered, and told which.
+/// key it answers with can fail to be saved. The tab said "connected" beside a window saying it
+/// had failed. So `swap` is everything up to a link this computer keeps, and the tab is told once
+/// it has answered, and told which.
 fn wait_for_code<T>(listener: &TcpListener, state: &str, until: Instant, swap: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     while Instant::now() < until {
@@ -323,8 +342,9 @@ fn check_server(server: &str) -> Result<(), String> {
     }
 }
 
-/// The whole sign-in, from opening the browser to holding the key. `server` is already normal.
-pub fn sign_in(server: &str, device: Option<&str>) -> Result<Account, String> {
+/// The whole sign-in, from opening the browser to a link kept in `data`. `server` is already
+/// normal. The link is saved before the browser's tab is answered: see [`wait_for_code`].
+pub fn sign_in(server: &str, device: Option<&str>, data: &Path) -> Result<Account, String> {
     check_server(server)?;
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("Could not listen for the sign-in: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -332,7 +352,11 @@ pub fn sign_in(server: &str, device: Option<&str>) -> Result<Account, String> {
     let verifier = random_text()?;
     let state = random_text()?;
     native::open_url(&authorize_url(server, &redirect, &challenge_of(&verifier), &state, device))?;
-    wait_for_code(&listener, &state, Instant::now() + SIGN_IN, |code| exchange(server, code, &verifier, &redirect))
+    wait_for_code(&listener, &state, Instant::now() + SIGN_IN, |code| {
+        let account = exchange(server, code, &verifier, &redirect)?;
+        keep(data, &account)?;
+        Ok(account)
+    })
 }
 
 #[cfg(test)]
@@ -511,6 +535,39 @@ mod tests {
         remove(&dir).unwrap();
         assert!(load(&dir).unwrap().is_none());
         remove(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The key FormLogic answers with is only in memory until it is saved. With nowhere to save
+    /// it, FormLogic was left holding a key for a computer that had none.
+    #[test]
+    fn a_link_that_cannot_be_saved_is_ended_at_formlogic() {
+        let dir = std::env::temp_dir().join(format!("fl-backups-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file where the plugin's folder should be: nothing can be saved in it.
+        let nowhere = dir.join("data");
+        std::fs::write(&nowhere, b"not a folder").unwrap();
+        let account = Account { base_url: "https://x.example".into(), credential: "flk_x".into(), account_id: "u1".into(), account_email: "a@x.example".into(), api_key_id: "k1".into(), linked_at: "now".into() };
+
+        let mut ended = Vec::new();
+        let failed = keep_or(&nowhere, &account, |account| {
+            ended.push(account.api_key_id.clone());
+            true
+        })
+        .unwrap_err();
+        assert!(failed.starts_with("Could not save the link: "), "{failed}");
+        assert!(failed.ends_with(". Nothing was connected."), "{failed}");
+        assert_eq!(ended, ["k1"], "the key it could not keep is ended");
+
+        // FormLogic out of reach as well: the person is told where the key is left.
+        let failed = keep_or(&nowhere, &account, |_| false).unwrap_err();
+        assert!(failed.starts_with("Could not save the link: "), "{failed}");
+        assert!(failed.contains("FormLogic could not be told") && failed.ends_with("under Settings, API keys."), "{failed}");
+
+        // A link that is saved is not ended.
+        keep_or(&dir.join("kept"), &account, |_| panic!("a saved link was ended")).unwrap();
+        assert_eq!(load(&dir.join("kept")).unwrap().unwrap().credential, "flk_x");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

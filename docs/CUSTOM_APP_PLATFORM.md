@@ -363,16 +363,30 @@ pack in PHP, locking the Node/PHP recipes together in CI.
 Before a marketplace pack installs, the capability-review panel lets the user approve or decline the
 pack's **connector grants** (`connector.<id>.<command>`). `POST /api/packs/describe` returns
 `capabilities.connectorGrants` — the REVIEWABLE subset: connector grants declared in app/form
-customLogic (bundle + scripts) and app roles, i.e. exactly the carriers `PackService::importPack`
-can strip. Flow-declared connector access (from flow node capabilities / binding output actions) is
-surfaced in `capabilities.connectors`/`permissions` as informational but is NOT declinable — it is
-structural to the flow, so the review never offers a control it can't enforce. `describe` also
+customLogic (bundle + scripts, and an ApplicationPackage's envelope customLogic), app roles, and the
+pack's flows, i.e. exactly the carriers `PackService::importPack` can strip
+(`PackCapabilities::describe`). A flow's lines are its `connector.`-prefixed `nodeCapabilities`, what
+each of its nodes asks for by being there (a `connector_request` node's `connector.<id>.<command>`,
+or `connector.<id>.*` when it names no command; an `aokie_speak` node's
+`connector.aokie.call.operatorSpeak`), and each binding's `connector.request` output action (its
+`connector.<id>.<command>`) and `call.speak` action (`connector.aokie.call.operatorSpeak`). Each of
+them is declinable: a declined node capability is not stored with the flow; a declined node grant
+leaves the node in the graph and takes from the flow every capability that would let it run (the
+grant and any wildcard over it, an approved one included), so the runner refuses it; a declined
+output action is dropped from its binding. A flow's other capabilities (`model.llm.local`,
+`formlogic.responses.write`, …) are surfaced in `capabilities.permissions` as informational and are
+not reviewed. `describe` also
 returns `vendorSigning` (the APP-501 per-component verdict) so the panel can show verified-vendor
 trust. On install the client sends `approvedConnectorGrants`; `importPack` activates only those and
-strips the rest from both carriers (customLogic permissions AND `app_role_permissions` connector
-rows), returning `withheldGrants`. A connector grant is "reviewable" by the loose `connector.`
+strips the rest from every carrier (customLogic permissions, `app_role_permissions` connector rows,
+and the flows and bindings as above), returning `withheldGrants`. A connector grant is "reviewable" by the loose `connector.`
 prefix (matching what the runtime gate honors, including wildcards like `connector.*`) — not the
 strict `AppPermissions::isConnectorGrant` validator — so a declined wildcard is actually stripped.
+Every line is approved by its own name, on every carrier: a flow node's grant and a binding's
+`connector.request` / `call.speak` output action are kept only when the grant they are listed under
+is in `approvedConnectorGrants`. An approved wildcard (`connector.<id>.*`, `connector.*`) keeps the
+carriers that declare that wildcard and nothing else, so sending only a wildcard withholds the
+exact lines (they come back in `withheldGrants`).
 `approvedConnectorGrants` absent = no review = every requested grant activates (backward compatible).
 
 ### Pack services (wave 1)
@@ -541,7 +555,10 @@ omit the stamp. Trust rules:
 Backend: `CustomLogicSanitizer::sanitizeConnector` preserves + bounds the bundle on every
 customLogic write (an owner's app-logic save can never silently drop the pack's connector);
 `connector.<id>.driver.demo` rides the normal grant carriers, so import review + role grants
-apply unchanged. Reference implementation: `ui/src/data/packs/aokie-receptionist/connector/`.
+apply unchanged. A connector may not take a reserved id, which the browser refuses and a save
+drops: the built-in connectors' (`device`, `vehicle`, `local_http`) and `flows`, the source of
+OAIY Desktop's own events, which OAIY gives no plugin and the browser passes to no listener.
+Reference implementation: `ui/src/data/packs/aokie-receptionist/connector/`.
 
 ### Native (FormLogic Native Runtime)
 

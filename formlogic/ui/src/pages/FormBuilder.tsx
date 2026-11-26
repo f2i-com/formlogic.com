@@ -633,10 +633,20 @@ export default function FormBuilder() {
   // field-palette blocks (no file/camera/linked_record - plan SS9.1), and the
   // schema-publish path on Publish. Looked up once per form (owner-only endpoint).
   const [privacy, setPrivacy] = useState<{ formId: string; private: boolean } | null>(null);
-  const isPrivateForm = storageMode === 'api' && !acting && privacy?.formId === currentFormId && privacy?.private === true;
+  // What the form itself says: the forms list's flag, and the encryption manifest the form's own
+  // GET serves with a private form. An admin acting on another account reads the same form, while
+  // the lookup above is the owner's alone (it hands over their key grant) and is never made for
+  // them: without this the builder took every private form of another account for a plain one,
+  // and offered its Script editor, whose save the server refused.
+  const servedPrivate = form?.isPrivate === true || form?.encryption?.mode === 'private';
+  const isPrivateForm = (storageMode === 'api' || !!acting)
+    && (servedPrivate || (!acting && privacy?.formId === currentFormId && privacy?.private === true));
   // E2EE: publishing a private form with a locked vault is BLOCKED — this opens
   // the unlock dialog, after which the publish retries (blocker 2).
   const [showPublishUnlock, setShowPublishUnlock] = useState(false);
+  // A private form that still holds a script (see removeKeptScript): asking first, then the wait.
+  const [confirmRemoveScript, setConfirmRemoveScript] = useState(false);
+  const [removingScript, setRemovingScript] = useState(false);
   useEffect(() => {
     let cancelled = false;
     if (!currentFormId || storageMode !== 'api' || acting) return;
@@ -1125,6 +1135,33 @@ export default function FormBuilder() {
 
   const closeModal = () => setActiveModal(null);
 
+  // A form made private while it had a script still holds it: enabling did not look for one then.
+  // The script never runs on a private form and the editor is closed to private forms, so nothing
+  // here could take it out. The server takes an empty script from a private form (anything else
+  // but the one it holds is refused: FormService::givesAScript), so the empty one is what goes,
+  // by itself and not with the debounced save: the answer says whether the script is gone.
+  const hasKeptScript = isPrivateForm && !!form.logicScript?.trim();
+  const removeKeptScript = async () => {
+    setRemovingScript(true);
+    try {
+      // A save still waiting carries the script the form has here. Left to land after this one,
+      // it would be refused as a new script.
+      await flushDebouncedSave(form.id);
+      const res = await api.updateFormWithMeta(form.id, { logicScript: '' });
+      const stored = (res.body?.form as { logicScript?: unknown } | undefined)?.logicScript;
+      if (!res.ok || (typeof stored === 'string' && stored.trim() !== '')) {
+        const message = typeof res.body?.message === 'string' ? res.body.message : null;
+        toast.error('Script not removed', message ?? (res.status ? `Server error (${res.status})` : 'The server could not be reached. Try again.'));
+        return;
+      }
+      useFormStore.getState().setFormLocal(form.id, { logicScript: '' });
+      toast.success('Script removed', 'This form no longer stores a logic script.');
+    } finally {
+      setRemovingScript(false);
+      setConfirmRemoveScript(false);
+    }
+  };
+
   // Publish — make it a real activation moment: confirm + surface the live link so
   // first-time users know it worked and where it lives. PRIVATE forms sign the
   // field schema FIRST and publish fields + status + signed schema in ONE atomic
@@ -1138,7 +1175,9 @@ export default function FormBuilder() {
     const alreadyLive = form.status === 'published';
     const previousStatus = form.status;
 
-    if (storageMode === 'api' && isPrivateForm && !api.isDemoMode()) {
+    // The schema is signed by the owner's vault, so an admin acting for them publishes as before:
+    // the server takes it while the fields are the ones signed, and says why not otherwise.
+    if (storageMode === 'api' && isPrivateForm && !acting && !api.isDemoMode()) {
       const fc = await import('../lib/crypto/formCrypto');
       await fc.ensureVaultLoaded().catch(() => undefined);
       if (useVaultStore.getState().status !== 'unlocked') {
@@ -1252,12 +1291,17 @@ export default function FormBuilder() {
     { id: 'settings', label: 'Settings', title: 'Form settings', icon: Settings, onSelect: () => setActiveModal('settings') },
     {
       id: 'script',
-      label: 'Script',
-      title: isPrivateForm ? 'Logic scripts are not available on end-to-end encrypted forms' : 'Backend Logic Script',
+      label: hasKeptScript ? 'Remove script' : 'Script',
+      title: hasKeptScript
+        ? 'Remove the stored logic script (it does not run on an end-to-end encrypted form)'
+        : isPrivateForm ? 'Logic scripts are not available on end-to-end encrypted forms' : 'Backend Logic Script',
       icon: Code2,
-      onSelect: () => { if (!isPrivateForm) setActiveModal('script'); },
+      onSelect: () => {
+        if (hasKeptScript) setConfirmRemoveScript(true);
+        else if (!isPrivateForm) setActiveModal('script');
+      },
       badgeDot: !isPrivateForm && !!form.logicScript,
-      disabled: isPrivateForm,
+      disabled: isPrivateForm && !hasKeptScript,
     },
     {
       id: 'flows',
@@ -1800,6 +1844,18 @@ export default function FormBuilder() {
         }}
         formFields={form.fields.map((f) => ({ id: f.id, label: f.label, type: f.type }))}
         formId={form.id}
+      />
+
+      {/* A private form that kept a script from before it was encrypted: the one thing left to do with it. */}
+      <ConfirmDialog
+        isOpen={confirmRemoveScript && hasKeptScript}
+        onClose={() => setConfirmRemoveScript(false)}
+        onConfirm={() => void removeKeptScript()}
+        title="Remove the stored script?"
+        message="This form had a backend logic script when it was encrypted, and still stores it. Logic scripts cannot run on end-to-end encrypted forms, so it does nothing. A private form cannot take a script again, so this can't be undone."
+        confirmLabel="Remove script"
+        variant="danger"
+        isLoading={removingScript}
       />
 
       {/* Embed Modal */}

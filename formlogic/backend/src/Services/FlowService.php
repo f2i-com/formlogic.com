@@ -153,7 +153,11 @@ class FlowService
             throw new \InvalidArgumentException('flowJson must be an object of shape { nodes: [], edges: [] }');
         }
 
-        $encoded = json_encode($flowJson);
+        // Every size cap in this class is on the JSON as UTF-8 text, the way whoever sent it
+        // measured it. PHP's default escapes write each non-ASCII character as \uXXXX (and each
+        // `/` as `\/`), which made the same value up to three times as long and refused a graph,
+        // a binding or a run's inputs in any language but English well under the documented limit.
+        $encoded = json_encode($flowJson, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($encoded === false || strlen($encoded) > self::MAX_FLOW_JSON_BYTES) {
             throw new \InvalidArgumentException('flowJson exceeds the 256KB limit');
         }
@@ -332,7 +336,7 @@ class FlowService
         foreach (['condition' => $condition, 'inputMap' => $inputMap, 'outputActions' => $outputActions,
                   'retryPolicy' => $retryPolicy, 'fallbackPolicy' => $fallbackPolicy] as $name => $value) {
             if ($value !== null) {
-                $json = json_encode($value);
+                $json = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($json === false || strlen($json) > self::MAX_BINDING_JSON_BYTES) {
                     throw new \InvalidArgumentException("Binding {$name} exceeds the 16KB limit");
                 }
@@ -872,7 +876,7 @@ class FlowService
             if (!is_array($data['inputSnapshot'])) {
                 throw new \InvalidArgumentException('inputSnapshot must be an object');
             }
-            $json = json_encode($data['inputSnapshot']);
+            $json = json_encode($data['inputSnapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_INPUT_SNAPSHOT_BYTES) {
                 throw new \InvalidArgumentException('inputSnapshot exceeds the 64KB limit');
             }
@@ -2934,7 +2938,7 @@ class FlowService
             if (!is_array($data['inputSnapshot'])) {
                 throw new \InvalidArgumentException('inputSnapshot must be an object');
             }
-            $json = json_encode($data['inputSnapshot']);
+            $json = json_encode($data['inputSnapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_INPUT_SNAPSHOT_BYTES) {
                 throw new \InvalidArgumentException('inputSnapshot exceeds the 64KB limit');
             }
@@ -3235,7 +3239,7 @@ class FlowService
     {
         $inputSnapshot = null;
         if (isset($opts['inputSnapshot']) && is_array($opts['inputSnapshot'])) {
-            $json = json_encode($opts['inputSnapshot']);
+            $json = json_encode($opts['inputSnapshot'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json !== false && strlen($json) <= self::MAX_INPUT_SNAPSHOT_BYTES) {
                 $inputSnapshot = $json;
             }
@@ -3398,9 +3402,10 @@ class FlowService
         );
         $stmt->execute([...$cleanBindingIds, $event, $appId, $appId]);
         $snapshot = ['event' => ['name' => $event, 'data' => array_merge($data, ['appId' => $appId, 'eventId' => $eventId])]];
-        // A record preview can contain multibyte strings. Keep the complete event envelope
-        // even when JSON escaping pushes the bounded preview over the flow snapshot limit.
-        if (strlen(json_encode($snapshot, JSON_THROW_ON_ERROR)) > self::MAX_INPUT_SNAPSHOT_BYTES) {
+        // Keep the complete event envelope when the record is over the flow snapshot limit,
+        // measured as enqueueRun measures and stores it (a multibyte preview is its own bytes,
+        // not six per character).
+        if (strlen(json_encode($snapshot, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > self::MAX_INPUT_SNAPSHOT_BYTES) {
             $snapshot['event']['data']['record'] = [];
             $snapshot['event']['data']['recordTruncated'] = true;
         }
@@ -3478,7 +3483,7 @@ class FlowService
 
         $event = ['name' => 'form.submitted', 'data' => ['formId' => $formId, 'responseId' => $responseId, 'answers' => $answers]];
         $snapshot = ['event' => $event];
-        $json = json_encode($snapshot);
+        $json = json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($json === false || strlen($json) > self::MAX_INPUT_SNAPSHOT_BYTES) {
             // Answers too large for the snapshot cap: keep the event envelope, drop the payload.
             $snapshot = ['event' => ['name' => 'form.submitted', 'data' => ['formId' => $formId, 'responseId' => $responseId, 'answersTruncated' => true]]];
@@ -3831,7 +3836,7 @@ class FlowService
                 if (!is_array($data[$key])) {
                     throw new \InvalidArgumentException("{$key} must be an object");
                 }
-                $json = json_encode($data[$key]);
+                $json = json_encode($data[$key], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
                 if ($json === false || strlen($json) > self::MAX_BINDING_JSON_BYTES) {
                     throw new \InvalidArgumentException("{$key} exceeds the 16KB limit");
                 }

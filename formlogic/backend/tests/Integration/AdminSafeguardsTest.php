@@ -239,7 +239,7 @@ class AdminSafeguardsTest extends TestCase
     {
         $mfa = $this->createMock(MfaService::class);
         $mfa->method('isEnabled')->willReturn(true);
-        $mfa->method('verifyChallenge')->willReturnCallback(static fn (string $id, string $code): bool => $code === '123456');
+        $mfa->method('verifySessionCode')->willReturnCallback(static fn (string $id, string $code): bool => $code === '123456');
         $this->assertSame(403, $this->confirm(['password' => 'the-right-password'], $mfa)->getStatusCode());
         $this->assertSame(403, $this->confirm(['password' => 'the-right-password', 'code' => '000000'], $mfa)->getStatusCode());
         $this->assertSame(200, $this->confirm(['password' => 'the-right-password', 'code' => '123456'], $mfa)->getStatusCode());
@@ -249,6 +249,7 @@ class AdminSafeguardsTest extends TestCase
     {
         $mfa = $this->createMock(MfaService::class);
         $mfa->method('isEnabled')->willReturn(true);
+        $mfa->expects($this->never())->method('verifySessionCode');
         $mfa->expects($this->never())->method('verifyChallenge');
         $this->assertSame(403, $this->confirm(['password' => 'a-guess', 'code' => 'recovery-code'], $mfa)->getStatusCode());
     }
@@ -552,7 +553,7 @@ class AdminSafeguardsTest extends TestCase
     public function testTurningTwoFactorOffTakesTheCodeToo(): void
     {
         $mfa = $this->createMock(MfaService::class);
-        $mfa->method('verifyChallenge')->willReturnCallback(static fn (string $id, string $code): bool => $code === '123456');
+        $mfa->method('verifySessionCode')->willReturnCallback(static fn (string $id, string $code): bool => $code === '123456');
         $mfa->expects($this->once())->method('disable');
         $controller = new AuthController(self::$auth, [], 3600, null, null, 'csrf', null, null, null, null, null, $mfa);
         $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/disable')
@@ -566,7 +567,7 @@ class AdminSafeguardsTest extends TestCase
     public function testAPageWithNoCodeBoxIsToldItIsOutOfDate(): void
     {
         $mfa = $this->createMock(MfaService::class);
-        $mfa->method('verifyChallenge')->willReturn(false);
+        $mfa->method('verifySessionCode')->willReturn(false);
         $mfa->expects($this->never())->method('disable');
         $controller = new AuthController(self::$auth, [], 3600, null, null, 'csrf', null, null, null, null, null, $mfa);
         $request = (new ServerRequestFactory())->createServerRequest('POST', 'https://formlogic.example/api/auth/mfa/disable')

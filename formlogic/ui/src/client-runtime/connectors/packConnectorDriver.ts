@@ -29,7 +29,7 @@ import { ConnectorError, type ConnectorErrorCode, type ConnectorStatusInfo } fro
 import type { PackConnectorBundle } from '../../types/customAppLogic';
 import { collectConnectorGrants, type GrantSource } from './connectorGrants';
 import { isPermissionGranted } from '../logic/appLogicPermissions';
-import { emitLocalDesktopEvent } from '../desktop/desktopEvents';
+import { DESKTOP_OWN_FLOW_SOURCE, emitLocalDesktopEvent } from '../desktop/desktopEvents';
 import { enableSimulator, markSimulated, simulatedEnvelope } from './connectorSimulator';
 import { createDesktopBackedConnector, type DemoConnectorFacade } from './desktopConnector';
 import {
@@ -75,6 +75,11 @@ export function validateConnectorManifest(m: unknown): string | null {
   }
   if (isBuiltInConnectorId(man.connectorId)) {
     return `connectorId "${man.connectorId}" is reserved for a built-in connector`;
+  }
+  // The hub keeps every event from this source from its listeners, so a connector under the
+  // name would never hear its own (and OAIY takes no plugin by it).
+  if (man.connectorId === DESKTOP_OWN_FLOW_SOURCE) {
+    return `connectorId "${man.connectorId}" is reserved: it is the source of the desktop's own events`;
   }
   if (typeof man.kind !== 'string' || !man.kind) return 'kind is required';
   if (typeof man.label !== 'string' || !man.label) return 'label is required';

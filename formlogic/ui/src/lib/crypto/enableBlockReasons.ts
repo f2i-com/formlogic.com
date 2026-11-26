@@ -14,7 +14,7 @@ const REASON_TEXT: Record<string, string> = {
   has_flow_nodes: 'A flow references this form — remove those flow steps first.',
   has_report_specs: 'A report or dashboard widget references this form — remove it first.',
   has_custom_screen: 'The form has a custom screen — remove it first.',
-  has_logic_script: 'The form has a script — clear it first (an encrypted form cannot run one, and it cannot be cleared afterwards).',
+  has_logic_script: 'The form has a script — clear it first (an encrypted form cannot run one).',
   has_response_links: 'The form has shared response links — remove them first.',
   targeted_by_linked_record: "Another form's linked-record field points at this form — remove that link first.",
   blocked_field_types: 'The form has file upload, camera, or linked-record fields, which encrypted forms do not support yet.',

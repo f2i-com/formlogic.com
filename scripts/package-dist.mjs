@@ -239,13 +239,18 @@ EASIEST: the install wizard
 1. Upload the CONTENTS of this zip to your site's web root (DocumentRoot).
    (Upload what is INSIDE the zip — index.html must end up at the web root,
    not inside a subfolder.)
-2. Open https://your-domain/install.php in a browser and follow the wizard.
-   The wizard is locked to localhost by default, and a request that reaches
-   it through a proxy or tunnel on the same machine (nginx, cloudflared,
-   ngrok) counts as remote. Installing onto a remote server, or behind such
-   a proxy? Temporarily allow it by adding this line at the TOP of the
-   web-root .htaccess:
-     SetEnv INSTALL_ENABLE 1
+2. Open the wizard in a browser and follow it. Whoever finishes it owns the
+   site, so a first install is open in one of two ways only:
+   - On the server itself, at the machine's own address:
+     http://localhost/install.php (or 127.0.0.1). A request that asks for
+     the site's own name, or reaches it through a proxy or tunnel on the
+     same machine (nginx, cloudflared, ngrok), counts as remote.
+   - Over the network (a remote server, or one behind such a proxy): add
+     this line at the TOP of the web-root .htaccess, with a long random
+     secret of your own in place of the last word,
+       SetEnv INSTALL_TOKEN replace-this-with-a-long-random-secret
+     and open https://your-domain/install.php?token=<that secret>. Remove
+     the line again when you are done.
    If the database step fails (a mistyped password, say) nothing is written:
    correct it on the same page and run it again.
 3. The wizard automates the whole setup: it checks the PHP version and
@@ -365,7 +370,8 @@ Notes
   api/.env exposure after installing where it can: it asks this web server
   itself (the address and port it reports), never the host a request names.
 - Always delete install.php when you are done (it also disables itself once
-  installed, and only ever runs from localhost or with INSTALL_ENABLE=1).
+  installed, and a first install only ever runs on the server's own
+  localhost address or with the INSTALL_TOKEN you set).
 - Upgrading later? See UPGRADE.txt in the release zip.
 `;
 }
@@ -410,9 +416,10 @@ Manual path:
    this one run by adding this line at the TOP of the web-root .htaccess:
      SetEnv INSTALL_ENABLE 1
    (remove it again — and delete install.php — right after). While that
-   line is there, a visitor who is not on the server itself can inspect and
-   upgrade and nothing else: settings are changed by editing api/.env, or
-   by running the wizard from the server. A wizard run that replaces
+   line is there, a visitor can inspect and upgrade and nothing else:
+   settings are changed by editing api/.env, or by running the wizard on
+   the server itself (http://localhost/install.php) with an INSTALL_TOKEN
+   set and given as ?token=. A wizard run that replaces
    api/.env keeps the old file beside it as api/.env.backup-<time>.
 
    CLI (recommended for big installs, runs before traffic hits the code):

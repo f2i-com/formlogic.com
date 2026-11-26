@@ -48,8 +48,13 @@ class NativeTableFormBridge
      *   primaryKey: list<string>,
      *   columns: array<string, string>,
      *   createdAtColumn: ?string,
-     *   statusColumn: ?string
+     *   statusColumn: ?string,
+     *   managedByForm: bool
      * }|null
+     *
+     * `managedByForm`: the table was made for the form, and holds its own records (an app's
+     * Unified SQLite database: FormSqliteDatabaseService::syncSingleFormSchema), where any other
+     * binding names a table of the app's own.
      */
     public function resolveBinding(string $formId): ?array
     {
@@ -140,6 +145,7 @@ class NativeTableFormBridge
             'columns' => $columns,
             'createdAtColumn' => $createdAtCol,
             'statusColumn' => $statusCol,
+            'managedByForm' => ($raw['managedByForm'] ?? false) === true,
         ];
     }
 
@@ -203,104 +209,449 @@ class NativeTableFormBridge
     /**
      * List rows from the bound SQLite table in canonical FormLogic Response format.
      *
+     * Everything a form's own store filters, orders and pages a list by
+     * (ResponseService::getFormResponses) is answered from the table (storeQuery) or refused
+     * (ResponseListRefused). Left unread, as most of it was, whoever asked for some rows was
+     * given all of them: an automation's lookup, a sync's "changed since", a page of one status.
+     *
      * @param array<string, mixed> $binding
      * @param array<string, mixed> $options
      * @return list<array<string, mixed>>
+     * @throws ResponseListRefused when the table cannot answer what was asked
      */
     public function listResponses(array $binding, array $options = []): array
     {
+        return $this->read($binding, $options, false)['responses'];
+    }
+
+    /**
+     * listResponses(), and how many rows match what was asked (`total`), for a list that pages:
+     * the app's records, a linked-record search. Counted once, by the store's first page, in the
+     * table under the conditions the rows are read by (NativeRecordStore::browse's `matching`):
+     * one COUNT(*), as a form's own store counts its own (ResponseService::getFormResponsesSearchable).
+     * What the exact checks drop after the read (a phone number's digits, a non-date range bound)
+     * is counted, as a form's own store counts its coarse match.
+     *
+     * @param array<string, mixed> $binding
+     * @param array<string, mixed> $options
+     * @return array{responses: list<array<string, mixed>>, total: int}
+     * @throws ResponseListRefused when the table cannot answer what was asked
+     */
+    public function listResponsesWithTotal(array $binding, array $options = []): array
+    {
+        return $this->read($binding, $options, true);
+    }
+
+    /**
+     * @param array<string, mixed> $binding
+     * @param array<string, mixed> $options
+     * @param bool $count whether to count the rows that match; with no count, `total` is 0 and no
+     *   read counts the table (an export reads it a page at a time, and counted it on every page)
+     * @return array{responses: list<array<string, mixed>>, total: int}
+     * @throws ResponseListRefused
+     */
+    private function read(array $binding, array $options, bool $count): array
+    {
         $limit = max(1, min((int) ($options['limit'] ?? 50), self::LIST_LIMIT));
         $offset = max(0, (int) ($options['offset'] ?? 0));
-        $nativeOpts = [];
-        if (isset($options['search']) && is_string($options['search']) && trim($options['search']) !== '') {
-            $nativeOpts['q'] = trim($options['search']);
+        // The store reads no further than OFFSET_LIMIT rows in, and answers an offset past it with
+        // the page AT it: the same rows again for every later page a client asks for by offset.
+        if ($offset > NativeRecordStore::OFFSET_LIMIT) {
+            throw self::pastOffsetLimit();
         }
-        $filters = [];
-        // Enforce view_own_responses scope strictly: fail closed if the bound SQLite table lacks
-        // an authoritative submitter column so other members' rows are never exposed.
-        $requiredSubmitter = is_string($options['submittedByUserId'] ?? null) && $options['submittedByUserId'] !== ''
-            ? $options['submittedByUserId']
-            : null;
-        $submitterCol = null;
-        if ($requiredSubmitter !== null) {
-            $submitterCol = $this->resolveSubmitterColumn($binding);
-            if ($submitterCol === null) {
-                return [];
-            }
-            $filters[] = ['column' => $submitterCol, 'op' => 'eq', 'value' => $requiredSubmitter];
+        $query = $this->storeQuery($binding, $options);
+        if ($query === null) {
+            return ['responses' => [], 'total' => 0];
         }
-        // Push down simple answersEq filters to NativeRecordStore filters.
-        if (is_array($options['answersEq'] ?? null) && $options['answersEq'] !== []) {
-            foreach ($options['answersEq'] as $fieldId => $val) {
-                $col = $binding['columns'][$fieldId] ?? null;
-                if ($col !== null && is_scalar($val)) {
-                    $filters[] = ['column' => $col, 'op' => 'eq', 'value' => (string) $val];
-                }
-            }
-        }
-        if ($filters !== []) {
-            $nativeOpts['filter'] = $filters;
-        }
+        $start = $offset;
+        $total = 0;
+        // Each value whole. A page of the data manager gives the first 400 characters of a text,
+        // which was every list of the form, its exports and its API: what they gave as a record
+        // was cut, and nothing said so.
+        $query['options']['whole'] = true;
         // The record store reads a page of one of its own sizes and no other, so the rows asked for
         // are read a page at a time: the smallest page that holds what is still wanted, the largest
         // when none does. One read of at most 250 rows answered every request before, and whoever
         // asked for 1000 (the Responses page, an API client) took the short answer for the end.
         $out = [];
-        while (count($out) < $limit) {
-            $wanted = $limit - count($out);
+        // Rows of the table read so far: `limit` and `offset` count these, as a form's own store
+        // counts the rows of its query, before the exact check below drops any.
+        $read = 0;
+        while ($read < $limit) {
+            $wanted = $limit - $read;
             $pageSize = max(NativeRecordStore::PAGE_SIZES);
             foreach (NativeRecordStore::PAGE_SIZES as $size) {
                 if ($size >= $wanted && $size < $pageSize) $pageSize = $size;
             }
+            // The first page counts, when asked to; the store counts no other.
+            $counts = $count && $offset === $start;
             try {
-                $res = $this->native->records($binding['appId'], $binding['table'], $offset, null, ['limit' => $pageSize] + $nativeOpts);
+                $res = $this->native->records($binding['appId'], $binding['table'], $offset, null, ['limit' => $pageSize, 'count' => $counts] + $query['options']);
+            } catch (\InvalidArgumentException $e) {
+                // The store's own refusal of a condition: a column it does not show, too many of them.
+                throw new ResponseListRefused('This form\'s records are kept in an app\'s table, which cannot be listed that way: ' . $e->getMessage());
             } catch (\RuntimeException $e) {
                 // No database to read is no rows. A page that fails after others were read is
                 // not the end of the list, and is not passed off as one.
-                if ($out === []) return [];
+                if ($read === 0) return ['responses' => [], 'total' => 0];
                 throw $e;
             }
+            if ($counts) {
+                $total = (int) ($res['matching'] ?? 0);
+            }
             $rows = is_array($res['rows'] ?? null) ? $res['rows'] : [];
-            $pkNames = is_array($res['primaryKey'] ?? null) && $res['primaryKey'] !== []
-                ? $res['primaryKey']
+            // The key's columns are the schema's: the answer carries no `primaryKey` of its own.
+            $pkNames = is_array($res['schema']['primaryKey'] ?? null) && $res['schema']['primaryKey'] !== []
+                ? $res['schema']['primaryKey']
                 : $binding['primaryKey'];
             $keys = is_array($res['keys'] ?? null) ? $res['keys'] : [];
             foreach ($rows as $idx => $row) {
-                if (count($out) >= $limit) break;
+                if ($read >= $limit) break;
+                $read++;
                 if (!is_array($row)) continue;
-                if ($requiredSubmitter !== null && $submitterCol !== null && (string) ($row[$submitterCol] ?? '') !== $requiredSubmitter) {
+                if ($query['submitter'] !== null && (string) ($row[$query['submitterColumn']] ?? '') !== $query['submitter']) {
                     continue;
                 }
                 $keyMap = is_array($keys[$idx] ?? null) ? $keys[$idx] : $this->extractKeyFromRow($row, $pkNames);
-                $out[] = $this->formatRow($binding, $row, $keyMap, $pkNames, (string) ($idx + $offset + 1));
+                $response = $this->formatRow($binding, $row, $keyMap, $pkNames, (string) ($idx + $offset + 1));
+                if ($query['passes'] !== null && !$query['passes']($response)) {
+                    continue;
+                }
+                $out[] = $response;
             }
-            // The store says whether another page follows; a page with rows filtered out of it is
-            // short without being the last.
-            if (($res['hasMore'] ?? false) !== true) break;
-            $offset += $pageSize;
+            // The store says why a page stops: another follows ('more'), the table ends, or rows
+            // remain that it does not read by offset ('limit').
+            $end = $res['end'] ?? (($res['hasMore'] ?? false) === true ? 'more' : 'end');
+            if ($end === 'more') {
+                $offset += $pageSize;
+                continue;
+            }
+            // Rows were asked for that lie past what the store reads. A short page here would be
+            // taken for the end of the list.
+            if ($end === 'limit' && $read < $limit) {
+                throw self::pastOffsetLimit();
+            }
+            break;
         }
-        return $out;
+        return ['responses' => $out, 'total' => $total];
     }
 
-    /** Read one row by response ID from the bound SQLite table. */
+    private static function pastOffsetLimit(): ResponseListRefused
+    {
+        return new ResponseListRefused(
+            'This form\'s records are kept in an app\'s table, which is read by offset no further than '
+                . number_format(NativeRecordStore::OFFSET_LIMIT) . ' rows in. Narrow the list with a filter to reach the rest.',
+            ResponseListRefused::PAST_OFFSET_LIMIT
+        );
+    }
+
+    /** The field ids of one answer filter that a form's own store reads too: machine keys, nothing else. */
+    private static function answerFilter(array $options, string $name): array
+    {
+        $filter = is_array($options[$name] ?? null) ? $options[$name] : [];
+        return array_filter($filter, static fn ($fieldId): bool => preg_match('/^[A-Za-z0-9_]{1,64}$/', (string) $fieldId) === 1, ARRAY_FILTER_USE_KEY);
+    }
+
+    /**
+     * What a list of the form's responses was asked for, as the record store reads its table.
+     *
+     * A response's status, times and answers are the row's columns (formatRow), so each filter
+     * becomes a condition on the column behind it, compared as that column compares:
+     *
+     *  - `answersEq`: the field's column equals the value. A field with no column has no answer
+     *    in any row, so nothing matches.
+     *  - `status`: the rows statusOf() lists with that status, the rule a row's own status is
+     *    given by. The column narrows them (it equals the status as the column compares it, or
+     *    'submitted' and also no value), and statusOf() decides each row read: a column of
+     *    numbers reads '01' as 1, which is listed as '1'. With no status column every row is
+     *    'submitted'. '0' is a status like any other.
+     *  - `from`, `to`: the created-at column, as seconds where the column holds numbers and as
+     *    text otherwise (what a form's own store compares). Refused with no such column: a row
+     *    then says nothing about when it was made.
+     *  - `updatedSince`: the rows whose `updated_at` is at or after it, oldest change first, and
+     *    the rows with none (when they changed is not known, and a sync must not miss them).
+     *    Refused with no `updated_at` column. `afterId`, which pages such a read by the last
+     *    record's time and id together, is refused: the table is paged by offset.
+     *  - `sort`, `sortDir`: the column behind 'submittedAt', 'status' or a field. With no column
+     *    behind it every row has the one value, and the order is the table's own.
+     *  - `answersGte`, `answersLte`, `answersPhoneEq`: as a form's own store answers them. The
+     *    table narrows the rows it can before the limit (a date-shaped bound on a column that is
+     *    not a number's; the last digits of the phone number), and the exact rule is then checked
+     *    on each row read (`passes`), so a row that fails it is never listed.
+     *
+     * @param array<string, mixed> $binding
+     * @param array<string, mixed> $options
+     * @return array{options: array<string, mixed>, submitterColumn: ?string, submitter: ?string, passes: ?\Closure}|null
+     *         null when no row can match
+     * @throws ResponseListRefused
+     */
+    private function storeQuery(array $binding, array $options): ?array
+    {
+        $columns = $binding['columns'];
+        $native = [];
+        if (isset($options['search']) && is_string($options['search']) && trim($options['search']) !== '') {
+            $native['q'] = trim($options['search']);
+        }
+        // Conditions a row passes all of, and groups of which it passes one or more.
+        $all = $anyOf = [];
+        // The table's columns and their declared types, read when a filter needs them.
+        $types = null;
+        $type = function (string $column) use (&$types, $binding): ?string {
+            $types ??= $this->columnTypes($binding);
+            return $types[$column] ?? null;
+        };
+        $holdsNumbers = static fn (string $column): bool => preg_match('/INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL/', (string) $type($column)) === 1;
+        $time = static function (string $column, string $value, string $name) use ($holdsNumbers): string {
+            if (!$holdsNumbers($column)) {
+                return $value;
+            }
+            try {
+                if (preg_match('/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/D', $value) !== 1) {
+                    throw new \InvalidArgumentException('not a date');
+                }
+                return (string) (new \DateTimeImmutable($value, new \DateTimeZone('UTC')))->getTimestamp();
+            } catch (\Exception) {
+                throw new ResponseListRefused("`{$name}` is a UTC date or time: YYYY-MM-DD, YYYY-MM-DD HH:MM:SS or ISO 8601.");
+            }
+        };
+
+        // Enforce view_own_responses scope strictly: fail closed if the bound SQLite table lacks
+        // an authoritative submitter column so other members' rows are never exposed.
+        $submitter = is_string($options['submittedByUserId'] ?? null) && $options['submittedByUserId'] !== ''
+            ? $options['submittedByUserId']
+            : null;
+        $submitterColumn = null;
+        if ($submitter !== null) {
+            $submitterColumn = $this->resolveSubmitterColumn($binding);
+            if ($submitterColumn === null) {
+                return null;
+            }
+            $all[] = ['column' => $submitterColumn, 'op' => 'eq', 'value' => $submitter];
+        }
+
+        foreach (self::answerFilter($options, 'answersEq') as $fieldId => $value) {
+            $column = $columns[(string) $fieldId] ?? null;
+            if ($column === null || !is_scalar($value)) {
+                return null;
+            }
+            $all[] = ['column' => $column, 'op' => 'eq', 'value' => (string) $value];
+        }
+
+        // The status the rows must be listed with, where the column only narrows them.
+        $exactStatus = null;
+        if (!in_array($options['status'] ?? null, [null, '', false], true)) {
+            if (!is_scalar($options['status'])) {
+                throw new ResponseListRefused('`status` is one status.');
+            }
+            $status = (string) $options['status'];
+            $statusColumn = $binding['statusColumn'];
+            if ($statusColumn === null) {
+                if ($status !== 'submitted') {
+                    return null;
+                }
+            } elseif ($status === 'submitted') {
+                $anyOf[] = [['column' => $statusColumn, 'op' => 'eq', 'value' => $status], ['column' => $statusColumn, 'op' => 'empty']];
+                $exactStatus = $status;
+            } else {
+                $all[] = ['column' => $statusColumn, 'op' => 'eq', 'value' => $status];
+                $exactStatus = $status;
+            }
+        }
+
+        foreach (['from' => 'gte', 'to' => 'lte'] as $name => $op) {
+            if (empty($options[$name])) {
+                continue;
+            }
+            if (!is_string($options[$name])) {
+                throw new ResponseListRefused("`{$name}` is a UTC date or time.");
+            }
+            if ($binding['createdAtColumn'] === null) {
+                throw new ResponseListRefused("This form's records are kept in an app's table with no column that says when a row was made, so they cannot be listed by `{$name}`.");
+            }
+            $all[] = ['column' => $binding['createdAtColumn'], 'op' => $op, 'value' => $time($binding['createdAtColumn'], $options[$name], $name)];
+        }
+
+        if (is_array($options['before'] ?? null)) {
+            throw new ResponseListRefused('This form\'s records are kept in an app\'s table, which is not paged from a record (`before`). Page it with `offset`.');
+        }
+
+        $changedSince = is_string($options['updatedSince'] ?? null) && $options['updatedSince'] !== '';
+        if ($changedSince) {
+            if (is_string($options['afterId'] ?? null) && $options['afterId'] !== '') {
+                throw new ResponseListRefused('This form\'s records are kept in an app\'s table, which is not paged by `afterId`. Page what changed with `offset`.');
+            }
+            if ($type('updated_at') === null) {
+                throw new ResponseListRefused('This form\'s records are kept in an app\'s table with no `updated_at` column, so it cannot say which changed since a time. List them without `updatedSince`.');
+            }
+            $anyOf[] = [
+                ['column' => 'updated_at', 'op' => 'gte', 'value' => $time('updated_at', $options['updatedSince'], 'updatedSince')],
+                ['column' => 'updated_at', 'op' => 'empty'],
+            ];
+            $native['sort'] = 'updated_at';
+            $native['dir'] = 'asc';
+        } elseif (is_string($options['sort'] ?? null) && $options['sort'] !== '') {
+            $sort = $options['sort'];
+            $sortColumn = match (true) {
+                $sort === 'submittedAt' || $sort === 'submitted_at' => $binding['createdAtColumn'],
+                $sort === 'status' => $binding['statusColumn'],
+                default => $columns[$sort] ?? null,
+            };
+            if ($sortColumn !== null) {
+                $native['sort'] = $sortColumn;
+                // Newest or largest first unless asked otherwise, as a form's own store sorts.
+                $native['dir'] = strtolower((string) ($options['sortDir'] ?? 'desc')) === 'asc' ? 'asc' : 'desc';
+            }
+        }
+
+        // What narrows the rows before the limit without deciding them: `passes` decides.
+        $narrowAll = $narrowAny = $phones = $range = [];
+        foreach (is_array($options['answersPhoneEq'] ?? null) ? $options['answersPhoneEq'] : [] as $fieldId => $wanted) {
+            $digits = preg_replace('/\D+/', '', is_scalar($wanted) ? (string) $wanted : '') ?? '';
+            $column = $columns[(string) $fieldId] ?? null;
+            // Fewer than six digits match no number (ResponseService::phoneDigitsMatch), and a
+            // field with no column has no number in any row.
+            if ($column === null || strlen($digits) < 6) {
+                return null;
+            }
+            $phones[(string) $fieldId] = $digits;
+            // A number that matches ends in these digits, so it holds each of them.
+            foreach (array_unique(str_split(substr($digits, -4))) as $digit) {
+                $narrowAll[] = ['column' => $column, 'op' => 'contains', 'value' => $digit];
+            }
+        }
+        foreach (['answersGte' => 'gte', 'answersLte' => 'lte'] as $name => $op) {
+            if (empty($options[$name]) || !is_array($options[$name])) {
+                continue;
+            }
+            $range[$name] = $options[$name];
+            foreach (self::answerFilter($options, $name) as $fieldId => $bound) {
+                $column = $columns[(string) $fieldId] ?? null;
+                // Only a date-shaped bound on a column that is not a number's: there the column's
+                // own comparison is the text comparison the exact rule makes. Any other bound is
+                // left to that rule alone, as a form's own store leaves it.
+                if ($column === null || !is_string($bound) || preg_match('/^\d{4}-\d{2}-\d{2}/', $bound) !== 1 || $holdsNumbers($column)) {
+                    continue;
+                }
+                if ($op === 'gte') {
+                    $narrowAll[] = ['column' => $column, 'op' => 'gte', 'value' => $bound];
+                } else {
+                    // A row with no value passes `lte`: nothing sorts before any bound.
+                    $narrowAny[] = [['column' => $column, 'op' => 'lte', 'value' => $bound], ['column' => $column, 'op' => 'empty']];
+                }
+            }
+        }
+        // The store takes so many conditions. Narrowing ones give way to the ones that decide.
+        foreach ($narrowAll as $condition) {
+            if (count($all) < NativeRecordStore::FILTERS) $all[] = $condition;
+        }
+        foreach ($narrowAny as $group) {
+            if (count($anyOf) < NativeRecordStore::FILTERS) $anyOf[] = $group;
+        }
+        if ($all !== []) {
+            $native['filter'] = $all;
+        }
+        if ($anyOf !== []) {
+            $native['anyOf'] = $anyOf;
+        }
+
+        // Each row read, as formatRow() gives it: its status by statusOf(), its answers.
+        $passes = $phones === [] && $range === [] && $exactStatus === null ? null : static function (array $response) use ($phones, $range, $exactStatus): bool {
+            if ($exactStatus !== null && $response['status'] !== $exactStatus) {
+                return false;
+            }
+            $answers = $response['answers'];
+            foreach ($phones as $fieldId => $digits) {
+                $stored = $answers[$fieldId] ?? '';
+                if (!ResponseService::phoneDigitsMatch(is_scalar($stored) ? (string) $stored : '', $digits)) {
+                    return false;
+                }
+            }
+            return $range === [] || ResponseService::answersWithinRange($answers, $range);
+        };
+
+        return ['options' => $native, 'submitterColumn' => $submitterColumn, 'submitter' => $submitter, 'passes' => $passes];
+    }
+
+    /**
+     * The bound table's shown columns and their declared types, or none when it cannot be read.
+     *
+     * @return array<string, string>
+     */
+    private function columnTypes(array $binding): array
+    {
+        try {
+            $fields = $this->native->tableSchemas($binding['appId'])[$binding['table']]['fields'] ?? [];
+        } catch (\Throwable) {
+            return [];
+        }
+        $types = [];
+        foreach (is_array($fields) ? $fields : [] as $field) {
+            $types[(string) ($field['name'] ?? '')] = strtoupper((string) ($field['type'] ?? ''));
+        }
+        return $types;
+    }
+
+    /**
+     * Read one row by response ID from the bound SQLite table, each value whole as a list gives
+     * it (NativeRecordStore::wholeRecord). The record editor's read gives every value as text and
+     * none past 100 KB, so a response read that way lost such an answer.
+     */
     public function getResponse(array $binding, string $responseId): ?array
     {
         $pkNames = $this->resolvePrimaryKey($binding);
         $keyMap = self::decodeKey($responseId, $pkNames);
         if ($keyMap === null) return null;
         try {
-            $res = $this->native->manageRecord($binding['appId'], [
-                'table' => $binding['table'],
-                'action' => 'read',
-                'key' => $keyMap,
-            ]);
+            $values = $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding, $keyMap): ?array {
+                $store = new NativeRecordStore($db);
+                try { return $store->wholeRecord($binding['table'], $keyMap); }
+                finally { $store->close(); }
+            });
         } catch (\Throwable) {
             return null;
         }
-        $values = is_array($res['record']['values'] ?? null)
-            ? $res['record']['values']
-            : ($res['record']['values'] instanceof \stdClass ? (array) $res['record']['values'] : []);
-        return $this->formatRow($binding, $values, $keyMap, $pkNames, $responseId);
+        return is_array($values) ? $this->formatRow($binding, $values, $keyMap, $pkNames, $responseId) : null;
+    }
+
+    /**
+     * Several records by response id, each as getResponse() reads it, in one read of the table:
+     * every one asked for that is there, in the order asked, an id asked twice once, as a form's
+     * own store gives them (ResponseService::getResponsesByIds). Read one at a time, the first 250
+     * ids were read and the rest left out without a word: a linked record's label, a related
+     * list, a lookup of the ids a client named.
+     *
+     * @param array<int, mixed> $responseIds
+     * @return list<array<string, mixed>>
+     */
+    public function getResponses(array $binding, array $responseIds): array
+    {
+        $pkNames = $this->resolvePrimaryKey($binding);
+        $wanted = [];
+        foreach ($responseIds as $responseId) {
+            if (!is_string($responseId) || isset($wanted[$responseId])) continue;
+            $keyMap = self::decodeKey($responseId, $pkNames);
+            if ($keyMap !== null) $wanted[$responseId] = $keyMap;
+        }
+        if ($wanted === []) return [];
+        try {
+            $rows = $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding, $wanted): array {
+                $store = new NativeRecordStore($db);
+                try { return $store->wholeRecords($binding['table'], array_values($wanted)); }
+                finally { $store->close(); }
+            });
+        } catch (\Throwable) {
+            // As getResponse() answers a table it cannot read.
+            return [];
+        }
+        $out = [];
+        $row = 0;
+        foreach ($wanted as $responseId => $keyMap) {
+            $values = is_array($rows) ? ($rows[$row++] ?? null) : null;
+            if (is_array($values)) {
+                $out[] = $this->formatRow($binding, $values, $keyMap, $pkNames, (string) $responseId);
+            }
+        }
+        return $out;
     }
 
     /** Create a new row in the bound SQLite table and dispatch committed record events. */
@@ -314,12 +665,20 @@ class NativeTableFormBridge
             $fieldsByName[(string) $f['name']] = $f;
         }
         $values = $this->mapAnswersToColumns($binding, $answers, $fieldsByName, false);
-        // Apply server-derived status (e.g. from an onSubmit logicScript) when provided.
-        if (isset($data['status']) && is_string($data['status']) && $data['status'] !== '' && $binding['statusColumn'] !== null) {
+        // A status given with the record (an onSubmit script's, one an import carries) is written
+        // to the status column as statusOf() reads it back, and only so: never 'submitted', which
+        // statusOf() gives a row with none (the column keeps its default), never a word into a
+        // column of numbers, which would refuse the record, and never over an answer given for
+        // the column, which is the record's own value for it. An import sent 'submitted' with
+        // every row: a column of numbers refused them all, and one of text lost what was imported.
+        $status = is_string($data['status'] ?? null) ? $data['status'] : '';
+        if ($status !== '' && $status !== 'submitted' && $binding['statusColumn'] !== null) {
             $statusCol = $binding['statusColumn'];
             $statusMeta = $fieldsByName[$statusCol] ?? null;
-            if ($statusMeta === null || empty($statusMeta['readOnly'])) {
-                $values[$statusCol] = $data['status'];
+            $answered = isset($values[$statusCol]) && $values[$statusCol] !== '';
+            $holdsNumbers = preg_match('/INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL/', strtoupper((string) ($statusMeta['type'] ?? ''))) === 1;
+            if (!$answered && ($statusMeta === null || empty($statusMeta['readOnly'])) && (!$holdsNumbers || is_numeric($status))) {
+                $values[$statusCol] = $status;
             }
         }
         // Record server-derived submitter identity when the table carries an authoritative owner column.
@@ -402,8 +761,21 @@ class NativeTableFormBridge
         return $this->formatRow($binding, $values, $keyMap, $pkNames, $id);
     }
 
-    /** Update an existing row in the bound SQLite table and dispatch committed record events. */
-    public function updateResponse(array $binding, string $responseId, array $data): ?array
+    /**
+     * Update an existing row in the bound SQLite table and dispatch committed record events.
+     *
+     * With `$ifMatch` (an etag, ResponseService::etagOf, of the record as a list or a read gives
+     * it) the row is written only while it is still that version, as a form's own store writes
+     * only over the version a client read. The record the row makes is compared inside the
+     * write's own transaction, under the database's write lock (NativeRecordStore::operate's
+     * `expect`), so a change that lands between this read and the write is never written over:
+     * ResponseVersionConflict carries the record as it is then, and nothing is written. Unread,
+     * as it was, a client's stale write overwrote whatever had changed since it read the record,
+     * and a merged edit (ResponseService::mergeEdit) lost the edit that landed before it.
+     *
+     * @throws ResponseVersionConflict
+     */
+    public function updateResponse(array $binding, string $responseId, array $data, ?string $ifMatch = null): ?array
     {
         $pkNames = $this->resolvePrimaryKey($binding);
         $keyMap = self::decodeKey($responseId, $pkNames);
@@ -436,19 +808,40 @@ class NativeTableFormBridge
             $values['updated_at'] = preg_match('/INT|REAL|FLOA|DOUB|NUMERIC|DECIMAL/', $uType) === 1 ? time() : gmdate('Y-m-d H:i:s');
         }
         if ($values === []) {
-            $existingVals = is_array($current['record']['values'] ?? null)
-                ? $current['record']['values']
-                : ($current['record']['values'] instanceof \stdClass ? (array) $current['record']['values'] : []);
-            return $this->formatRow($binding, $existingVals, $keyMap, $pkNames, $responseId);
+            // Nothing to write: the record as any read gives it, not as the editor's read did,
+            // and a conflict if it is not the version asked for, as a form's own store answers.
+            $now = $this->getResponse($binding, $responseId);
+            if ($now !== null && $ifMatch !== null && !hash_equals(ResponseService::etagOf($now), $ifMatch)) {
+                throw new ResponseVersionConflict($now);
+            }
+            return $now;
         }
-        $subscriptions = $this->subscriptionsFor($binding['appId']);
-        $this->native->manageRecord($binding['appId'], [
+        $write = [
             'table' => $binding['table'],
             'action' => 'update',
             'key' => $keyMap,
             'revision' => $revision,
             'values' => $values,
-        ], $subscriptions);
+        ];
+        if ($ifMatch !== null) {
+            $write['expect'] = function (array $row) use ($binding, $keyMap, $pkNames, $responseId, $ifMatch): void {
+                $now = $this->formatRow($binding, $row, $keyMap, $pkNames, $responseId);
+                if (!hash_equals(ResponseService::etagOf($now), $ifMatch)) {
+                    throw new ResponseVersionConflict($now);
+                }
+            };
+        }
+        $subscriptions = $this->subscriptionsFor($binding['appId']);
+        try {
+            $this->native->manageRecord($binding['appId'], $write, $subscriptions);
+        } catch (\RuntimeException $e) {
+            // Deleted since it was read: not there, as a form's own store answers a record that
+            // is gone. A conflict, or anything else, is the caller's to hear.
+            if ($ifMatch !== null && !$e instanceof ResponseVersionConflict && $e->getCode() === 409 && $this->getResponse($binding, $responseId) === null) {
+                return null;
+            }
+            throw $e;
+        }
         $this->dispatchEvents($binding['appId']);
         return $this->getResponse($binding, $responseId);
     }
@@ -485,14 +878,76 @@ class NativeTableFormBridge
      *
      * Through the record store, as every other write here is, so the table's foreign keys hold
      * (NativeRecordStore::clear). It queues no record events, so there are none to dispatch.
+     *
+     * @param list<string>|null $ids given, the response id of each record that went, as a list
+     *   names it, read in the clear's own transaction: what a client that syncs is told is gone
      */
-    public function deleteAllResponses(array $binding): int
+    public function deleteAllResponses(array $binding, ?array &$ids = null): int
     {
-        return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
+        $keys = $ids === null ? null : [];
+        $deleted = (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding, &$keys): int {
             $store = new NativeRecordStore($db);
-            try { return $store->clear($binding['table']); }
+            try { return $store->clear($binding['table'], $keys); }
             finally { $store->close(); }
         });
+        if ($ids !== null) {
+            $ids = array_map(static fn (array $key): string => self::encodeKey($key, array_keys($key)), $keys ?? []);
+        }
+        return $deleted;
+    }
+
+    /**
+     * Which of these response ids name no row of the bound table now. A record deleted through
+     * the form leaves a tombstone, and the table can give its key to a row again (the app's own
+     * insert, a whole-number key SQLite numbers on from the largest): a client told that id is
+     * gone deletes its copy of the new row, and skips the row itself. An id that names no key is
+     * gone. When the table cannot be read, none is said to be gone.
+     *
+     * @param list<string> $ids
+     * @return list<string>
+     */
+    public function stillGone(array $binding, array $ids): array
+    {
+        if ($ids === []) return [];
+        try {
+            $pkNames = $this->resolvePrimaryKey($binding);
+            return array_values((array) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding, $pkNames, $ids): array {
+                if ($pkNames === []) return $ids;
+                $where = implode(' AND ', array_map(static fn (string $name): string => '"' . str_replace('"', '""', $name) . '" = ?', $pkNames));
+                $look = $db->prepare('SELECT 1 FROM "' . str_replace('"', '""', $binding['table']) . '" WHERE ' . $where . ' LIMIT 1');
+                $gone = [];
+                foreach ($ids as $id) {
+                    $key = self::decodeKey($id, $pkNames);
+                    if ($key !== null) {
+                        $look->execute(array_values($key));
+                        $found = $look->fetchColumn() !== false;
+                        $look->closeCursor();
+                        if ($found) continue;
+                    }
+                    $gone[] = $id;
+                }
+                return $gone;
+            }));
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    /**
+     * How many rows the bound table has, as countResponses() counts them, or null when the table
+     * cannot be read: for a caller that writes the count down (the form's `response_count`), where
+     * countResponses()'s 0 for a table it could not read would be taken for an empty table.
+     */
+    public function countRows(array $binding): ?int
+    {
+        try {
+            return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
+                $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
+                return (int) $db->query("SELECT COUNT(*) FROM {$quoted}")->fetchColumn();
+            });
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /** Count all rows (or rows owned by $submittedByUserId) in the bound SQLite table. */
@@ -515,14 +970,7 @@ class NativeTableFormBridge
                 return 0;
             }
         }
-        try {
-            return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
-                $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
-                return (int) $db->query("SELECT COUNT(*) FROM {$quoted}")->fetchColumn();
-            });
-        } catch (\Throwable) {
-            return 0;
-        }
+        return $this->countRows($binding) ?? 0;
     }
 
     /**
@@ -638,6 +1086,23 @@ class NativeTableFormBridge
         return $schemas[$binding['table']]['primaryKey'] ?? [];
     }
 
+    /**
+     * The status a row is listed with, and so the rows a list of one status gives (storeQuery):
+     * the status column's value as text, or 'submitted' where the row has none (no such column,
+     * NULL, ''). A column of numbers (a stage, a priority) gives its numbers, as a report groups
+     * them and the data manager shows them, a number that is not whole as JSON writes it. Taken
+     * from a text alone, every numbered row was listed as 'submitted', which a list of
+     * 'submitted' then did not give.
+     */
+    private static function statusOf(array $binding, array $row): string
+    {
+        $value = $binding['statusColumn'] !== null ? ($row[$binding['statusColumn']] ?? null) : null;
+        if (is_float($value)) {
+            $value = json_encode($value) ?: (string) $value;
+        }
+        return (is_string($value) || is_int($value)) && (string) $value !== '' ? (string) $value : 'submitted';
+    }
+
     /** @return array<string, mixed> */
     private function formatRow(array $binding, array $row, array $keyMap, array $pkNames, string $fallbackId): array
     {
@@ -659,22 +1124,28 @@ class NativeTableFormBridge
             $createdAt = gmdate('Y-m-d H:i:s');
         }
         $rawUpdated = isset($row['updated_at']) && is_scalar($row['updated_at']) ? $row['updated_at'] : null;
+        $timeUnknown = false;
         if ($rawUpdated !== null && is_numeric($rawUpdated) && (int) $rawUpdated > 946684800 && (int) $rawUpdated < 4102444800) {
             $updatedAt = gmdate('Y-m-d H:i:s', (int) $rawUpdated);
         } elseif ($rawUpdated !== null && trim((string) $rawUpdated) !== '') {
             $updatedAt = (string) $rawUpdated;
         } else {
             $updatedAt = $createdAt;
+            // Neither time is the row's: both are the time of this read.
+            $timeUnknown = $rawCreated === null || trim((string) $rawCreated) === '';
         }
-        $status = ($binding['statusColumn'] !== null && isset($row[$binding['statusColumn']]) && is_string($row[$binding['statusColumn']]) && $row[$binding['statusColumn']] !== '')
-            ? $row[$binding['statusColumn']]
-            : 'submitted';
+        $status = self::statusOf($binding, $row);
 
         $metadata = [
             'nativeTable' => $binding['table'],
             'nativeAppId' => $binding['databaseAppId'],
             'nativeKey' => $keyMap,
         ];
+        // Says so, so that the time read is never taken for a version (ResponseService::etagOf):
+        // no two reads of the row would share it, and a client's If-Match never matched.
+        if ($timeUnknown) {
+            $metadata['timeUnknown'] = true;
+        }
         $rowSubmitter = $row['_submitted_by_user_id'] ?? $row['submitted_by_user_id'] ?? null;
         if (is_string($rowSubmitter) && $rowSubmitter !== '') {
             $metadata['submittedByUserId'] = $rowSubmitter;

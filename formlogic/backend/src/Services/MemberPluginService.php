@@ -407,10 +407,13 @@ class MemberPluginService
      * When `$appId` is provided and the attachment has `shareDatabase = true`, routes the plugin's
      * SQLite data directory directly to `$appId`'s canonical shared SQLite database!
      *
+     * `$siteOrigin` is the address the member reached this site by (McpOAuthService::publicOrigin):
+     * a container backend is told it as its host and scheme, as an app's own page tells its backend.
+     *
      * @param array<string, mixed> $payload
      * @return array{status: int, body: mixed}
      */
-    public function invokePluginBackend(string $userId, string $memberPluginId, array $payload, ?string $appId = null): array
+    public function invokePluginBackend(string $userId, string $memberPluginId, array $payload, ?string $appId = null, string $siteOrigin = ''): array
     {
         $stmt = $this->pdo->prepare('SELECT * FROM member_plugins WHERE id = :id AND user_id = :user_id LIMIT 1');
         $stmt->execute(['id' => $memberPluginId, 'user_id' => $userId]);
@@ -498,6 +501,8 @@ class MemberPluginService
 
         $query = is_array($payload['query'] ?? null) ? $payload['query'] : [];
         $body = $payload['body'] ?? null;
+        // A member's plugin runs for that member: its workers are counted in their account's share.
+        $this->native->ownedBy($runtimeAppId, $userId);
 
         if (NativeAppService::hasContainerBackend($project)) {
             $bodyRaw = is_string($body) ? $body : ($body !== null ? json_encode($body, JSON_THROW_ON_ERROR) : '');
@@ -507,7 +512,7 @@ class MemberPluginService
                 'query' => $query === [] ? '' : '?' . http_build_query($query),
                 'headers' => [['content-type', 'application/json']],
                 'bodyBase64' => base64_encode($bodyRaw),
-            ];
+            ] + NativeAppService::containerAddress($siteOrigin);
             $res = $sharedDataDir !== null
                 ? $this->native->sandboxContainerRequest($runtimeAppId, $sharedDataDir, $req, $identity)
                 : $this->native->containerRequest($runtimeAppId, $req, $identity);

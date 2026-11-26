@@ -18,6 +18,10 @@ import {
   answerText, apiOf, callerInWords, checkBody, checkQuery, durationInWords, routeKey, routeWrites, statusInWords, statusTone, triable, whoMayCall,
   type ApiRoute, type NativeCallList,
 } from '../../lib/appApi';
+import {
+  checkCorsOrigins, checkDefaultPrefix, checkPaths, checkRateLimit, entriesNotStored, namesInWords, prefixNotStored, type NotKept,
+} from '../../lib/externalApiAccess';
+import { checkCustomHeaders, headersNotStored } from '../../lib/externalApiHeaders';
 import { databaseChangeName } from '../../lib/nativeVersions';
 import { softnWorkspacePath } from '../../lib/softnApps';
 import { cn } from '../../lib/utils';
@@ -457,29 +461,43 @@ const DEFAULT_EXTERNAL_API: ExternalApiSettings = {
   customHeaders: {},
 };
 
-function parseLines(raw: string): string[] {
-  return raw
-    .split(/[\n,]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function parseHeadersText(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of raw.split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx <= 0) continue;
-    const k = line.slice(0, idx).trim();
-    const v = line.slice(idx + 1).trim();
-    if (k && v) out[k] = v;
-  }
-  return out;
-}
-
 function formatHeadersText(headers: Record<string, string> | undefined): string {
   if (!headers) return '';
   return Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\n');
 }
+
+/** What a field's rule says will not be kept, then what a save found the server did not keep besides. */
+function notKeptNotes(dropped: NotKept[], notStored: string[]): NotKept[] {
+  return [
+    ...dropped,
+    ...notStored.filter((name) => !dropped.some((entry) => entry.name === name)).map((name) => ({ name, why: 'the server did not keep it' })),
+  ];
+}
+
+/** Under a field of the External API settings: what of it the server does not keep, and why. */
+function NotKeptNotes({ id, heading, notes, after }: { id: string; heading: string; notes: NotKept[]; after?: string }) {
+  return (
+    <div id={id} role="status" className="mt-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:bg-amber-500/10 dark:text-amber-100">
+      <p className="font-semibold">{heading}</p>
+      <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
+        {notes.map((note, index) => (
+          <li key={`${index}:${note.name}`}><span className="break-all font-mono">{note.name}</span>: {note.why}.</li>
+        ))}
+      </ul>
+      {after && <p className="mt-0.5 font-semibold">{after}</p>}
+    </div>
+  );
+}
+
+/** What a save found the server did not keep of the route prefixes, origins, path prefix and rate limit sent. */
+interface NotStored {
+  allowed: string[];
+  blocked: string[];
+  origins: string[];
+  prefix: boolean;
+  rate: boolean;
+}
+const NOTHING_LOST: NotStored = { allowed: [], blocked: [], origins: [], prefix: false, rate: false };
 
 function ExternalApiAccessPanel({
   app,
@@ -514,6 +532,28 @@ function ExternalApiAccessPanel({
   const [corsOriginsText, setCorsOriginsText] = useState(saved.corsOrigins.join('\n'));
   const [rateLimit, setRateLimit] = useState(String(saved.rateLimitPerMinute));
   const [customHeadersText, setCustomHeadersText] = useState(formatHeadersText(saved.customHeaders));
+  // The server keeps only some header names and drops the rest without a word, so the box says
+  // which lines those are while they are typed (lib/externalApiHeaders, the server's own rule),
+  // and after a save, which of the ones sent the server's answer does not have.
+  const headers = useMemo(() => checkCustomHeaders(customHeadersText), [customHeadersText]);
+  const [headersNotKept, setHeadersNotKept] = useState<string[]>([]);
+  const headerNotes = notKeptNotes(headers.dropped, headersNotKept);
+  // The same of the route prefixes, the default path prefix and the browser origins
+  // (lib/externalApiAccess). A blocked prefix the server drops is not blocked, and with every
+  // allowed prefix dropped, every route is allowed.
+  const allowedPaths = useMemo(() => checkPaths(allowedPathsText), [allowedPathsText]);
+  const blockedPaths = useMemo(() => checkPaths(blockedPathsText), [blockedPathsText]);
+  const corsOrigins = useMemo(() => checkCorsOrigins(corsOriginsText), [corsOriginsText]);
+  const prefix = useMemo(() => checkDefaultPrefix(defaultPrefix), [defaultPrefix]);
+  // And of the rate limit, which a 0 made 120 here before it was sent, without a word.
+  const rate = useMemo(() => checkRateLimit(rateLimit), [rateLimit]);
+  const [notStored, setNotStored] = useState<NotStored>(NOTHING_LOST);
+  const allowedNotes = notKeptNotes(allowedPaths.dropped, notStored.allowed);
+  const blockedNotes = notKeptNotes(blockedPaths.dropped, notStored.blocked);
+  const originNotes = notKeptNotes(corsOrigins.dropped, notStored.origins);
+  const prefixNotes = notKeptNotes(prefix.dropped, notStored.prefix ? [prefix.sent] : []);
+  const rateNotes = notKeptNotes(rate.dropped, notStored.rate ? [rateLimit.trim() || '(empty)'] : []);
+  const everyRouteAllowed = allowedPaths.sent.length > 0 && allowedPaths.sent.every((entry) => allowedNotes.some((note) => note.name === entry));
   const [showCustomize, setShowCustomize] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -569,12 +609,12 @@ function ExternalApiAccessPanel({
         enabled,
         authMode,
         allowedMethods: allowedMethods.length > 0 ? allowedMethods : ['GET'],
-        allowedPaths: parseLines(allowedPathsText),
-        blockedPaths: parseLines(blockedPathsText),
-        defaultPrefix: defaultPrefix.trim(),
-        corsOrigins: parseLines(corsOriginsText),
-        rateLimitPerMinute: Math.max(1, Math.min(600, Number(rateLimit) || 120)),
-        customHeaders: parseHeadersText(customHeadersText),
+        allowedPaths: allowedPaths.sent,
+        blockedPaths: blockedPaths.sent,
+        defaultPrefix: prefix.sent,
+        corsOrigins: corsOrigins.sent,
+        rateLimitPerMinute: rate.sent,
+        customHeaders: headers.sent,
       };
       const updated = await updateApp(app.id, {
         settings: {
@@ -586,6 +626,42 @@ function ExternalApiAccessPanel({
         toast.error('Could not save External API settings');
         return;
       }
+      // The answer to the save is the app as it was stored. Without one to read (the app is not
+      // in the list), what this page worked out beforehand stands.
+      const stored = useAppStore.getState().apps.find((listed) => listed.id === app.id)?.settings?.externalApi;
+      const notKept = stored ? headersNotStored(headers.sent, stored.customHeaders) : Object.keys(headers.sent).filter((name) => !(name in headers.kept));
+      setHeadersNotKept(notKept);
+      const named = (dropped: NotKept[]) => dropped.map((entry) => entry.name);
+      const lost: NotStored = stored
+        ? {
+          allowed: entriesNotStored('paths', allowedPaths.sent, stored.allowedPaths),
+          blocked: entriesNotStored('paths', blockedPaths.sent, stored.blockedPaths),
+          origins: entriesNotStored('origins', corsOrigins.sent, stored.corsOrigins),
+          prefix: prefixNotStored(prefix.sent, stored.defaultPrefix),
+          rate: stored.rateLimitPerMinute !== rate.sent,
+        }
+        : { allowed: named(allowedPaths.dropped), blocked: named(blockedPaths.dropped), origins: named(corsOrigins.dropped), prefix: prefix.dropped.length > 0, rate: rate.dropped.length > 0 };
+      setNotStored(lost);
+      const warn = (left: string[], one: string, many: string, field: string, besides = '') => {
+        if (left.length > 0) toast.warning(left.length === 1 ? one : `${left.length} ${many}`, `${namesInWords(left)}. ${besides}${field} says why.`);
+      };
+      const allowedLeft = [...new Set([...named(allowedPaths.dropped), ...lost.allowed])];
+      const noneAllowed = allowedPaths.sent.length > 0 && (stored ? !Array.isArray(stored.allowedPaths) || stored.allowedPaths.length === 0 : allowedPaths.kept.length === 0);
+      warn(allowedLeft, 'One allowed route prefix was not kept', 'allowed route prefixes were not kept', 'Allowed Route Prefixes',
+        noneAllowed ? 'With none kept, every route is allowed. ' : '');
+      const blockedLeft = [...new Set([...named(blockedPaths.dropped), ...lost.blocked])];
+      warn(blockedLeft, 'One blocked route prefix was not kept', 'blocked route prefixes were not kept', 'Blocked Route Prefixes',
+        blockedLeft.length === 1 ? 'It is not blocked. ' : 'They are not blocked. ');
+      warn([...new Set([...named(corsOrigins.dropped), ...lost.origins])], 'One CORS origin was not kept', 'CORS origins were not kept', 'Allowed Browser CORS Origins');
+      if (prefix.dropped.length > 0 || lost.prefix) {
+        toast.warning('The default path prefix was not kept', `${prefix.sent}. No prefix is added. Default Path Prefix says why.`);
+      }
+      if (rate.dropped.length > 0 || lost.rate) {
+        const keptRate = typeof stored?.rateLimitPerMinute === 'number' ? stored.rateLimitPerMinute : rate.kept;
+        toast.warning('The rate limit was not kept', `${rateLimit.trim() || '(empty)'}. The limit kept is ${keptRate} a minute. Rate Limit says why.`);
+      }
+      const left = [...new Set([...named(headers.dropped), ...notKept])];
+      warn(left, 'One header was not kept', 'headers were not kept', 'Custom Response Headers');
       toast.success(
         'External API settings saved',
         enabled
@@ -769,10 +845,19 @@ function ExternalApiAccessPanel({
                     id="ext-api-allowed-paths"
                     rows={3}
                     value={allowedPathsText}
-                    onChange={(e) => setAllowedPathsText(e.target.value)}
+                    onChange={(e) => { setAllowedPathsText(e.target.value); setNotStored((lost) => ({ ...lost, allowed: [] })); }}
                     placeholder={'/api/products\n/api/orders'}
+                    aria-describedby={allowedNotes.length > 0 ? 'ext-api-allowed-paths-notes' : undefined}
                     className={cn(field, 'mt-1 py-2')}
                   />
+                  {allowedNotes.length > 0 && (
+                    <NotKeptNotes
+                      id="ext-api-allowed-paths-notes"
+                      heading={allowedNotes.length === 1 ? 'This prefix is not kept:' : 'These prefixes are not kept:'}
+                      notes={allowedNotes}
+                      after={everyRouteAllowed ? 'With none of them kept, every route is allowed.' : undefined}
+                    />
+                  )}
                 </div>
                 <div>
                   <label htmlFor="ext-api-blocked-paths" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
@@ -782,10 +867,18 @@ function ExternalApiAccessPanel({
                     id="ext-api-blocked-paths"
                     rows={3}
                     value={blockedPathsText}
-                    onChange={(e) => setBlockedPathsText(e.target.value)}
+                    onChange={(e) => { setBlockedPathsText(e.target.value); setNotStored((lost) => ({ ...lost, blocked: [] })); }}
                     placeholder={'/api/admin\n/api/setup'}
+                    aria-describedby={blockedNotes.length > 0 ? 'ext-api-blocked-paths-notes' : undefined}
                     className={cn(field, 'mt-1 py-2')}
                   />
+                  {blockedNotes.length > 0 && (
+                    <NotKeptNotes
+                      id="ext-api-blocked-paths-notes"
+                      heading={blockedNotes.length === 1 ? 'This prefix is not kept, and is not blocked:' : 'These prefixes are not kept, and are not blocked:'}
+                      notes={blockedNotes}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -797,7 +890,7 @@ function ExternalApiAccessPanel({
                     </label>
                     <button
                       type="button"
-                      onClick={() => setCorsOriginsText('*')}
+                      onClick={() => { setCorsOriginsText('*'); setNotStored((lost) => ({ ...lost, origins: [] })); }}
                       className="cursor-pointer text-[11px] font-medium text-primary-600 hover:underline dark:text-primary-400"
                     >
                       Allow any (*)
@@ -807,10 +900,18 @@ function ExternalApiAccessPanel({
                     id="ext-api-cors"
                     rows={2}
                     value={corsOriginsText}
-                    onChange={(e) => setCorsOriginsText(e.target.value)}
+                    onChange={(e) => { setCorsOriginsText(e.target.value); setNotStored((lost) => ({ ...lost, origins: [] })); }}
                     placeholder={'https://myapp.com\nhttps://staging.myapp.com'}
+                    aria-describedby={originNotes.length > 0 ? 'ext-api-cors-notes' : undefined}
                     className={cn(field, 'mt-1 py-2')}
                   />
+                  {originNotes.length > 0 && (
+                    <NotKeptNotes
+                      id="ext-api-cors-notes"
+                      heading={originNotes.length === 1 ? 'This origin is not kept, and is not allowed:' : 'These origins are not kept, and are not allowed:'}
+                      notes={originNotes}
+                    />
+                  )}
                 </div>
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-2">
@@ -822,8 +923,9 @@ function ExternalApiAccessPanel({
                         id="ext-api-prefix"
                         type="text"
                         value={defaultPrefix}
-                        onChange={(e) => setDefaultPrefix(e.target.value)}
+                        onChange={(e) => { setDefaultPrefix(e.target.value); setNotStored((lost) => ({ ...lost, prefix: false })); }}
                         placeholder="/api"
+                        aria-describedby={prefixNotes.length > 0 ? 'ext-api-prefix-notes' : undefined}
                         className={cn(field, 'mt-1 h-9')}
                       />
                     </div>
@@ -837,11 +939,18 @@ function ExternalApiAccessPanel({
                         min={1}
                         max={600}
                         value={rateLimit}
-                        onChange={(e) => setRateLimit(e.target.value)}
+                        onChange={(e) => { setRateLimit(e.target.value); setNotStored((lost) => ({ ...lost, rate: false })); }}
+                        aria-describedby={rateNotes.length > 0 ? 'ext-api-rate-notes' : undefined}
                         className={cn(field, 'mt-1 h-9')}
                       />
                     </div>
                   </div>
+                  {prefixNotes.length > 0 && (
+                    <NotKeptNotes id="ext-api-prefix-notes" heading="This path prefix is not kept, and no prefix is added:" notes={prefixNotes} />
+                  )}
+                  {rateNotes.length > 0 && (
+                    <NotKeptNotes id="ext-api-rate-notes" heading="This rate limit is not kept:" notes={rateNotes} />
+                  )}
                   <div>
                     <label htmlFor="ext-api-headers" className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
                       Custom Response Headers <span className="font-normal text-slate-500">(Header: Value per line)</span>
@@ -850,10 +959,18 @@ function ExternalApiAccessPanel({
                       id="ext-api-headers"
                       rows={2}
                       value={customHeadersText}
-                      onChange={(e) => setCustomHeadersText(e.target.value)}
+                      onChange={(e) => { setCustomHeadersText(e.target.value); setHeadersNotKept([]); }}
                       placeholder={'Cache-Control: public, max-age=60\nX-API-Version: 1.0'}
+                      aria-describedby={headerNotes.length > 0 ? 'ext-api-headers-notes' : undefined}
                       className={cn(field, 'mt-1 py-2')}
                     />
+                    {headerNotes.length > 0 && (
+                      <NotKeptNotes
+                        id="ext-api-headers-notes"
+                        heading={headerNotes.length === 1 ? 'This header is not kept, and is not sent:' : 'These headers are not kept, and are not sent:'}
+                        notes={headerNotes}
+                      />
+                    )}
                   </div>
                 </div>
               </div>

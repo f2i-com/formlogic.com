@@ -21,6 +21,7 @@ import {
 } from './flowDispatcher';
 import { api } from '../../lib/api';
 import { __resetAppLocalAccessForTests, NOT_ALLOWED_MESSAGE, setOnScreenApp } from '../appLocalAccess';
+import { __resetDesktopEventsForTests, ingestDesktopEvent, subscribeDesktopEvents } from '../desktop/desktopEvents';
 import { DesktopAiUnansweredError, type FlowExecutorDeps } from './nodes';
 import { __resetOaiyBaseUrlForTests, __resetOaiyDetectionForTests, __setOaiyBaseUrlForTests, probeOaiy, setOaiyToken } from '../oaiy/oaiyRuntime';
 import type { RuntimeFlows } from '../../types/flows';
@@ -349,11 +350,15 @@ describe('desktop-first routing for connector events', () => {
 
 // OAIY says how its own flows' runs ended as events from "flows", under the names FormLogic's
 // outcome bindings listen for (host.rs outcome_event). FormLogic's own outcomes never come by the
-// hub: the server hands them on as queued handler runs.
+// hub: the server hands them on as queued handler runs. The hub keeps OAIY's from all of its
+// listeners, and the hub is all that calls the dispatcher, so the two are joined here as
+// startFlowDispatcher joins them.
 describe('the end of a run OAIY made of its own flow', () => {
-  afterEach(() => __resetAppLocalAccessForTests());
-  type Envelope = Parameters<typeof __onDesktopEventForTests>[0];
-  const ended = { schemaVersion: 1, name: 'flow.succeeded', source: 'flows', correlationId: 'run-9', idempotencyKey: 'flow:run-9:succeeded', occurredAt: '2026-11-01T00:00:00Z', data: { runId: 'run-9', status: 'succeeded' } } as unknown as Envelope;
+  afterEach(() => {
+    __resetAppLocalAccessForTests();
+    __resetDesktopEventsForTests();
+  });
+  const ended = { schemaVersion: 1, name: 'flow.succeeded', source: 'flows', correlationId: 'run-9', idempotencyKey: 'flow:run-9:succeeded', occurredAt: '2026-11-01T00:00:00Z', data: { runId: 'run-9', status: 'succeeded' } };
 
   it('starts no outcome binding of this app, while a plugin\'s event starts the binding for it', async () => {
     __resetAppLocalAccessForTests();
@@ -363,12 +368,13 @@ describe('the end of a run OAIY made of its own flow', () => {
       bindings: [binding({ id: 'after-any-flow', event: 'flow.succeeded', mode: 'async' }), binding({ id: 'on-text', event: 'aokie.sms.received', mode: 'async' })],
     }, 'my-app');
     setOnScreenApp({ id: 'app-1', slug: 'my-app', name: 'Mine', manages: true });
+    subscribeDesktopEvents(__onDesktopEventForTests);
 
-    __onDesktopEventForTests(ended);
+    expect(ingestDesktopEvent(ended)).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(harness.reserveCalls).toHaveLength(0);
 
-    __onDesktopEventForTests({ ...ended, name: 'aokie.sms.received', source: 'aokie', connectorId: 'aokie', idempotencyKey: 'sms-1', data: { text: 'hi' } } as unknown as Envelope);
+    expect(ingestDesktopEvent({ ...ended, name: 'aokie.sms.received', source: 'aokie', connectorId: 'aokie', idempotencyKey: 'sms-1', data: { text: 'hi' } })).toBe(true);
     await vi.waitFor(() => expect(harness.reserveCalls).toHaveLength(1));
     expect(harness.reserveCalls[0]).toMatchObject({ bindingId: 'on-text', triggerEvent: 'aokie.sms.received' });
   });

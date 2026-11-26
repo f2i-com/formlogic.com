@@ -32,8 +32,9 @@ class MfaService
     /** Bounded retries when a recovery-code consume loses a concurrent compare-and-swap. */
     private const RECOVERY_CAS_RETRIES = 3;
     /**
-     * Answers an account may give to its sign-in code prompts in SECOND_FACTOR_WINDOW seconds,
-     * whichever prompt and whatever address they come from. A right answer ends the count.
+     * Answers an account may give to its code prompts in SECOND_FACTOR_WINDOW seconds, whichever
+     * prompt (signing in, or one asked inside a session) and whatever address they come from. A
+     * right answer ends the count.
      */
     public const SECOND_FACTOR_MAX_ATTEMPTS = 10;
     public const SECOND_FACTOR_WINDOW = 900;
@@ -110,6 +111,10 @@ class MfaService
     /**
      * Prove the authenticator works and switch MFA ON. Returns the plaintext
      * recovery codes — shown exactly once, only hashes are stored.
+     *
+     * @throws SecondFactorLockedException     the account is over its budget of code answers: the code was not read
+     * @throws RateLimiterUnavailableException the answer could not be counted: the code was not read
+     * @throws \RuntimeException               no setup to finish, already enabled, or a wrong code
      */
     public function enable(string $userId, string $code): array
     {
@@ -126,12 +131,18 @@ class MfaService
         if ($secret === null) {
             throw new \RuntimeException('Start the two-factor setup first');
         }
+        // A setup its owner left unfinished has a secret a borrowed session never saw: its code is
+        // guessed at like any other, so the answer is counted like any other (countCodeAnswer).
+        if (trim($code) !== '') {
+            $this->countCodeAnswer($userId);
+        }
         if (!$this->totp->verify($secret, $code)) {
             throw new \RuntimeException('That code didn\'t match — check your authenticator app and try again');
         }
         [$plain, $hashes] = $this->mintRecoveryCodes();
         $upd = $this->mysql->prepare('UPDATE users SET mfa_enabled = 1, mfa_recovery_codes = :codes WHERE id = :id');
         $upd->execute(['codes' => json_encode($hashes), 'id' => $userId]);
+        $this->secondFactorPassed($userId);
         return $plain;
     }
 
@@ -171,6 +182,10 @@ class MfaService
             if ($ownsTx) {
                 $this->mysql->commit();
             }
+            // The count of code answers was kept against the factor that has just gone. Left
+            // standing, it would refuse the code of the next setup: someone locked out by wrong
+            // codes, and let back in by an administrator's reset, could not set up again.
+            $this->secondFactorPassed($userId);
             return ['affectedApps' => $affected];
         } catch (\Throwable $e) {
             if ($ownsTx && $this->mysql->inTransaction()) {
@@ -251,13 +266,19 @@ class MfaService
         return $stmt->rowCount() > 0;
     }
 
-    // ── The account's own budget of sign-in code answers ─────────────────────
+    // ── The account's own budget of code answers ─────────────────────────────
     //
     // A prompt allows five answers and an address fifteen in five minutes, and neither bounds
     // someone who knows the password: each password sign-in is a new prompt, and addresses are
     // cheap. Six digits do not last long against that. So the answers are also counted against
     // the account, and while it is over its budget it is neither asked for a code nor has one
     // looked at.
+    //
+    // Every place a code is checked draws on the one budget: the sign-in prompt (the controller
+    // counts, with secondFactorAttempt), and the prompts inside a session — turning two-factor on
+    // or off, new recovery codes, an administrator's confirmation — through verifySessionCode()
+    // and enable(). Those routes allow a session ten requests a minute, which is no bound on a
+    // six-digit code for whoever holds a session that is not theirs.
 
     /**
      * Count one answer against the account before its code is looked at, so answers sent at once
@@ -293,6 +314,45 @@ class MfaService
     private static function secondFactorKey(string $userId): string
     {
         return 'mfa_fail:' . $userId;
+    }
+
+    /**
+     * Check a code asked for inside a session (to turn two-factor off, for new recovery codes, to
+     * confirm an administrator), counted against the account's budget as a sign-in answer is:
+     * before it is looked at, and a right answer ends the count. A request with no code in it, or
+     * for an account with no second factor to check one against, is no guess and is not counted.
+     *
+     * @throws SecondFactorLockedException     the account is over its budget: the code was not read
+     * @throws RateLimiterUnavailableException the answer could not be counted: the code was not read
+     */
+    public function verifySessionCode(string $userId, string $code): bool
+    {
+        if (trim($code) === '' || !$this->isEnabled($userId)) {
+            return false;
+        }
+        $this->countCodeAnswer($userId);
+        if (!$this->verifyChallenge($userId, $code)) {
+            return false;
+        }
+        $this->secondFactorPassed($userId);
+        return true;
+    }
+
+    /**
+     * Count the answer about to be looked at, or refuse to look.
+     *
+     * @throws SecondFactorLockedException
+     * @throws RateLimiterUnavailableException
+     */
+    private function countCodeAnswer(string $userId): void
+    {
+        $withinBudget = $this->secondFactorAttempt($userId);
+        if ($withinBudget === null) {
+            throw new RateLimiterUnavailableException();
+        }
+        if (!$withinBudget) {
+            throw new SecondFactorLockedException($this->secondFactorMinutesLeft());
+        }
     }
 
     /**

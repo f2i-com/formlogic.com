@@ -65,6 +65,15 @@ export function isValidDesktopEvent(value: unknown): value is DesktopEventEnvelo
   );
 }
 
+/**
+ * The source OAIY gives the events that say how its own flows' runs ended: `flow.succeeded`,
+ * `flow.failed`, `flow.timed_out` and `flow.cancelled` (plugins/host.rs outcome_event). It is the
+ * desktop's own source and no plugin's: OAIY refuses a plugin that takes it as its id
+ * (plugins/manifest.rs RESERVED_IDS), so nothing a connector says ever arrives under it, and a
+ * pack may not name its connector this either (packConnectorDriver validateConnectorManifest).
+ */
+export const DESKTOP_OWN_FLOW_SOURCE = 'flows';
+
 /** True when this key was already dispatched (and refresh its LRU position). */
 function isDuplicate(idempotencyKey: string): boolean {
   if (seenKeys.has(idempotencyKey)) {
@@ -87,6 +96,13 @@ function isDuplicate(idempotencyKey: string): boolean {
  */
 export function ingestDesktopEvent(raw: unknown): boolean {
   if (!isValidDesktopEvent(raw)) return false;
+  // The end of a run OAIY made on this computer, of a flow that may be nothing of this app's, is
+  // no listener's to act on, so it stops here, where they all meet. The names are the ones
+  // FormLogic's outcome bindings listen for (components/flows/bindings/outcomeTrigger.ts), and
+  // matched by name one started every outcome binding that names no source flow; FormLogic's own
+  // outcomes never come by this hub (the server hands them on as queued handler runs). Read as a
+  // connector's, it reached the scripts and screens of an app whose connector is called "flows".
+  if (raw.source === DESKTOP_OWN_FLOW_SOURCE) return false;
   if (isDuplicate(raw.idempotencyKey)) return false;
   for (const listener of listeners) {
     try {

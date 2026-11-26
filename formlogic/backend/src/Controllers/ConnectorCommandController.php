@@ -367,6 +367,43 @@ class ConnectorCommandController
         return false;
     }
 
+    /**
+     * The command as the grant that lets this member run it spells it, or null when none does.
+     *
+     * A grant is matched without regard to case (the permission column's collation), and the
+     * owner's computer matches a command's name exactly: its relay policy and the plugin's own
+     * list of commands each ask for the very name. So `call.HANGUP` is to the computer another
+     * command than the `call.hangup` a member was granted, one nobody granted them, and it is
+     * the server that said they might run it. What is queued is therefore the grant's own
+     * spelling, never the member's. The owner, and a member granted every command of the
+     * connector (connector.<id>.* or connector.<id>), queue a command as they wrote it: nothing
+     * they hold names one.
+     */
+    private function commandAsGranted(string $appId, string $userId, string $connectorId, string $command): ?string
+    {
+        if (!$this->memberCanRelay($appId, $userId, $connectorId, $command)) {
+            return null;
+        }
+        $connector = 'connector.' . $connectorId;
+        $grants = $this->appUserService->getUserConnectorGrants($appId, $userId, $connectorId);
+        // In one order, so two spellings of a grant (the column's unique key does not hold them
+        // apart where form_id is NULL) always answer with the same one.
+        sort($grants, SORT_STRING);
+        $spelled = null;
+        foreach ($grants as $grant) {
+            if ($grant === '*' || $grant === $connector . '.' . $command
+                || strcasecmp($grant, $connector) === 0 || strcasecmp($grant, $connector . '.*') === 0) {
+                return $command;
+            }
+            if ($spelled === null && strcasecmp($grant, $connector . '.' . $command) === 0) {
+                $spelled = substr($grant, strlen($connector) + 1);
+            }
+        }
+        // Null: the database matched a grant this comparison does not (its collation folds more
+        // than case), so there is no spelling to queue, and nothing is.
+        return $spelled;
+    }
+
     /** POST /api/app/{slug}/connector-commands — member + connector-grant gated enqueue. */
     public function enqueue(Request $request, Response $response, array $args): Response
     {
@@ -392,9 +429,12 @@ class ConnectorCommandController
                 'message' => DesktopCommandService::PRIVATE_AOKIE_RELAY_MESSAGE,
             ], 403);
         }
-        if (!$this->memberCanRelay($app['id'], $userId, $connectorId, $command)) {
+        $granted = $this->commandAsGranted($app['id'], $userId, $connectorId, $command);
+        if ($granted === null) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'You do not have permission to run this connector command'], 403);
         }
+        // Queued as the grant spells it (commandAsGranted), which is the command the member holds.
+        $body['command'] = $granted;
 
         // ROUTE-001: the SERVER picks the target machine (connector assignment /
         // implicit single fresh desktop). A member-supplied targetInstanceId is
@@ -444,12 +484,13 @@ class ConnectorCommandController
         }
         $isOwner = (string) ($app['ownerId'] ?? '') === $userId;
         $isRequester = (string) ($command['requestedByUserId'] ?? '') === $userId;
-        $canRelay = $this->memberCanRelay(
+        // The grant for this very command, as it was queued: one spelled otherwise is another's.
+        $canRelay = !$isOwner && !$isRequester && $this->commandAsGranted(
             (string) $app['id'],
             (string) $userId,
             (string) ($command['connectorId'] ?? ''),
             (string) ($command['command'] ?? '')
-        );
+        ) === (string) ($command['command'] ?? '');
         if (!$isOwner && !$isRequester && !$canRelay) {
             return $this->jsonResponse($response, ['error' => true, 'message' => 'Permission denied'], 403);
         }

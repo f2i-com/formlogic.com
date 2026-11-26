@@ -196,6 +196,8 @@ if (!$anotherRunning) {
             dirname((string) ($settings['uploads']['storagePath'] ?? __DIR__ . '/../storage/uploads')) . '/keys/data-cloud-signing.key',
             \FormLogic\Support\Environment::get('DATA_CLOUD_SIGNING_SEED', '') ?: null
         )));
+        // A form kept in a table made for it is purged in that table (ResponseService::purgeAllExpired).
+        $retentionResponses->setNativeTableBridge(new \FormLogic\Services\NativeTableFormBridge($mysql->getConnection(), new \FormLogic\Services\NativeAppService()));
         $expired = 0;
         foreach ($mysql->getConnection()->query("SELECT id FROM forms WHERE settings LIKE '%retentionDays%'")->fetchAll(\PDO::FETCH_COLUMN) as $retentionFormId) {
             try {

@@ -116,6 +116,194 @@ final class NativeAppSourceFilesTest extends TestCase
         $this->assertSame(array_keys($plain), array_keys(NativeAppService::clientFiles(['files' => $plain])));
     }
 
+    /**
+     * A backend that declares no root lives in the folder its entry is kept in, as SoftN's own host
+     * takes it (softn-host-rust): what sits beside the entry is the backend's, and no page is sent
+     * it. `api/lib/keys.js` beside `api/handler.js` was sent to every visitor.
+     */
+    public function testWithNoRootDeclaredTheFolderOfAContainerBackendsEntryStaysOutOfThePage(): void
+    {
+        $page = ['index.html' => '<h1>Orders</h1>', 'main.js' => 'let a = 1'];
+        $client = static function (array $backend, array $files, array $manifest = []) use ($page): array {
+            $all = ['manifest.json' => self::manifest(['engine' => 2, 'backend' => ['runtime' => 'javascript'] + $backend] + $manifest)] + $page + array_fill_keys($files, 'export const k = 1');
+            NativeAppService::validateProject(['files' => $all]);
+            return array_values(array_diff(array_keys(NativeAppService::clientFiles(['files' => $all])), ['manifest.json', 'index.html', 'main.js']));
+        };
+
+        // Beside the entry and below it; a name that only begins the same way is the page's own.
+        $this->assertSame(['apiClient.js', 'api2/client.js'], $client(['entry' => 'api/handler.js'], ['api/handler.js', 'api/keys.js', 'api/lib/keys.js', 'api/config.json', 'apiClient.js', 'api2/client.js']));
+        // The folder the entry is in, not the first one of its path.
+        $this->assertSame(['src/app.js', 'src/shared/format.js'], $client(['entry' => 'src/api/main.js'], ['src/api/main.js', 'src/api/db.js', 'src/app.js', 'src/shared/format.js']));
+        // In whatever case the manifest and the files are written.
+        $this->assertSame([], $client(['entry' => 'Api/Handler.js'], ['Api/Handler.js', 'Api/Lib/Keys.js']));
+        // The manifest's own lists name none of it either.
+        $all = ['manifest.json' => self::manifest(['engine' => 2, 'backend' => ['runtime' => 'javascript', 'entry' => 'api/handler.js'], 'files' => ['logic' => ['main.js', 'api/keys.js']]])] + $page + ['api/handler.js' => '', 'api/keys.js' => ''];
+        $this->assertSame(['main.js'], json_decode(NativeAppService::clientFiles(['files' => $all])['manifest.json'], true)['files']['logic']);
+
+        // The entry alone where hiding its folder would hide the app: at the top of the project,
+        // in the manifest's frontendRoot, or in a folder named for what a page loads.
+        $this->assertSame(['helper.js'], $client(['entry' => 'handler.js'], ['handler.js', 'helper.js']));
+        $this->assertSame(['web/app.js'], $client(['entry' => 'web/handler.js'], ['web/handler.js', 'web/app.js'], ['frontendRoot' => '/Web/']));
+        foreach (['public', 'assets', 'static', 'js', 'css'] as $folder) {
+            $this->assertSame(["$folder/app.js"], $client(['entry' => "$folder/handler.js"], ["$folder/handler.js", "$folder/app.js"]), $folder);
+        }
+        // A folder inside one of those is the backend's again.
+        $this->assertSame(['public/app.js'], $client(['entry' => 'public/api/handler.js'], ['public/api/handler.js', 'public/api/keys.js', 'public/app.js']));
+
+        // A declared root is the whole answer: page files beside the entry are the page's.
+        $this->assertSame(['app/page.js'], $client(['entry' => 'app/handler.js', 'root' => 'app/server'], ['app/handler.js', 'app/page.js', 'app/server/keys.js']));
+    }
+
+    /**
+     * SoftN reads a backend's `runtime` and `entry`. This host once took `engine` and `entrypoint`
+     * in their place: the runner did not, so such an app passed here, was refused as it was
+     * installed for a capability it never asked for, and would run on no other SoftN host. It is
+     * refused by the name to write; a project already kept with one is still read as a backend.
+     */
+    public function testABackendIsNamedAsSoftnNamesIt(): void
+    {
+        $files = static fn (array $backend): array => ['manifest.json' => self::manifest(['engine' => 2, 'backend' => $backend]), 'index.html' => '<h1>Orders</h1>', 'api/handler.js' => 'export default 1', 'api/keys.js' => 'export const k = 1', 'ui/app.js' => 'let a = 1'];
+        $refused = static function (array $backend) use ($files): string {
+            try { NativeAppService::validateProject(['files' => $files($backend)]); }
+            catch (\InvalidArgumentException $e) { return $e->getMessage(); }
+            return 'kept';
+        };
+        $runtime = 'manifest.json\'s backend names its runtime as "engine", which SoftN does not read, so the app would run on no SoftN host. Rename "engine" to "runtime".';
+        $entry = 'manifest.json\'s backend names its entry as "entrypoint", which SoftN does not read, so the app would run on no SoftN host. Rename "entrypoint" to "entry".';
+        $this->assertSame($runtime, $refused(['engine' => 'javascript', 'entrypoint' => 'api/handler.js']));
+        $this->assertSame($runtime, $refused(['engine' => 'javascript', 'entry' => 'api/handler.js']));
+        $this->assertSame($entry, $refused(['runtime' => 'javascript', 'entrypoint' => 'api/handler.js']));
+        // A Python backend spelled so is told the same, not that Python is for pages.
+        $python = ['manifest.json' => self::manifest(['engine' => 2, 'backend' => ['engine' => 'python', 'entry' => 'backend/main.py']]), 'index.html' => '<h1>Orders</h1>', 'backend/main.py' => 'def handle(req): pass'];
+        try { NativeAppService::validateProject(['files' => $python]); $this->fail('kept'); }
+        catch (\InvalidArgumentException $e) { $this->assertSame($runtime, $e->getMessage()); }
+        // SoftN's own names are what is read; another key beside them is one more it does not read.
+        $this->assertSame('kept', $refused(['runtime' => 'javascript', 'entry' => 'api/handler.js']));
+        $this->assertSame('kept', $refused(['runtime' => 'javascript', 'entry' => 'api/handler.js', 'engine' => 'cobol', 'entrypoint' => 'missing.js']));
+
+        // A project kept from before with those names is a backend still: its files stay off the page.
+        $kept = ['files' => $files(['engine' => 'javascript', 'entrypoint' => 'api/handler.js'])];
+        $this->assertTrue(NativeAppService::hasContainerBackend($kept));
+        $client = NativeAppService::clientFiles($kept);
+        $this->assertSame(['manifest.json', 'index.html', 'ui/app.js'], array_keys($client));
+        $this->assertSame(['runtime' => 'javascript'], json_decode($client['manifest.json'], true)['backend']);
+    }
+
+    private static function phpApp(array $files, array $manifest = []): array
+    {
+        return ['manifest.json' => self::manifest($manifest + ['engine' => 2, 'backend' => ['runtime' => 'php', 'entry' => 'index.php']]), 'index.html' => '<h1>Shop</h1>', 'index.php' => '<?php echo 1;'] + $files;
+    }
+
+    /**
+     * An app with a container backend keeps its `.htaccess` files: its author's rules for who may ask
+     * for its files, which SoftN's hosts apply. Dropped at import, as they were, what they protected
+     * was protected by nothing. No page is ever sent one.
+     */
+    public function testAContainerBackendsHtaccessFilesAreKeptAndNeverSentToAPage(): void
+    {
+        $files = self::phpApp(['.htaccess' => "Options -Indexes\n", 'includes/.htaccess' => "Require all denied\n", 'includes/config.php' => '<?php $k = 1;', 'app.js' => 'let a = 1']);
+        $this->assertSame($files, NativeAppService::validateProject(['files' => $files])[0]);
+        $this->assertSame(['manifest.json', 'index.html', 'app.js'], array_keys(NativeAppService::clientFiles(['files' => $files])));
+        // Whatever the manifest lists, a page is not told of one either.
+        $listed = self::phpApp(['.htaccess' => '', 'app.js' => ''], ['files' => ['logic' => ['app.js', '.htaccess']]]);
+        $this->assertSame(['app.js'], json_decode(NativeAppService::clientFiles(['files' => $listed])['manifest.json'], true)['files']['logic']);
+
+        $refused = static function (array $files): string {
+            try { NativeAppService::validateProject(['files' => $files]); }
+            catch (\InvalidArgumentException $e) { return $e->getMessage(); }
+            return 'kept';
+        };
+        // The runner reads none of one over 64 KB: refused, not kept and ignored.
+        $this->assertSame('kept', $refused(self::phpApp(['.htaccess' => str_repeat('#', NativeAppService::MAX_HTACCESS_BYTES)])));
+        $this->assertSame('conf/.htaccess is larger than this host reads of an .htaccess (64 KB), so none of its rules would be applied. Shorten it.', $refused(self::phpApp(['conf/.htaccess' => str_repeat('#', NativeAppService::MAX_HTACCESS_BYTES + 1)])));
+        // Nothing reads one for an app with no container backend, so it is not kept as if something did.
+        $plain = ['manifest.json' => self::manifest(), 'index.html' => '<App/>', 'docs/.htaccess' => 'Require all denied'];
+        $this->assertStringStartsWith('docs/.htaccess: this host applies an .htaccess only for an app with a container backend', $refused($plain));
+        // It is its author's rules and nothing else: not a backend's entry, and no other dotfile is kept.
+        $this->assertSame('manifest.json\'s backend.entry must name an existing file in the project.', $refused(self::phpApp(['.htaccess' => ''], ['backend' => ['runtime' => 'php', 'entry' => '.htaccess']])));
+        foreach (['.env', '.htpasswd', 'conf/.htaccess.bak', 'my folder/.htaccess'] as $other) {
+            $this->assertStringStartsWith('Invalid app source file', $refused(self::phpApp([$other => 'x'])), $other);
+        }
+    }
+
+    /**
+     * `backend.root` is a folder of the project, held to the rule the importer holds it to. Pages are
+     * kept from what is under it while the runner refuses to run scripts there, and the runner
+     * collapses "..": a root such as `a/../api` kept different files private on each side.
+     */
+    public function testABackendRootIsAFolderOfTheProject(): void
+    {
+        $refused = static function (mixed $root): string {
+            try { NativeAppService::validateProject(['files' => self::phpApp(['api/handler.php' => '<?php echo 1;'], ['backend' => ['runtime' => 'php', 'entry' => 'index.php', 'root' => $root]])]); }
+            catch (\InvalidArgumentException $e) { return $e->getMessage(); }
+            return 'kept';
+        };
+        foreach (['api', 'api/', 'server/api', 'my-api_2', '', null] as $root) {
+            $this->assertSame('kept', $refused($root), var_export($root, true));
+        }
+        foreach (['a/../api', '../api', './api', '/api', 'C:/api', 'api\\v1', '.hidden', 'my api', str_repeat('a', 241), 7, ['api']] as $root) {
+            $this->assertStringStartsWith('manifest.json\'s backend.root must name a folder in the project', $refused($root), var_export($root, true));
+        }
+    }
+
+    /** An archive read on the server (a marketplace listing, a pack) keeps them by the same rule. */
+    public function testAnArchiveReadOnTheServerKeepsAContainerBackendsHtaccessFiles(): void
+    {
+        if (!class_exists(\ZipArchive::class)) $this->markTestSkipped('ZipArchive is not installed.');
+        $archive = static function (array $files): array {
+            $path = tempnam(sys_get_temp_dir(), 'fl-htaccess-');
+            $zip = new \ZipArchive();
+            $zip->open($path, \ZipArchive::OVERWRITE);
+            foreach ($files as $name => $text) $zip->addFromString($name, $text);
+            $zip->close();
+            try { return NativeAppService::extractProjectFromArchive($path)['files']; }
+            finally { @unlink($path); }
+        };
+        $rules = ['.htaccess' => "Options -Indexes\n", 'includes/.htaccess' => "Require all denied\n"];
+        $this->assertSame(self::phpApp($rules), $archive(self::phpApp($rules)));
+        // The one a static package carries for the server it was made for is left out, as it always was.
+        $plain = ['manifest.json' => self::manifest(), 'index.html' => '<App/>'];
+        $this->assertSame($plain, $archive($plain + ['.htaccess' => "Options -Indexes\n"]));
+    }
+
+    /**
+     * What an `.htaccess` denies is not sent to a page. SoftN's hosts answer 403 when such a file is
+     * asked for; here a page is handed the app's files, so one that is denied is not among them.
+     * Read as those hosts read one: a deny for the folder, or for the files a block names.
+     */
+    public function testWhatAnHtaccessDeniesIsNotSentToAPage(): void
+    {
+        $sent = static function (array $rules, array $files): array {
+            $all = self::phpApp($rules + array_fill_keys($files, '{}'));
+            NativeAppService::validateProject(['files' => $all]);
+            return array_values(array_diff(array_keys(NativeAppService::clientFiles(['files' => $all])), ['manifest.json', 'index.html']));
+        };
+        $files = ['data/customers.json', 'data/archive/2025.json', 'database.json', 'conf/keys.json', 'conf/theme.css', 'drafts/draft-a.json', 'drafts/final.json', 'app.js', 'secrets.json', 'conf/secrets.json'];
+
+        // A folder denied whole, with everything under it; a name that only begins the same way is another file.
+        $this->assertSame(['database.json', 'conf/keys.json', 'conf/theme.css', 'drafts/draft-a.json', 'drafts/final.json', 'app.js', 'secrets.json', 'conf/secrets.json'], $sent(['data/.htaccess' => "# customer records\r\nRequire all denied\r\n"], $files));
+        $this->assertSame(['data/customers.json', 'data/archive/2025.json', 'database.json', 'drafts/draft-a.json', 'drafts/final.json', 'app.js', 'secrets.json'], $sent(['conf/.htaccess' => "<IfModule !mod_authz_core.c>\n  Order deny,allow\n  Deny from all\n</IfModule>\n"], $files));
+        // Files named by a block, in that folder and below: by a wildcard name, and by a pattern.
+        $this->assertSame(['data/customers.json', 'data/archive/2025.json', 'database.json', 'conf/keys.json', 'conf/theme.css', 'drafts/draft-a.json', 'drafts/final.json', 'app.js'], $sent(['.htaccess' => "<Files \"Secrets.json\">\n  Require all denied\n</Files>\n"], $files));
+        $this->assertSame(['data/customers.json', 'data/archive/2025.json', 'database.json', 'conf/theme.css', 'drafts/draft-a.json', 'drafts/final.json', 'app.js', 'secrets.json'], $sent(['conf/.htaccess' => "<FilesMatch \"\\.(json|bak)$\">\n  Deny from all\n</FilesMatch>\n"], $files));
+        $this->assertSame(['data/customers.json', 'data/archive/2025.json', 'database.json', 'conf/keys.json', 'conf/theme.css', 'drafts/final.json', 'app.js', 'secrets.json', 'conf/secrets.json'], $sent(['drafts/.htaccess' => "<Files ~ \"^draft-\">\nRequire all denied\n</Files>\n"], $files));
+        $this->assertSame(['conf/theme.css', 'app.js'], $sent(['.htaccess' => "<Files *.json>\nRequire all denied\n</Files>\n"], $files));
+
+        // What is not a deny for everyone denies nothing: a rule for some methods, a condition
+        // nobody here evaluates, a block that grants, a pattern that cannot be read, a rewrite.
+        foreach ([
+            "<Limit POST PUT>\n  Require all denied\n</Limit>\n",
+            "<LimitExcept GET>\nDeny from all\n</LimitExcept>\n",
+            "<If \"%{HTTP_HOST} == 'old.example'\">\nRequire all denied\n</If>\n<Else>\nRequire all denied\n</Else>\n",
+            "<Files \"*.json\">\n  Require all granted\n</Files>\n",
+            "<FilesMatch \"(json\">\n  Require all denied\n</FilesMatch>\n",
+            "<FilesMatch \"" . str_repeat('a', 257) . "\">\n  Require all denied\n</FilesMatch>\n",
+            "# Require all denied\nOptions -Indexes\nRewriteEngine On\nRewriteRule ^data/ - [F]\n",
+        ] as $rules) {
+            $this->assertSame($files, $sent(['.htaccess' => $rules], $files), $rules);
+        }
+    }
+
     /** @dataProvider otherKinds */
     public function testAFileOfAnotherKindIsRefusedWithWhatAnAppIsMadeOf(string $path): void
     {

@@ -363,14 +363,18 @@ final class NativeAppVersions
 
     /**
      * One source file of a version, as text. The path is one the version holds: a media or built
-     * file is refused (422), and any other path is not found.
+     * file is refused (422), and any other path is not found. Its backend's files are its owner's to
+     * read here as in the project itself (they are never sent to a page): a `.php` or `.logic`, and
+     * an `.htaccess` a container backend keeps (NativeAppService::HTACCESS_PATH), which a comparison
+     * lists among the text files that can be shown.
      *
      * @return array{current: int, version: int, path: string, text: string}
      */
     public function file(string $appId, int $version, mixed $path): array
     {
         // Held to what a source file can be named before it is looked for, so nothing else is ever a key.
-        $named = is_string($path) && strlen($path) <= 400 && !str_contains($path, '..') && preg_match(NativeAppService::SOURCE_PATH, $path) === 1;
+        $named = is_string($path) && strlen($path) <= 400 && !str_contains($path, '..')
+            && (preg_match(NativeAppService::SOURCE_PATH, $path) === 1 || preg_match(NativeAppService::HTACCESS_PATH, $path) === 1);
         return $this->native->withHistory($appId, function (string $root, array $project) use ($appId, $version, $path, $named): array {
             $dir = $root . self::FOLDER;
             $index = self::reading($dir, $project);

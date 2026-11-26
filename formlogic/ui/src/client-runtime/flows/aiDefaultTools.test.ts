@@ -422,4 +422,55 @@ describe('the editor\'s output cap and a custom AI service that refuses it', () 
     expect(chat.bodies).toEqual([{ messages: [{ role: 'user', content: 'Edit the page' }], model: 'configured-model' }]);
     expect(chat.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
   });
+
+  // The same service, asked with the editor's tools: its refusal of the cap ended the turn as a
+  // failed request, where the chat without tools was asked again and answered.
+  describe('with the editor\'s tools', () => {
+    /** `maxOutputTokens` null: a caller that names no cap. */
+    async function askWithTools(p: ResolvedAiProvider, answers: Array<() => Response>, maxOutputTokens: number | null = 16384) {
+      const fetchFn = vi.fn(async () => (answers.shift() ?? (() => jsonResponse(COMPLETION)))());
+      const result = await resolveDefaultLlmTools(
+        { messages: MESSAGES, tools: TOOLS, ...(maxOutputTokens === null ? {} : { maxOutputTokens }) },
+        {
+          fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'custom', customProviderId: 'svc' }) }),
+          resolveCustomProvider: async () => p,
+          fetchFn: fetchFn as unknown as typeof fetch,
+        },
+      );
+      const bodies = fetchFn.mock.calls.map(call => JSON.parse(String((call as unknown as [string, RequestInit])[1].body)) as Record<string, unknown>);
+      return { result, bodies };
+    }
+
+    it('asks again without the cap, with the same conversation and tools, and returns the calls', async () => {
+      const { result, bodies } = await askWithTools(provider(), [refusal('max_tokens is too large: 16384. This model supports at most 4096 completion tokens, whereas you provided 16384.')]);
+      expect(result).toMatchObject({ ok: true, data: { source: 'custom', toolCalls: [{ id: 'call_2', name: 'read_file', arguments: { path: 'ui/app.ui' } }], stopReason: 'tool_calls' } });
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0].max_completion_tokens).toBe(16384);
+      expect(bodies[0]).toEqual({ ...bodies[1], max_completion_tokens: 16384 });
+      expect(bodies[1]).not.toHaveProperty('max_completion_tokens');
+      expect(bodies[1].tools).toHaveLength(1);
+    });
+
+    it('asks again when the cap does not fit in the context of a local server\'s model', async () => {
+      const { result, bodies } = await askWithTools(provider({ kind: 'ollama' }), [refusal('This model\'s maximum context length is 8192 tokens. However, you requested 16500 tokens.')], 4096);
+      expect(result.ok).toBe(true);
+      expect(bodies.map(body => body.max_tokens)).toEqual([4096, undefined]);
+    });
+
+    it('asks once more only, and not at all for another 400 or a request that carried no cap', async () => {
+      const tooLarge = refusal('max_tokens is too large');
+      const twice = await askWithTools(provider(), [tooLarge, tooLarge]);
+      expect(twice.bodies).toHaveLength(2);
+      expect(twice.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
+
+      const other = await askWithTools(provider(), [refusal('The model `configured-model` does not exist.')]);
+      expect(other.bodies).toHaveLength(1);
+      expect(other.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
+
+      const uncapped = await askWithTools(provider(), [refusal('This model\'s maximum context length is 8192 tokens.')], null);
+      expect(uncapped.bodies).toHaveLength(1);
+      expect(uncapped.bodies[0]).not.toHaveProperty('max_completion_tokens');
+      expect(uncapped.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
+    });
+  });
 });

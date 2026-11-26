@@ -107,6 +107,8 @@ final class AppAiWorker
     private array $passed = [];
     /** @var array<string, array{at: int, route: ?string}> each app's parts route, as it was last read */
     private array $partsRoutes = [];
+    /** @var array<string, array{at: int, owner: string}> each app's owner, as it was last read (nameOwner) */
+    private array $appOwners = [];
     /** @var array{fingerprint: string, mode: string, startedAt: int}|null what this worker says of itself (identify) */
     private ?array $identity = null;
 
@@ -648,7 +650,15 @@ final class AppAiWorker
             // (the site's), or always when it is the owner's own (DesktopAiRelayService::SERVED_SQL).
             [$relayId, $pair] = $this->desktop->send($computer, $body, $route['ownerId'], DesktopAiRelayService::SOURCE_APP_AI);
         } catch (SiteAiTooLargeException) {
-            $this->fail($id, 'too_large', 'The picture to edit is too large to send.', unsent: true);
+            // Said by what overflowed, as SiteDesktopAi says it: the turn without its picture is its
+            // text (an edit's picture is its only one; an App AI chat is text alone), and when that
+            // is past the lane's limit a smaller picture would not have helped, and there may be none.
+            $text = SiteDesktopAi::room($computer, $job['kind'] === 'edit' ? ['reference' => ''] + $body : $body) < 0;
+            $this->fail($id, 'too_large', !$text ? 'The picture to edit is too large to send.' : match ($job['kind']) {
+                'chat' => 'The chat is too long to send: the AI takes about 250 KB a request. Send fewer or shorter messages.',
+                'edit' => 'The prompt is too long to send with a picture to edit. Use a shorter one.',
+                default => 'The prompt is too long to send. Use a shorter one.',
+            }, unsent: true);
             return 'skip';
         } catch (SiteAiBusyException $busy) {
             // Offline, or its places are taken: the job waits, and is told so in the app's context. It
@@ -783,6 +793,26 @@ final class AppAiWorker
     }
 
     /**
+     * Name the app's owner to the host before one of its requests (NativeAppService::ownedBy), so a
+     * delivery or a part runs in that account's share of the site's workers. Without it the request
+     * was counted for whichever account a request through the app's page or API last named, and for
+     * no account where none had (the share is kept beside the worker locks, which a server move or
+     * a cleared storage folder starts again). Read again every half minute: an app can change hands.
+     */
+    private function nameOwner(string $appId): void
+    {
+        $known = $this->appOwners[$appId] ?? null;
+        if ($known === null || time() - $known['at'] >= 30) {
+            $statement = $this->pdo()->prepare('SELECT owner_id FROM apps WHERE id = ?');
+            $statement->execute([$appId]);
+            $owner = $statement->fetchColumn();
+            $known = ['at' => time(), 'owner' => is_string($owner) ? $owner : ''];
+            $this->appOwners[$appId] = $known;
+        }
+        $this->native->ownedBy($appId, $known['owner']);
+    }
+
+    /**
      * Pass on what has come so far of the answers asked for in parts (an app that declares
      * `jobs.parts`): a chat's reply as far as it is written, a few times a second, and a line's
      * sound up to its last pause, so the app's page can show the reply and play the line while the
@@ -841,6 +871,7 @@ final class AppAiWorker
         $who = AppAiService::requesterId(['kind' => (string) $job['requester_kind'], 'id' => (string) $job['requester_id']]);
         $identity = ['formlogic' => ['appId' => (string) $job['app_id'], 'ai' => ['delivery' => true, 'part' => true] + ($who !== null ? ['requester' => $who] : [])]];
         try {
+            $this->nameOwner((string) $job['app_id']);
             $answer = $this->native->request((string) $job['app_id'], $request, $identity, []);
             $status = is_int($answer['status'] ?? null) ? $answer['status'] : 0;
         } catch (\Throwable) {
@@ -1072,6 +1103,7 @@ final class AppAiWorker
         $identity = ['formlogic' => ['appId' => (string) $job['app_id'], 'ai' => ['delivery' => true] + ($who !== null ? ['requester' => $who] : [])]];
         $subscriptions = AppAiService::deliveryMayAsk($job) ? AppAiService::followUpSubscription($declared['table'], $id) : [];
         try {
+            $this->nameOwner((string) $job['app_id']);
             $answer = $this->native->request((string) $job['app_id'], $request, $identity, $subscriptions);
             $status = is_int($answer['status'] ?? null) ? $answer['status'] : 0;
         } catch (\RuntimeException $e) {

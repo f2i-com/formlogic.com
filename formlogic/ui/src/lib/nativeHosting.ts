@@ -231,9 +231,18 @@ const SOURCE_KINDS = /\.(html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs
 const CONTAINER_BACKEND_RUNTIMES = ['php', 'javascript', 'typescript', 'rust', 'python'] as const;
 const isHostConfig = (path: string) => path.toLowerCase() === 'private/config.json';
 const SOURCE_PATH = /^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$/;
+/**
+ * An `.htaccess` an app with a container backend keeps, in any folder of the project: the rules its
+ * author wrote for who may ask for its files. The server holds it to the same name and size
+ * (NativeAppService::HTACCESS_PATH, MAX_HTACCESS_BYTES), applies it, and never sends it to a page.
+ */
+const HTACCESS_PATH = /^(?:[a-zA-Z0-9_-]+\/)*\.htaccess$/;
+const HTACCESS_BYTES = 64 * 1024;
 /** Why a name cannot be a source file of a hosted project, or null when it can: the rule an upload is held to. */
 export function sourceNameProblem(path: string): string | null {
   if (isHostConfig(path)) return 'This name is reserved for the host key file. Choose it separately when importing a database.';
+  // Kept for an app with a container backend; the server says so for any other.
+  if (HTACCESS_PATH.test(path)) return null;
   if (!SOURCE_KINDS.test(path)) return 'A source file ends in .html, .ui, .js, .jsx, .vue, .mjs, .cjs, .ts, .tsx, .logic, .py, .php, .phtml, .rs, .toml, .css, .json, .sql or .xdb.';
   if (!SOURCE_PATH.test(path) || path.includes('..')) return 'A file name is letters, digits, - _ and . with folders before it (pages/about.html), and never two dots together.';
   return null;
@@ -243,9 +252,16 @@ const PRIVATE_TREE = /^(server|backend|private)\//i;
 /**
  * The media the app host serves an app's page: the SoftN frame's own list (SoftN's
  * apps/formlogic-host/src/media.ts, WebAssembly modules from v0.0.41), and the server holds
- * uploads to the same one.
+ * uploads to the same one. Beside them, `.softn` archives: apps a web app's page nests
+ * (`<softn-app src="assets/widgets/clock.softn">`). The web frame puts every media file in the
+ * app's archive under its own path, and SoftN runs a nested one in a container of its own, from
+ * the SoftN release after v0.0.52. One is bytes kept with the app, held to a media file's limits,
+ * never a source file and never run by the server.
  */
-export const HOSTED_MEDIA = /^assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md|wasm)$/i;
+export const HOSTED_MEDIA = /^assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|bin|wgsl|txt|md|wasm|softn)$/i;
+
+/** An app a page nests, by its ending: kept under assets/ with the app's other media (HOSTED_MEDIA). */
+const NESTED_APP = /\.softn$/i;
 
 /** The endings that are media and nothing else: pictures, sound, video, fonts, 3D models and WebAssembly modules (not text, Markdown, shader or .bin files). */
 const MEDIA_BY_KIND = /\.(?:png|jpe?g|gif|webp|avif|ico|bmp|svg|hdr|exr|mp3|wav|ogg|opus|aac|flac|m4a|mp4|webm|woff2?|ttf|otf|glb|gltf|obj|stl|fbx|wasm)$/i;
@@ -267,13 +283,27 @@ export function backendProblem(manifest: Record<string, unknown>, files: Record<
   if (hasBackend) {
     const backend = record(manifest.backend);
     if (!backend) return 'manifest.json\'s backend must be a JSON object.';
-    const runtime = String(backend.runtime ?? backend.engine ?? '').trim().toLowerCase();
+    // SoftN reads a backend's `runtime` and `entry` and nothing else for them. This host once took
+    // `engine` and `entrypoint` in their place; the runner never did, so such an app was refused
+    // as it was installed (for a capability it never asked for) and would run on no other SoftN
+    // host. Said here by the name to write, as the server says it.
+    for (const [alias, key] of [['engine', 'runtime'], ['entrypoint', 'entry']] as const) {
+      if (alias in backend && !(key in backend)) return `manifest.json's backend names its ${key} as "${alias}", which SoftN does not read, so the app would run on no SoftN host. Rename "${alias}" to "${key}".`;
+    }
+    const runtime = String(backend.runtime ?? '').trim().toLowerCase();
     if (!CONTAINER_BACKEND_RUNTIMES.includes(runtime as typeof CONTAINER_BACKEND_RUNTIMES[number])) {
       return `manifest.json's backend.runtime must be one of: ${CONTAINER_BACKEND_RUNTIMES.join(', ')}.`;
     }
-    const entry = backend.entry ?? backend.entrypoint;
+    const entry = backend.entry;
     if (typeof entry !== 'string' || !entry || entry.includes('..') || !Object.hasOwn(files, entry)) {
       return 'manifest.json\'s backend.entry must name an existing file in the project.';
+    }
+    // The folder the backend lives in, which stays on the server: a folder of the project, named as
+    // its folders are (no "..", no leading "/", no drive letter), at most as long as a file's name
+    // may be (240). Empty is none declared; then the entry's own folder is the backend's.
+    const root = backend.root;
+    if (root !== undefined && root !== null && root !== '' && (typeof root !== 'string' || root.length > 240 || !/^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\/?$/.test(root))) {
+      return 'manifest.json\'s backend.root must name a folder in the project, such as "api" or "server/api": no "..", no leading "/" or drive letter, and at most 240 characters.';
     }
     if ('routes' in backend) {
       if (!Array.isArray(backend.routes) || backend.routes.length > 64 || backend.routes.some(r => typeof r !== 'string' || !r.startsWith('/') || r.length > 256)) {
@@ -338,11 +368,17 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
   const source: Record<string,string> = {};
   const assets: Record<string,string> = {};
   const sourceDecoder = new TextDecoder('utf-8', { fatal: true });
+  // The project's .htaccess files, whose place is decided once the manifest is read (below).
+  const rules: Record<string, Uint8Array> = {};
   // The server's limits, read here first so a file it would refuse makes no app.
   let total = 0;
   for (const [path, bytes] of Object.entries(files)) {
     // A previous host's key can accompany a database import, separately from its source.
     if (isHostConfig(path)) continue;
+    if (HTACCESS_PATH.test(path)) {
+      rules[path] = bytes;
+      continue;
+    }
     // .xdb is the app's seed data: JSON text kept with it.
     if (SOURCE_KINDS.test(path)) {
       if (!SOURCE_PATH.test(path) || path.includes('..')) throw new Error(`${path}: this host keeps file names made of letters, digits, '-', '_' and '.' (never two dots together). Rename it and try again.`);
@@ -355,28 +391,49 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
       }
     } else if (path.startsWith('assets/')) {
       if (path.includes('..')) throw new Error(`${path}: this host keeps file names without two dots together. Rename it and try again.`);
-      if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), WebAssembly modules (WASM), and WGSL, text and Markdown files.`);
+      if (!HOSTED_MEDIA.test(path)) throw new Error(`${path} cannot be hosted with this app: its media can be pictures (PNG, JPEG, GIF, WebP, AVIF, ICO, BMP, SVG, HDR, EXR), sound (MP3, WAV, Ogg, Opus, AAC, FLAC, M4A), video (MP4, WebM), fonts (WOFF, WOFF2, TTF, OTF), 3D models (glTF, GLB, BIN, OBJ, STL, FBX), WebAssembly modules (WASM), apps its page nests (SOFTN), and WGSL, text and Markdown files.`);
       if (bytes.length > NATIVE_LIMITS.mediaFileBytes) throw new Error(`${path} is larger than this host keeps (${NATIVE_LIMITS.mediaFileBytes / 1024 / 1024} MB per media file).`);
       let binary = '';
       for (let offset=0;offset<bytes.length;offset+=8192) binary += String.fromCharCode(...bytes.subarray(offset,offset+8192));
       assets[path] = btoa(binary);
-    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path) && path !== '.htaccess') {
+    } else if (!/^(README|LICENSE|NOTICE)(\.|$)/.test(path)) {
       // A picture, sound, video, font or model outside assets/ (an icon beside the manifest is the
       // usual one): said as that, with where it goes, since removing it would leave the app
       // without it. Only for what can be nothing but media: a .txt, .md or .bin may be notes or
       // a backend's data, and nothing under the private tree is ever advised into assets/, which
       // every visitor is sent.
       if (MEDIA_BY_KIND.test(path) && !PRIVATE_TREE.test(path) && !path.startsWith('site/') && !path.includes('..') && HOSTED_MEDIA.test(`assets/${path}`)) throw new Error(`${path} is a kind of file this host cannot keep with an app where it is: an app's pictures, sound, video, fonts, models and WebAssembly modules go under assets/. Move it to assets/${path}, change what names it (manifest.json's "icon", or the page that uses it), and try again.`);
+      // An app the page nests, kept where SoftN's own example keeps one (widgets/clock.softn): this
+      // host keeps it with the app's media, and the page names it by that path.
+      if (NESTED_APP.test(path) && !PRIVATE_TREE.test(path) && !path.startsWith('site/') && !path.includes('..') && HOSTED_MEDIA.test(`assets/${path}`)) throw new Error(`${path} is an app this one nests, which this host keeps with the app's media, under assets/. Move it to assets/${path}, have the page that runs it name it there (<softn-app src="/assets/${path}">), and try again.`);
       throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the project ZIP and try again.`);
     } else continue;
+    total += bytes.length;
+  }
+  let manifest: Record<string, unknown> = {};
+  try { manifest = record(JSON.parse(source['manifest.json'] ?? '{}')) ?? {}; } catch { /* the review above read it */ }
+  // An app with a container backend keeps its .htaccess files: the host applies their rules to
+  // requests for the backend's scripts and never sends a page what they deny (or the rules
+  // themselves). Dropped, as they once were, what their author protected was protected by nothing.
+  // Any other app's is the one a static package carries for the web server it was made for: left
+  // out where it sits beside the manifest, and refused in a folder, as before.
+  for (const [path, bytes] of Object.entries(rules)) {
+    if (!record(manifest.backend)) {
+      if (path === '.htaccess') continue;
+      throw new Error(`${path} is a kind of file this host cannot keep with an app. Remove it from the project ZIP and try again.`);
+    }
+    if (bytes.length > HTACCESS_BYTES) throw new Error(`${path} is larger than this host reads of an .htaccess (64 KB), so none of its rules would be applied. Shorten it.`);
+    try {
+      source[path] = sourceDecoder.decode(bytes);
+    } catch {
+      throw new Error(`${path} is not UTF-8 text. Save the source file as UTF-8 and import it again.`);
+    }
     total += bytes.length;
   }
   const sources = Object.keys(source).length, media = Object.keys(assets).length;
   if (sources > NATIVE_LIMITS.sourceFiles) throw new Error(`This app has ${sources} source files; this host keeps up to ${NATIVE_LIMITS.sourceFiles}.`);
   if (media > NATIVE_LIMITS.mediaFiles) throw new Error(`This app has ${media} media files; this host keeps up to ${NATIVE_LIMITS.mediaFiles}.`);
   if (total > NATIVE_LIMITS.projectBytes) throw new Error(`This app is ${(total / 1024 / 1024).toFixed(1)} MB; this host keeps apps up to ${NATIVE_LIMITS.projectBytes / 1024 / 1024} MB.`);
-  let manifest: Record<string, unknown> = {};
-  try { manifest = record(JSON.parse(source['manifest.json'] ?? '{}')) ?? {}; } catch { /* the review above read it */ }
   // The lengths are the server's (NativeAppService::MAX_MANIFEST_ID, MAX_BACKEND_IDENTITY). An
   // editable copy FormLogic exports of its own app is named `formlogic_` and the hex of where it
   // came from (lib/softn/project.ts), 134 characters and more: at 120 it could not be imported

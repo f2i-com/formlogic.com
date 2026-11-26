@@ -135,11 +135,14 @@ pub fn serve() {
         match (message.get("method").and_then(Value::as_str), id) {
             (Some("plugin.shutdown"), _) => break,
             (Some("plugin.init"), Some(id)) => {
+                let params = message.get("params").cloned().unwrap_or(Value::Null);
+                // What this OAIY answers, and how to ask it ([`crate::host`]).
+                let writer = out.clone();
+                crate::host::OAIY.connect(Arc::new(move |line: &Value| writer.line(line)), &params);
                 if app.is_some() {
                     out.reply(id, json!({"ok": true}));
                     continue;
                 }
-                let params = message.get("params").cloned().unwrap_or(Value::Null);
                 match data_dir(&params) {
                     Some(dir) => {
                         let started = App::start(dir);
@@ -182,9 +185,16 @@ pub fn serve() {
             (Some(method), Some(id)) => {
                 out.line(&json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("no method {method}")}}));
             }
+            // OAIY answering a request of the plugin's own.
+            (None, Some(_)) => {
+                crate::host::OAIY.take_answer(&message);
+            }
             _ => {}
         }
     }
+    // A window the person has not answered is not left behind: on a Mac it is another program,
+    // and exiting does not end it.
+    crate::native::close_windows();
     std::process::exit(0);
 }
 

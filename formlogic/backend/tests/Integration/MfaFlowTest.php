@@ -291,6 +291,82 @@ class MfaFlowTest extends TestCase
         }
     }
 
+    /** What the service answers to one code asked for inside a session: true, false, or the refusal it threw. */
+    private function sessionAnswer(string $code): bool|\RuntimeException
+    {
+        try {
+            return self::$mfa->verifySessionCode($this->userId, $code);
+        } catch (\FormLogic\Services\SecondFactorLockedException | \FormLogic\Services\RateLimiterUnavailableException $e) {
+            return $e;
+        }
+    }
+
+    // Turning two-factor off, new recovery codes and an administrator's confirmation ask a session
+    // for a code. Their answers come out of the account's one budget, so a session someone else
+    // holds gets ten guesses in fifteen minutes there too, not ten a minute.
+    public function testCodesAskedForInsideASessionDrawOnTheSameBudget(): void
+    {
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        $codes = self::$mfa->enable($this->userId, $this->currentCode($setup['secret']));
+        try {
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId), 'the right setup code ended its own count');
+            // A right answer ends the count: nine wrong and one right leave the budget whole.
+            for ($i = 1; $i < MfaService::SECOND_FACTOR_MAX_ATTEMPTS; $i++) {
+                $this->assertFalse($this->sessionAnswer('000000'), "wrong answer {$i} is read and refused");
+            }
+            $this->assertTrue($this->sessionAnswer($codes[1]));
+            for ($i = 1; $i <= MfaService::SECOND_FACTOR_MAX_ATTEMPTS; $i++) {
+                $this->assertFalse($this->sessionAnswer('000000'), "wrong answer {$i} is read and refused");
+            }
+
+            // Over the budget not even a right code is read, and the sign-in prompt closes with it.
+            $refused = $this->sessionAnswer($codes[0]);
+            $this->assertInstanceOf(\FormLogic\Services\SecondFactorLockedException::class, $refused);
+            $this->assertStringStartsWith('Too many incorrect verification codes', $refused->getMessage());
+            $this->assertTrue(self::$mfa->secondFactorLocked($this->userId));
+            // A request with no code in it is no guess, over the budget or within it.
+            $this->assertFalse($this->sessionAnswer(''));
+
+            // Once the window has passed the same recovery code works: it was never spent.
+            $this->forgetSecondFactorCount($this->userId);
+            $this->assertTrue($this->sessionAnswer($codes[0]));
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId));
+        } finally {
+            $this->forgetSecondFactorCount($this->userId);
+        }
+    }
+
+    public function testTheCodeThatFinishesASetupDrawsOnTheSameBudget(): void
+    {
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        $finish = function (string $code): array|\RuntimeException {
+            try {
+                return self::$mfa->enable($this->userId, $code);
+            } catch (\RuntimeException $e) {
+                return $e;
+            }
+        };
+        try {
+            for ($i = 1; $i <= MfaService::SECOND_FACTOR_MAX_ATTEMPTS; $i++) {
+                $wrong = $finish('000000');
+                $this->assertInstanceOf(\RuntimeException::class, $wrong);
+                $this->assertStringContainsString('didn\'t match', $wrong->getMessage(), "wrong answer {$i} is read and refused");
+            }
+            // Over the budget the right code is not read, and two-factor stays off.
+            $this->assertInstanceOf(\FormLogic\Services\SecondFactorLockedException::class, $finish($this->currentCode($setup['secret'])));
+            $this->assertFalse(self::$mfa->isEnabled($this->userId));
+
+            $this->forgetSecondFactorCount($this->userId);
+            $codes = $finish($this->currentCode($setup['secret']));
+            $this->assertIsArray($codes);
+            $this->assertCount(8, $codes);
+            $this->assertTrue(self::$mfa->isEnabled($this->userId));
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId), 'the right code ended the count');
+        } finally {
+            $this->forgetSecondFactorCount($this->userId);
+        }
+    }
+
     public function testThePasswordAloneDoesNotEndTheAccountsSignInCount(): void
     {
         $email = $this->userId . '@test.local';
@@ -341,6 +417,29 @@ class MfaFlowTest extends TestCase
         $chal = self::$pdo->prepare('SELECT COUNT(*) FROM mfa_challenges WHERE user_id = ?');
         $chal->execute([$this->userId]);
         $this->assertSame(0, (int) $chal->fetchColumn());
+    }
+
+    // Someone locked out by wrong codes is let back in by an administrator's reset, which is this
+    // same disable(). The count against the factor that went must go with it, or the code of the
+    // setup they start next would be refused unread.
+    public function testDisableEndsTheCountOfCodeAnswersSoANewSetupCanFinish(): void
+    {
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        self::$mfa->enable($this->userId, $this->currentCode($setup['secret']));
+        try {
+            for ($i = 0; $i <= MfaService::SECOND_FACTOR_MAX_ATTEMPTS; $i++) {
+                self::$mfa->secondFactorAttempt($this->userId);
+            }
+            $this->assertTrue(self::$mfa->secondFactorLocked($this->userId));
+
+            self::$mfa->disable($this->userId);
+
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId));
+            $again = self::$mfa->beginSetup($this->userId, 'x@test.local');
+            $this->assertCount(8, self::$mfa->enable($this->userId, $this->currentCode($again['secret'])));
+        } finally {
+            $this->forgetSecondFactorCount($this->userId);
+        }
     }
 
     public function testDisableRollsBackAtomicallyOnPartialFailure(): void

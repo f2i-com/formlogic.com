@@ -108,19 +108,19 @@ class FormController
             return 'Logic prompt must be 10KB or smaller';
         }
         if (isset($data['fields']) && is_array($data['fields'])) {
-            $fieldsJson = json_encode($data['fields']);
+            $fieldsJson = json_encode($data['fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($fieldsJson !== false && strlen($fieldsJson) > 2097152) {
                 return 'Fields data must be 2MB or smaller';
             }
         }
         if (isset($data['settings'])) {
-            $settingsJson = json_encode($data['settings']);
+            $settingsJson = json_encode($data['settings'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($settingsJson !== false && strlen($settingsJson) > 10240) {
                 return 'Settings must be 10KB or smaller';
             }
         }
         if (isset($data['theme'])) {
-            $themeJson = json_encode($data['theme']);
+            $themeJson = json_encode($data['theme'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($themeJson !== false && strlen($themeJson) > FormService::MAX_THEME_BYTES) {
                 return 'Theme must be 256KB or smaller';
             }
@@ -129,7 +129,7 @@ class FormController
             if (!is_array($data['customScreen'])) {
                 return 'Custom screen must be an object';
             }
-            $screenJson = json_encode($data['customScreen']);
+            $screenJson = json_encode($data['customScreen'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
             if ($screenJson !== false && strlen($screenJson) > 2097152) {
                 return 'Custom screen must be 2MB or smaller';

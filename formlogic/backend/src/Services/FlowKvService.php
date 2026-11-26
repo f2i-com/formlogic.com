@@ -15,14 +15,14 @@ use PDO;
  * actually dedupes — UNIQUE ignores NULLs — which is also why flow_kv carries no app FK.
  * The API surface maps appId null ↔ '' transparently.
  *
- * Caps (enforced here, on every write path): value ≤ 64 KiB (encoded JSON), ≤ 500 keys per
+ * Caps (enforced here, on every write path): value ≤ 64 KiB (its JSON as UTF-8 text), ≤ 500 keys per
  * (owner, app, scope), and ≤ 5000 keys per (owner, app) across its scopes: the scope is a label
  * the caller picks, so without the second cap each new scope name was another 500 keys.
  * $maxKeysPerScope and $maxKeysPerStore are constructor overrides for tests only.
  */
 class FlowKvService
 {
-    public const MAX_VALUE_BYTES = 65536;      // 64 KiB per encoded value
+    public const MAX_VALUE_BYTES = 65536;      // 64 KiB per value, its JSON as UTF-8 text
     public const MAX_KEYS_PER_SCOPE = 500;
     public const MAX_KEYS_PER_STORE = 5000;    // across every scope of one (owner, app)
     public const SCOPE_PATTERN = '/^[a-z][a-z0-9:_.-]{0,63}$/';
@@ -84,7 +84,10 @@ class FlowKvService
         $scope = $this->sanitizeScope($scope);
         $key = $this->sanitizeKey($key);
 
-        $encoded = json_encode($value);
+        // Measured and kept as UTF-8 text: with PHP's default escapes each non-ASCII character is
+        // six bytes and each `/` two, and a value in any language but English was refused at a
+        // third of the 64 KiB. Read back by json_decode() the same either way.
+        $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($encoded === false || strlen($encoded) > self::MAX_VALUE_BYTES) {
             throw new \InvalidArgumentException('Value exceeds the 64KB limit');
         }

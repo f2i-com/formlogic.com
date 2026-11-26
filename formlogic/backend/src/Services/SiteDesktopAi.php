@@ -162,9 +162,16 @@ final class SiteDesktopAi
         if (strlen((string) base64_decode($envelope, true)) > DesktopAiRelayService::MAX_ENVELOPE_BYTES) {
             sodium_memzero($ephemeral);
             sodium_memzero($pair);
-            throw new SiteAiTooLargeException($own
-                ? 'This is too large for OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.'
-                : 'This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. Use a smaller picture or fewer of them.');
+            // Said by what overflowed. Without its pictures the turn is its text: when that alone
+            // is past the limit, a smaller picture would not have helped, and there may be none.
+            $text = strlen(json_encode(self::withoutPictures($turn), self::PLAIN_JSON)) + self::NONCE_BYTES + SODIUM_CRYPTO_BOX_MACBYTES;
+            throw new SiteAiTooLargeException(
+                ($own ? 'This is too large for OAIY' : 'This is too large for the site\'s AI on OAIY')
+                . ', which takes about 250 KB a request. '
+                . ($text > DesktopAiRelayService::MAX_ENVELOPE_BYTES
+                    ? 'It is the text that is too long: send less of it, or start a new conversation.'
+                    : 'Use a smaller picture or fewer of them.')
+            );
         }
         // Said before anything is queued. How many turns wait is counted as this one is queued, under
         // the lane's lock (enqueue): counted here, two at once could both find the last place free.
@@ -213,6 +220,26 @@ final class SiteDesktopAi
             $head += ['threadId' => 'site-' . bin2hex(random_bytes(12)), 'clientSeq' => 1];
         }
         return $head + $body;
+    }
+
+    /**
+     * A turn with its pictures taken out, to measure what its text alone comes to: the address of
+     * each `image_url` part of a chat's messages (a picture travels as a data: address), and the
+     * `reference` a picture to edit is sent as.
+     */
+    private static function withoutPictures(array $turn): array
+    {
+        if (is_string($turn['reference'] ?? null)) {
+            $turn['reference'] = '';
+        }
+        foreach (is_array($turn['messages'] ?? null) ? $turn['messages'] : [] as $at => $message) {
+            foreach (is_array($message) && is_array($message['content'] ?? null) ? $message['content'] : [] as $part => $content) {
+                if (is_array($content) && ($content['type'] ?? null) === 'image_url') {
+                    $turn['messages'][$at]['content'][$part]['image_url'] = ['url' => ''];
+                }
+            }
+        }
+        return $turn;
     }
 
     /**

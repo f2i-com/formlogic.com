@@ -263,6 +263,47 @@ final class SiteDesktopAiLaneTest extends TestCase
         $this->assertCount(2, $this->relay->requests);
     }
 
+    /**
+     * A turn too large for the lane is refused by what made it so. "Use a smaller picture" was said
+     * of every one, a long conversation with no picture in it included.
+     */
+    public function testATurnTooLargeIsRefusedByWhatIsTooLarge(): void
+    {
+        $site = $this->site();
+        $target = $this->settings->current();
+        $said = function (array $body, ?array $to = null) use ($site, $target): string {
+            try {
+                $site->send($to ?? $target, $body, $this->member);
+            } catch (\FormLogic\Services\SiteAiTooLargeException $e) {
+                return $e->getMessage();
+            }
+            $this->fail('a turn past the lane\'s limit was sent');
+        };
+        $lead = 'This is too large for the site\'s AI on OAIY, which takes about 250 KB a request. ';
+        $text = 'It is the text that is too long: send less of it, or start a new conversation.';
+        $picture = 'Use a smaller picture or fewer of them.';
+        $jpeg = static fn (int $bytes): array => ['type' => 'image_url', 'image_url' => ['url' => 'data:image/jpeg;base64,' . base64_encode(str_repeat("\xff", $bytes))]];
+        $long = str_repeat('word ', 60000);
+
+        // Text alone, with no picture anywhere.
+        $this->assertSame($lead . $text, $said(['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => $long]]]));
+        // A picture that takes it past the limit, beside text that fits.
+        $this->assertSame($lead . $picture, $said(['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'What is this?'], $jpeg(250000)]]]]));
+        // A small picture beside text that would not fit without it either.
+        $this->assertSame($lead . $text, $said(['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => [['type' => 'text', 'text' => $long], $jpeg(2000)]]]]));
+        // A picture to edit (App AI), and a prompt that is too long by itself.
+        $this->assertSame($lead . $picture, $said(['kind' => 'image', 'prompt' => 'A kite', 'reference' => base64_encode(str_repeat("\xff", 250000))]));
+        $this->assertSame($lead . $text, $said(['kind' => 'image', 'prompt' => $long]));
+
+        // On a member's own computer it is that OAIY, in the same words.
+        $own = $this->computers->link($this->member, 'inst-own', base64_encode(random_bytes(32)), false);
+        $this->assertSame(
+            'This is too large for OAIY, which takes about 250 KB a request. ' . $text,
+            $said(['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => $long]]], $this->settings->listingTarget($this->member, $own, null))
+        );
+        $this->assertSame([], $this->relay->requests, 'nothing too large was queued');
+    }
+
     public function testWhatIsRefusedNamesWhoseComputerItIs(): void
     {
         // The owner's own computer, asked for its list while it is off: that computer, not the site's AI.

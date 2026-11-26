@@ -102,7 +102,9 @@ class DesktopCommandService
 
         // Whatever its case. A member's grant is matched without regard to case (the permission
         // column's collation), so `call.takeover` passed that check while missing this one, and
-        // was queued for the owner's computer to make of what it would.
+        // was queued for the owner's computer to make of what it would. A member's command is
+        // now queued as their grant spells it (ConnectorCommandController::commandAsGranted),
+        // and a grant can be written in any case too, so this stays as it is.
         $command = strtolower(trim($command));
         return str_starts_with($command, 'remote.')
             || in_array($command, array_map('strtolower', self::PRIVATE_AOKIE_RELAY_COMMANDS), true);
@@ -205,7 +207,11 @@ class DesktopCommandService
             if (!is_array($data['payload'])) {
                 throw new \InvalidArgumentException('payload must be an object');
             }
-            $json = json_encode($data['payload']);
+            // Measured as the UTF-8 text the caller sent, like the result that comes back
+            // (complete()): PHP's default escapes write each non-ASCII character as \uXXXX and
+            // each `/` as `\/`, so a payload in any language but English was refused at a third
+            // of the limit.
+            $json = json_encode($data['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_PAYLOAD_BYTES) {
                 throw new \InvalidArgumentException('payload exceeds the ' . self::MAX_PAYLOAD_BYTES . '-byte limit');
             }

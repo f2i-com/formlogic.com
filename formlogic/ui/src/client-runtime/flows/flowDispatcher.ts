@@ -839,19 +839,10 @@ async function deferToDesktop(eventName: string, languages: readonly string[] = 
   return shouldDeferEventToDesktop(eventName, languages);
 }
 
-/**
- * The source OAIY gives the events that say how its own flows' runs ended: `flow.succeeded`,
- * `flow.failed`, `flow.timed_out` and `flow.cancelled`, the names FormLogic's outcome bindings
- * listen for (components/flows/bindings/outcomeTrigger.ts).
- */
-const OAIY_FLOW_OUTCOME_SOURCE = 'flows';
-
+// Bindings match an event by its name alone. The end of a run OAIY made of its own flow carries
+// the names outcome bindings listen for, and the hub keeps it from every listener, this one
+// included (desktopEvents ingestDesktopEvent, DESKTOP_OWN_FLOW_SOURCE).
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
-  // An outcome binding is for the end of one of FormLogic's own runs, and the server hands that
-  // on as a queued handler run: it never comes by this hub. What does come by it under those
-  // names is the end of a run OAIY made on this computer, of a flow that may be nothing of this
-  // app's. Matched by name, it started every outcome binding that names no source flow.
-  if (envelope.source === OAIY_FLOW_OUTCOME_SOURCE) return;
   void enqueueBrowserConnectorEvent(envelope, async () => {
     // A binding reserves first, which puts the event in the app's run log. What arrives here is
     // the viewer's own (a call, a text), so someone else's app is asked about before that.

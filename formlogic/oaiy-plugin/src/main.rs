@@ -19,6 +19,7 @@
 mod client;
 mod commands;
 mod envelope;
+mod host;
 mod identity;
 mod jobs;
 mod keys;

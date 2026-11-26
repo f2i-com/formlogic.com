@@ -209,6 +209,24 @@ class CustomLogicSanitizerTest extends TestCase
         }
     }
 
+    /**
+     * `flows` is the source of OAIY Desktop's own events: OAIY takes no plugin by that id, and the
+     * browser keeps every event from it from its listeners, so a pack's connector under that name
+     * would never hear its own. The browser refuses the manifest; a save keeps none either. A name
+     * that only begins the same way is any other connector's.
+     */
+    public function testRejectsTheDesktopsOwnFlowsSourceAsAConnectorId(): void
+    {
+        $with = static fn (string $id): array => CustomLogicSanitizer::sanitize(['scripts' => [], 'connector' => [
+            'manifest' => ['connectorId' => $id, 'kind' => 'k', 'label' => 'L', 'commands' => ['x']],
+        ]]);
+        $this->assertArrayNotHasKey('connector', $with('flows'));
+        $this->assertNull(CustomLogicSanitizer::sanitizeConnector(['manifest' => ['connectorId' => 'flows', 'kind' => 'k', 'label' => 'L', 'commands' => ['x']]]));
+        foreach (['flows-bridge', 'flow', 'my_flows'] as $other) {
+            $this->assertSame($other, $with($other)['connector']['manifest']['connectorId'] ?? null, $other);
+        }
+    }
+
     public function testSizeCapRejectsUnencodableBundle(): void
     {
         // Invalid UTF-8 makes json_encode() return false; that must be treated as over cap,

@@ -42,8 +42,8 @@
  * release-side statements of the same digest, and all three are checked.
  *
  * WHAT THE EVIDENCE IS WORTH. `release-evidence-linux.json` is written by the
- * build, then stamped `verified`/`pass` with its run id by
- * oaiy.com/scripts/attest-release-evidence.mjs, which re-hashes every artifact
+ * build, then stamped `verified`/`pass` with its run id by oaiy.com's
+ * platform/scripts/attest-release-evidence.mjs, which re-hashes every artifact
  * it records before it will stamp anything, and the publish step refuses a
  * release whose evidence does not name the revision it built. That is a
  * STRUCTURAL ATTESTATION, not a cryptographic signature: it proves the

@@ -593,6 +593,11 @@ class ExternalApiController
         } catch (PrivateFormEncryptedException $e) {
             // §9.2: answer filters on a private form refuse typed, never wrong results.
             return $this->jsonError($response, $e->getMessage(), 400, PrivateFormEncryptedException::ERROR_CODE);
+        } catch (\FormLogic\Services\ResponseListRefused $e) {
+            // A form kept in an app's table, asked for a list that table cannot give (`afterId`,
+            // `updatedSince` with no `updated_at` column, rows past its offset limit): the reason,
+            // never other rows for a client that trusts the listing.
+            return $this->jsonError($response, $e->getMessage(), 400, $e->errorCode);
         }
         $responses = array_map([$this, 'sanitizeResponseData'], $responses);
         if ($since === null) {
@@ -977,6 +982,14 @@ class ExternalApiController
         // not for external consumers.
         if (isset($form['settings']) && is_array($form['settings'])) {
             unset($form['settings']['notifications']);
+            // Whether the retention period it names deletes anything: not for a form bound to a
+            // table of an app's own, whose rows are the app's (ResponseService::retentionApplies).
+            $days = (int) ($form['settings']['retentionDays'] ?? 0);
+            if ($days > 0) {
+                $form['retention'] = ResponseService::retentionApplies($form['settings'])
+                    ? ['days' => $days, 'applies' => true]
+                    : ['days' => $days, 'applies' => false, 'reason' => 'This form\'s records are the rows of a table of an app\'s own, which FormLogic never deletes on a retention period. Delete them in the app, or clear them from the form.'];
+            }
         }
         return $form;
     }

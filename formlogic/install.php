@@ -18,6 +18,11 @@
  * api/bin/upgrade.php (MySQLConnection::initializeSchema + runMigrations), plus the schema_meta
  * stamp (upgrade_source=installer).
  *
+ * Who may run it: a first install is run from the server itself (this page opened there as
+ * http://localhost/… or 127.0.0.1), or over the network by whoever holds the INSTALL_TOKEN the
+ * operator set (`SetEnv INSTALL_TOKEN <a long random secret>` in the web-root .htaccess, then
+ * install.php?token=<that secret>). Whoever finishes the wizard owns the site (flInstallerRefusal).
+ *
  * IMPORTANT: Delete this file after installation is complete. It also hard-disables itself once a
  * configured .env exists — deliberately re-enable it with INSTALL_ENABLE=1 (e.g. `SetEnv
  * INSTALL_ENABLE 1` in the web-root .htaccess) to use the upgrade mode, then remove that again.
@@ -65,11 +70,16 @@ $alreadyInstalled = flEnvIsConfigured($envPath);
 // Installer access guard
 // ---------------------------------------------------------------------------
 // The installer is a powerful setup tool — lock it down so it can't be abused if it's
-// accidentally left online. Allowed only from localhost, unless INSTALL_ENABLE=1 is set
-// in the server environment (a deliberate opt-in for remote installs — e.g. `SetEnv
-// INSTALL_ENABLE 1` in .htaccess). Once installed, the web installer is hard-disabled
-// regardless of origin. "From localhost" means a direct request: one that arrives through a
-// proxy or tunnel on the same host is not local (flInstallerIsLocalRequest).
+// accidentally left online (flInstallerRefusal).
+//
+// A first install is run from the server itself, or by whoever holds the INSTALL_TOKEN the
+// operator set in the server environment (`SetEnv INSTALL_TOKEN <a long random secret>` in
+// .htaccess): whoever finishes the wizard owns the site. "From the server itself" means a direct
+// request for the machine's own name: one that arrives through a proxy or tunnel on the same
+// host, or that asks for the site's public name, is not local (flInstallerIsLocalRequest).
+//
+// Once installed, the web installer is hard-disabled regardless of origin, until INSTALL_ENABLE=1
+// in the server environment re-opens its upgrade mode (`SetEnv INSTALL_ENABLE 1`).
 $installEnableRaw = getenv('INSTALL_ENABLE');
 if ($installEnableRaw === false || $installEnableRaw === '') {
     // Apache `SetEnv INSTALL_ENABLE 1` surfaces here (mod_php / FPM) even when getenv() misses it.
@@ -77,6 +87,15 @@ if ($installEnableRaw === false || $installEnableRaw === '') {
 }
 $installEnabled = in_array(strtolower((string) $installEnableRaw), ['1', 'true', 'yes'], true);
 $isLocalRequest = flInstallerIsLocalRequest($_SERVER);
+
+// The shared secret (SetEnv INSTALL_TOKEN <random>). Configured, every caller must prove it. It
+// is what a first install takes from anywhere but the server itself, and what replacing an
+// installed site's configuration takes besides being on the server.
+$installTokenRaw = getenv('INSTALL_TOKEN');
+if ($installTokenRaw === false || $installTokenRaw === '') {
+    $installTokenRaw = $_SERVER['INSTALL_TOKEN'] ?? ($_SERVER['REDIRECT_INSTALL_TOKEN'] ?? '');
+}
+$installToken = is_string($installTokenRaw) ? trim($installTokenRaw) : '';
 
 // CSRF token & hardened session cookie (started before the post-install guard so the same
 // browser session that just completed installation can invoke `delete_installer` once).
@@ -92,8 +111,27 @@ session_set_cookie_params([
 ]);
 session_start();
 
+// Whether this caller has proven the token: earlier in this browser session, or with this request.
+$tokenProven = false;
+if ($installToken !== '') {
+    $expectedHash = hash('sha256', $installToken);
+    $tokenProven = is_string($_SESSION['install_token_hash'] ?? null)
+        && hash_equals($expectedHash, $_SESSION['install_token_hash']);
+    if (!$tokenProven) {
+        $provided = $_SERVER['HTTP_X_INSTALL_TOKEN']
+            ?? ($_POST['install_token'] ?? ($_GET['token'] ?? ''));
+        if (is_string($provided) && $provided !== '' && hash_equals($installToken, $provided)) {
+            session_regenerate_id(true);
+            $_SESSION['install_token_hash'] = $expectedHash;
+            $tokenProven = true;
+        }
+    }
+}
+
+// The session that has just finished the install may delete install.php: from the server itself,
+// or as the holder of the token it installed with (a first install over the network).
 $canDeleteAfterInstall = $alreadyInstalled
-    && ($isLocalRequest || $installEnabled)
+    && ($isLocalRequest || $installEnabled || $tokenProven)
     && (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST')
     && (($_POST['action'] ?? '') === 'delete_installer')
     && !empty($_SESSION['fl_install_completed']);
@@ -101,7 +139,8 @@ $canDeleteAfterInstall = $alreadyInstalled
 $installerDenied = null;
 $installerDeniedExtraHtml = '';
 $backendRelName = basename(flBackendDir()); // 'api' (deployed zip) or 'backend' (source checkout)
-if ($alreadyInstalled && !$installEnabled && !$canDeleteAfterInstall) {
+$installerRefusal = flInstallerRefusal($alreadyInstalled, $installEnabled, $isLocalRequest, $installToken !== '', $canDeleteAfterInstall);
+if ($installerRefusal === 'installed') {
     $installerDenied = 'FormLogic is already installed. For security the web installer disables itself '
         . 'once a configured ' . $backendRelName . '/.env exists — delete install.php now. '
         . 'To deliberately re-run it (e.g. to use the upgrade mode), set the environment variable INSTALL_ENABLE=1.';
@@ -116,14 +155,21 @@ if ($alreadyInstalled && !$installEnabled && !$canDeleteAfterInstall) {
         . '<li>Or this wizard&#8217;s upgrade mode: temporarily add <code>SetEnv INSTALL_ENABLE 1</code> at the top of the'
         . ' web-root <code>.htaccess</code> (Apache), reload this page, run the upgrade — then'
         . ' <strong>remove that line and delete install.php</strong>.</li></ol>';
-} elseif (!$isLocalRequest && !$installEnabled) {
-    $installerDenied = 'For security, run the installer from the server itself (localhost), '
-        . 'or set the environment variable INSTALL_ENABLE=1 to allow remote setup. '
-        . 'A request that reaches the server through a proxy or tunnel counts as remote, even from the same machine.';
+} elseif ($installerRefusal === 'not_local') {
+    $installerDenied = 'For security, a first install is run from the server itself: open this page there as '
+        . 'http://localhost/… (or 127.0.0.1). To install over the network instead, set the environment variable '
+        . 'INSTALL_TOKEN to a long random secret of your own and open this page with ?token=<that secret>. '
+        . 'A request that reaches the server through a proxy or tunnel, or under the site\'s own name, counts as '
+        . 'remote, even from the same machine.'
+        // Said to whoever followed the older instructions, so they are not left reloading.
+        . ($installEnabled ? ' INSTALL_ENABLE=1 is set, and does not open a first install: it re-opens the wizard on a site that is already installed.' : '');
     $installerDeniedExtraHtml =
-        '<p style="margin-top:1rem">Installing over the network (e.g. a release zip uploaded to a remote host)?'
-        . ' Temporarily add this line at the top of the web-root <code>.htaccess</code> (Apache), then reload:</p>'
-        . '<pre style="background:#f1f5f9;padding:8px 12px;border-radius:8px"><code>SetEnv INSTALL_ENABLE 1</code></pre>'
+        '<p style="margin-top:1rem">Installing over the network (e.g. a release zip uploaded to a remote host, or a'
+        . ' server behind a proxy)? Temporarily add this line at the top of the web-root <code>.htaccess</code> (Apache),'
+        . ' with a long random secret of your own in place of the last word:</p>'
+        . '<pre style="background:#f1f5f9;padding:8px 12px;border-radius:8px"><code>SetEnv INSTALL_TOKEN replace-this-with-a-long-random-secret</code></pre>'
+        . '<p>Then open <code>install.php?token=</code> followed by that secret. Whoever finishes this wizard owns the'
+        . ' site, so the secret is what keeps a stranger from finishing it first.</p>'
         . '<p><strong>Remove the line and delete install.php as soon as you are done.</strong></p>';
 }
 if ($installerDenied !== null) {
@@ -142,40 +188,22 @@ if ($installerDenied !== null) {
     exit;
 }
 
-// Optional shared secret (SetEnv INSTALL_TOKEN <random>) for authenticated remote installs/upgrades.
-$installTokenRaw = getenv('INSTALL_TOKEN');
-if ($installTokenRaw === false || $installTokenRaw === '') {
-    $installTokenRaw = $_SERVER['INSTALL_TOKEN'] ?? ($_SERVER['REDIRECT_INSTALL_TOKEN'] ?? '');
-}
-$installToken = is_string($installTokenRaw) ? trim($installTokenRaw) : '';
-if ($installToken !== '') {
-    $expectedHash = hash('sha256', $installToken);
-    $authed = is_string($_SESSION['install_token_hash'] ?? null)
-        && hash_equals($expectedHash, $_SESSION['install_token_hash']);
-    if (!$authed) {
-        $provided = $_SERVER['HTTP_X_INSTALL_TOKEN']
-            ?? ($_POST['install_token'] ?? ($_GET['token'] ?? ''));
-        if (is_string($provided) && $provided !== '' && hash_equals($installToken, $provided)) {
-            session_regenerate_id(true);
-            $_SESSION['install_token_hash'] = $expectedHash;
-            $authed = true;
-        }
+// A configured INSTALL_TOKEN is asked of every caller the wizard answers, the server's own
+// browser included. Past this point `$installToken !== ''` means it has been proven.
+if ($installToken !== '' && !$tokenProven) {
+    http_response_code(403);
+    $tokenMsg = 'Installer token required or invalid. Supply the configured INSTALL_TOKEN via ?token= or X-Install-Token.';
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        header('Content-Type: application/json');
+        echo json_encode(['success' => false, 'message' => $tokenMsg]);
+    } else {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Installer token required</title>'
+            . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
+            . '<h1 style="font-size:1.4rem">Installer token required</h1><p>'
+            . htmlspecialchars($tokenMsg, ENT_QUOTES) . '</p></body></html>';
     }
-    if (!$authed) {
-        http_response_code(403);
-        $tokenMsg = 'Installer token required or invalid. Supply the configured INSTALL_TOKEN via ?token= or X-Install-Token.';
-        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
-            header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'message' => $tokenMsg]);
-        } else {
-            header('Content-Type: text/html; charset=utf-8');
-            echo '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Installer token required</title>'
-                . '<body style="font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#0f172a">'
-                . '<h1 style="font-size:1.4rem">Installer token required</h1><p>'
-                . htmlspecialchars($tokenMsg, ENT_QUOTES) . '</p></body></html>';
-        }
-        exit;
-    }
+    exit;
 }
 
 if (empty($_SESSION['install_csrf'])) {
@@ -201,8 +229,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'This site is already installed, and the wizard only inspects and '
             . 'upgrades it. To change its configuration, edit ' . $backendRelName . '/.env on the server; or set the '
-            . 'environment variable INSTALL_TOKEN to a secret of your own and open this page from the server itself '
-            . '(localhost) with ?token=<that secret>.']);
+            . 'environment variable INSTALL_TOKEN to a secret of your own and open this page on the server itself, '
+            . 'as http://localhost/…, with ?token=<that secret>.']);
         exit;
     }
 
@@ -291,6 +319,16 @@ function flEnvIsConfigured(string $envPath): bool
  * header and a browser on the server talking to the web server directly sends none, so a request
  * that carries one is not local. Forging one only makes the sender remote.
  *
+ * A hop that adds no header (stunnel, an SSH or kubectl port forward, socat, HAProxy without
+ * `option forwardfor`) passes a visitor's request on as it came, and it came for the site's
+ * public name. So the name asked for has to be the machine's own too (flInstallerIsLoopbackHost):
+ * a visitor who typed the site's address is not local, whatever carried the request here.
+ *
+ * This narrows who looks local; it proves nothing. The Host header is the sender's to write, and
+ * a proxy that rewrites it to its upstream's address (nginx `proxy_pass` with no
+ * `proxy_set_header Host`) sends a loopback name for everyone. What must not rest on a guess
+ * about the network rests on the INSTALL_TOKEN (flInstallerActionAllowed).
+ *
  * @param array<string,mixed> $server $_SERVER
  */
 function flInstallerIsLocalRequest(array $server): bool
@@ -308,7 +346,36 @@ function flInstallerIsLocalRequest(array $server): bool
             return false;
         }
     }
-    return true;
+    return flInstallerIsLoopbackHost($server['HTTP_HOST'] ?? null);
+}
+
+/**
+ * Whether a request's Host names the machine it arrived at: `localhost`, `127.0.0.1` or `[::1]`,
+ * with or without a port. No Host at all is not one of them.
+ */
+function flInstallerIsLoopbackHost(mixed $host): bool
+{
+    return is_string($host) && preg_match('/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/Di', $host) === 1;
+}
+
+/**
+ * Why the wizard does not answer a request at all, or null when it does (what it may then be asked
+ * is flInstallerActionAllowed's, and a configured INSTALL_TOKEN is asked for after this).
+ *
+ *  - 'installed': the site is installed, and the wizard is closed until INSTALL_ENABLE=1 opens
+ *    its upgrade mode. The one request let through is the browser session that has just finished
+ *    the install deleting install.php.
+ *  - 'not_local': nothing is installed yet, and whoever finishes the wizard owns the site. That
+ *    is for a request from the server itself, or for whoever holds the INSTALL_TOKEN the operator
+ *    set, and for nobody else. INSTALL_ENABLE=1 does not open it: that says the wizard may be
+ *    reached, to anyone who can reach the site.
+ */
+function flInstallerRefusal(bool $alreadyInstalled, bool $installEnabled, bool $isLocalRequest, bool $tokenConfigured, bool $deletingAfterInstall = false): ?string
+{
+    if ($alreadyInstalled) {
+        return $installEnabled || $deletingAfterInstall ? null : 'installed';
+    }
+    return $isLocalRequest || $tokenConfigured ? null : 'not_local';
 }
 
 /**
@@ -1616,8 +1683,8 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     <p class="help-text" style="margin-top:10px;">
       This wizard only inspects and upgrades an installed site. To change its configuration, edit
       <code><?= $backendRelHtml ?>/.env</code> on the server; or set the environment variable
-      <code>INSTALL_TOKEN</code> to a secret of your own and open this page from the server itself
-      (localhost) with <code>?token=</code> and that secret.
+      <code>INSTALL_TOKEN</code> to a secret of your own and open this page on the server itself, as
+      <code>http://localhost/&hellip;</code>, with <code>?token=</code> and that secret.
     </p>
     <?php endif; ?>
     <p class="help-text" style="margin-top:10px;">
@@ -1891,8 +1958,9 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
       <strong>Security — delete this file.</strong> Delete <code>install.php</code> from the web root now
       that setup is complete. The wizard also hard-disables itself once a configured
       <code><?= $backendRelHtml ?>/.env</code> exists (re-running it then requires deliberately setting
-      <code>INSTALL_ENABLE=1</code>), but deleting the file is the guarantee. If you added
-      <code>SetEnv INSTALL_ENABLE 1</code> to your <code>.htaccess</code> for this session, remove that line too.
+      <code>INSTALL_ENABLE=1</code>), but deleting the file is the guarantee. If you added a
+      <code>SetEnv INSTALL_TOKEN</code> or <code>SetEnv INSTALL_ENABLE</code> line to your <code>.htaccess</code>
+      for this session, remove that line too.
       <div style="margin-top:12px;">
         <button class="btn btn-secondary" onclick="deleteInstaller()" id="btn-delete-installer">Delete install.php now</button>
         <span id="delete-installer-status" style="margin-left:10px;font-size:13px;"></span>
@@ -1950,7 +2018,7 @@ function detectInstall() {
       el.className = 'alert alert-warn';
       parts.push(CAN_RECONFIGURE
         ? '<strong>No upgradable database found</strong> — a fresh install / reconfigure is probably what you want.'
-        : '<strong>No upgradable database found</strong> — check the DB_* values in ' + esc(d.backendRel) + '/.env on the server. Reconfiguring is only offered from the server itself (localhost).');
+        : '<strong>No upgradable database found</strong> — check the DB_* values in ' + esc(d.backendRel) + '/.env on the server. Reconfiguring is only offered from the server itself (localhost), with the INSTALL_TOKEN.');
       chooseMode('fresh');
     }
     el.innerHTML = parts.join('<br>');

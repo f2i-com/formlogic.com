@@ -1256,7 +1256,7 @@ describe('image_gen', () => {
     return { id: 'img', type: 'image_gen', data: { prompt: 'a fox', ...data } };
   }
   /** OAIY's own engine: what the step asks when it names neither a service nor an endpoint. */
-  function engineDeps(answer: { ok: true; data: Record<string, unknown> } | { ok: false; message: string } | null) {
+  function engineDeps(answer: { ok: true; data: Record<string, unknown> } | { ok: false; message: string; unanswered?: true } | null) {
     const generateDesktopImage = vi.fn<(body: Record<string, unknown>, signal?: AbortSignal) => Promise<typeof answer>>(async () => answer);
     const fetchFn = okBrowserFetchUnused();
     return { deps: fakeDeps({ fetchFn, generateDesktopImage, resolveDesktopServiceBase: vi.fn(async () => null) }), generateDesktopImage, fetchFn };
@@ -1296,6 +1296,18 @@ describe('image_gen', () => {
     expect(err.code).toBe('node_failed');
     expect(err.message).toContain('no picture model is switched on');
     expect(err.message).toMatch(/Engines/);
+  });
+
+  // OAIY took the request and its engine may be drawing still. Said as a refusal, the step asked
+  // whether a picture model was switched on, of a computer that was busy making the picture.
+  it('says a picture OAIY did not answer in time may be coming still, and sends nobody to switch a model on', async () => {
+    const { deps, generateDesktopImage } = engineDeps({ ok: false, message: 'OAIY Desktop did not answer in time.', unanswered: true });
+    const err = (await executeNode(ctxFor(imgNode({}), deps)).catch((e: unknown) => e)) as FlowExecError;
+    expect(err.code).toBe('node_failed');
+    expect(err.message).toBe("Node 'img': OAIY took the request and had no picture in time. It may be making it still: a picture can take minutes on a modest computer.");
+    expect(err.message).not.toMatch(/Engines|could not make/);
+    // It is asked for once.
+    expect(generateDesktopImage).toHaveBeenCalledTimes(1);
   });
 
   it('returns imageUrl from a named service of the person\'s own (its /generate shape)', async () => {

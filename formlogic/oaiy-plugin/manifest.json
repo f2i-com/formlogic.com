@@ -29,7 +29,8 @@
     "connector.formlogic-backups.settings.set",
     "connector.formlogic-backups.key.setup",
     "connector.formlogic-backups.key.recover",
-    "connector.formlogic-backups.jobs.get"
+    "connector.formlogic-backups.jobs.get",
+    "oaiy.browser.open"
   ],
   "connectors": [
     {

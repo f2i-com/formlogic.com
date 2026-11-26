@@ -870,7 +870,9 @@ class ChatToolsService
                 $this->appService->updateAppLocked($appId, static function (array $app) use ($item): array {
                     $reports = is_array($app['reports'] ?? null) ? $app['reports'] : [];
                     $reports[] = $item;
-                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    // As UTF-8 text, as the owner's own save and a pack measure them (AppController,
+                    // PackService): escaped, a report in any language but English met the limit at a third of it.
+                    if (strlen((string) json_encode($reports, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
                     return ['reports' => $reports];
                 });
                 $data = $item;
@@ -906,7 +908,8 @@ class ChatToolsService
                     if ($this->reportValidator !== null) {
                         $reports = $this->reportValidator->sanitizeReports($reports, $appId);
                     }
-                    if (strlen((string) json_encode($reports)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
+                    // As UTF-8 text, as create_report measures them.
+                    if (strlen((string) json_encode($reports, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > 262144) { throw new \Exception('Reports exceed the 256KB limit'); }
                     return ['reports' => $reports];
                 });
                 $data = $item;
@@ -2015,7 +2018,7 @@ class ChatToolsService
                     throw new \Exception("field at index {$i} {$problem}");
                 }
             }
-            if (strlen((string) json_encode($args['fields'])) > 2097152) {
+            if (strlen((string) json_encode($args['fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > 2097152) {
                 throw new \Exception('fields exceed the 2MB limit');
             }
         }
@@ -2036,7 +2039,7 @@ class ChatToolsService
             throw new \Exception('customScreen has unknown keys: ' . implode(', ', $unknown) . ' (a widget dashboard is { kind:"dashboard", dashboard:{ cols, widgets } })');
         }
         // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
-        if (strlen((string) json_encode($cs)) > 2097152) {
+        if (strlen((string) json_encode($cs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > 2097152) {
             throw new \Exception('customScreen exceeds the 2MB limit');
         }
     }

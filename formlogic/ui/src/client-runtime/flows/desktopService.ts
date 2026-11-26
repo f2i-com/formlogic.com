@@ -48,10 +48,14 @@ export async function resolveDesktopServiceBase(serviceId: string): Promise<stri
   return pickServiceBase(res.data, serviceId);
 }
 
-/** How asking OAIY's engine for a picture went (the `image_gen` node's default source). */
+/**
+ * How asking OAIY's engine for a picture went (the `image_gen` node's default source).
+ * `unanswered`: OAIY took the request and no answer came in time. It refused nothing and may be
+ * drawing still, so the step says that, and not that something there needs switching on.
+ */
 export type DesktopImageOutcome =
   | { ok: true; data: Record<string, unknown> }
-  | { ok: false; message: string };
+  | { ok: false; message: string; unanswered?: true };
 
 /**
  * A picture from the paired OAIY's own engine: the picture model switched on there, or the one
@@ -61,7 +65,8 @@ export type DesktopImageOutcome =
 export async function generateDesktopImage(body: Record<string, unknown>, signal?: AbortSignal): Promise<DesktopImageOutcome | null> {
   if (!oaiyRouteAvailable()) return null;
   const res = await oaiyEngineImage(body, { signal });
-  return res.ok ? { ok: true, data: res.data } : { ok: false, message: res.error.message };
+  if (res.ok) return { ok: true, data: res.data };
+  return res.error.code === 'connector_uncertain' ? { ok: false, message: res.error.message, unanswered: true } : { ok: false, message: res.error.message };
 }
 
 /** One Desktop service, shaped for flow logic (the `desktop_services` node). */

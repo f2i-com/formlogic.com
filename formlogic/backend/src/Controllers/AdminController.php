@@ -81,7 +81,8 @@ class AdminController
      * POST /api/admin/confirm { password, code? }: the administrator proves who they are, password
      * and two-factor code both, for the next fifteen minutes of this session. See
      * AdminConfirmationMiddleware. The code is only read after the password, so a guess can't burn
-     * a recovery code.
+     * a recovery code; and its answers are counted against the account's budget of code answers,
+     * as at sign-in (MfaService::verifySessionCode), so knowing the password is no run at the code.
      */
     public function confirm(Request $request, Response $response): Response
     {
@@ -90,7 +91,14 @@ class AdminController
         $body = $request->getParsedBody() ?? [];
         $confirmed = is_string($session) && $this->auth->verifyPassword($adminId, (string) ($body['password'] ?? ''));
         if ($confirmed && ($this->mfaService?->isEnabled($adminId) ?? false)) {
-            $confirmed = $this->mfaService->verifyChallenge($adminId, (string) ($body['code'] ?? ''));
+            try {
+                $confirmed = $this->mfaService->verifySessionCode($adminId, (string) ($body['code'] ?? ''));
+            } catch (\FormLogic\Services\SecondFactorLockedException $e) {
+                $this->audit($request, 'admin.confirm_denied', $adminId, ['reason' => 'account_budget']);
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 429);
+            } catch (\FormLogic\Services\RateLimiterUnavailableException $e) {
+                return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage(), 'retryable' => true], 503);
+            }
         }
         if (!$confirmed) {
             $this->audit($request, 'admin.confirm_denied', $adminId);
@@ -761,7 +769,7 @@ class AdminController
                     return $this->jsonResponse($response, ['error' => true, 'message' => "field at index {$i} is malformed (must be an object with a type)"], 400);
                 }
             }
-            if (strlen((string) json_encode($input['fields'])) > 2097152) {
+            if (strlen((string) json_encode($input['fields'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)) > 2097152) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'fields exceed the 2MB limit'], 400);
             }
         }

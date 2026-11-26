@@ -40,8 +40,12 @@ class CustomLogicSanitizer
     public const MAX_DRIVER_BYTES = 131072;
     private const CONNECTOR_ID_PATTERN = '/^[a-z][a-z0-9_-]{0,63}$/';
     // Ids of the host's built-in browser connectors — a pack may never claim one
-    // (mirror of nativeConnectorClient's BUILT_IN_CONNECTOR_IDS).
-    private const RESERVED_CONNECTOR_IDS = ['device', 'vehicle', 'local_http'];
+    // (mirror of nativeConnectorClient's BUILT_IN_CONNECTOR_IDS) — and `flows`, the source of
+    // OAIY Desktop's own events (the end of a run of its flows): OAIY takes no plugin by that id,
+    // and the browser keeps every event from it from its listeners (desktopEvents
+    // DESKTOP_OWN_FLOW_SOURCE), so a connector under it would never hear its own. The browser
+    // refuses such a manifest too (packConnectorDriver validateConnectorManifest).
+    private const RESERVED_CONNECTOR_IDS = ['device', 'vehicle', 'local_http', 'flows'];
 
     /**
      * @param array<string,mixed> $bundle
@@ -276,7 +280,7 @@ class CustomLogicSanitizer
      *  (e.g. invalid UTF-8) is treated as over cap — it can never be stored/round-tripped safely. */
     public static function withinSizeCap(array $bundle): bool
     {
-        $json = json_encode($bundle);
+        $json = json_encode($bundle, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         return $json !== false && strlen($json) <= self::MAX_BUNDLE_BYTES;
     }
 }

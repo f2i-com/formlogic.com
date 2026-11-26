@@ -183,9 +183,89 @@ final class InstallerReliabilityTest extends TestCase
     public function testADirectRequestFromTheMachineItselfIsLocal(): void
     {
         self::assertTrue(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_HOST' => 'localhost']));
-        self::assertTrue(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '::1']));
-        self::assertFalse(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '203.0.113.9']));
+        self::assertTrue(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '::1', 'HTTP_HOST' => '[::1]:8080']));
+        self::assertFalse(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '203.0.113.9', 'HTTP_HOST' => 'localhost']));
         self::assertFalse(\flInstallerIsLocalRequest([]));
+    }
+
+    /**
+     * A hop on the same host that adds no forwarding header (stunnel, an SSH or kubectl port
+     * forward, socat, HAProxy without `option forwardfor`) hands a visitor's request on as it
+     * came: from 127.0.0.1, and for the site's public name. With only the address and the headers
+     * to go by, every such visitor was local, and a first install was theirs to finish. A request
+     * is local when the name it asked for is the machine's own as well.
+     */
+    public function testARequestForTheSitesOwnNameIsNotLocalWhateverCarriedIt(): void
+    {
+        $from = static fn (string $host, string $peer = '127.0.0.1'): bool => \flInstallerIsLocalRequest(['REMOTE_ADDR' => $peer, 'HTTP_HOST' => $host]);
+
+        foreach (['localhost', 'LOCALHOST', 'localhost:8080', '127.0.0.1', '127.0.0.1:80', '[::1]', '[::1]:8443'] as $host) {
+            self::assertTrue($from($host), "$host is the machine's own name");
+            self::assertTrue($from($host, '::1'), "$host is the machine's own name");
+        }
+        foreach ([
+            'forms.example.com', 'forms.example.com:443', '203.0.113.9', '192.168.1.20:8080', '',
+            // Names that only look like the machine's own.
+            'localhost.example.com', 'notlocalhost', 'localhost@forms.example.com', '127.0.0.1.example.com',
+            '127.0.0.10', '::1', '[::1].example.com', 'localhost:', 'localhost:80:80', "localhost\n", 'localhost/', ' localhost',
+        ] as $host) {
+            self::assertFalse($from($host), var_export($host, true) . ' is not the machine\'s own name');
+        }
+        // A request that names no host at all, or more than one, has not asked for this machine.
+        self::assertFalse(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '127.0.0.1']));
+        self::assertFalse(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_HOST' => ['localhost']]));
+        // The name alone, from somewhere else, is not local either.
+        self::assertFalse($from('localhost', '203.0.113.9'));
+        self::assertFalse(\flInstallerIsLocalRequest(['REMOTE_ADDR' => '127.0.0.1', 'HTTP_HOST' => 'localhost', 'HTTP_X_FORWARDED_FOR' => '198.51.100.7']));
+    }
+
+    /**
+     * Whoever finishes a first install owns the site. From the server itself it needs nothing
+     * more; from anywhere else it takes the INSTALL_TOKEN, a secret only the operator set.
+     * INSTALL_ENABLE=1 used to open it to the network on its own, to anyone who got there first.
+     */
+    public function testAFirstInstallIsForTheServerItselfOrTheHolderOfTheToken(): void
+    {
+        // flInstallerRefusal($alreadyInstalled, $installEnabled, $isLocalRequest, $tokenConfigured)
+        self::assertNull(\flInstallerRefusal(false, false, true, false), 'from the server itself');
+        self::assertSame('not_local', \flInstallerRefusal(false, false, false, false), 'over the network, with no token set');
+        self::assertSame('not_local', \flInstallerRefusal(false, true, false, false), 'INSTALL_ENABLE=1 is no proof of anything');
+        // With a token set the wizard goes on to ask for it, of the server's own browser too.
+        self::assertNull(\flInstallerRefusal(false, false, false, true));
+        self::assertNull(\flInstallerRefusal(false, false, true, true));
+
+        // An installed site is as it was: closed, until INSTALL_ENABLE=1 opens its upgrade mode,
+        // but for the session that has just installed it deleting install.php.
+        self::assertSame('installed', \flInstallerRefusal(true, false, true, true));
+        self::assertSame('installed', \flInstallerRefusal(true, false, false, false));
+        self::assertNull(\flInstallerRefusal(true, true, false, false));
+        self::assertNull(\flInstallerRefusal(true, false, true, false, true));
+
+        // The page is held to that rule, and asks for a configured token before it does anything.
+        $installer = (string) file_get_contents(dirname(__DIR__, 3) . '/install.php');
+        self::assertStringContainsString('$installerRefusal = flInstallerRefusal($alreadyInstalled, $installEnabled, $isLocalRequest, $installToken !== \'\', $canDeleteAfterInstall);', $installer);
+        self::assertStringContainsString('if ($installToken !== \'\' && !$tokenProven) {', $installer);
+        self::assertLessThan(
+            strpos($installer, '$csrfToken = $_SESSION[\'install_csrf\'];'),
+            strpos($installer, 'if ($installToken !== \'\' && !$tokenProven) {'),
+            'the token is asked for before a request is given the page or an action'
+        );
+    }
+
+    /**
+     * What a person is told when the wizard turns them away has to be what gets them in: the
+     * token, or the server's own address. It said INSTALL_ENABLE=1, which no longer does.
+     */
+    public function testTheWizardSaysWhatAFirstInstallOverTheNetworkTakes(): void
+    {
+        $installer = (string) file_get_contents(dirname(__DIR__, 3) . '/install.php');
+        preg_match('/\} elseif \(\$installerRefusal === \'not_local\'\) \{(.*?)\R\}\R/s', $installer, $refusal);
+        self::assertNotEmpty($refusal, 'the wizard has an answer for a first install from elsewhere');
+        self::assertStringContainsString('INSTALL_TOKEN', $refusal[1]);
+        self::assertStringContainsString('SetEnv INSTALL_TOKEN', $refusal[1]);
+        self::assertStringContainsString('?token=', $refusal[1]);
+        self::assertStringContainsString('http://localhost/', $refusal[1]);
+        self::assertStringNotContainsString('SetEnv INSTALL_ENABLE', $refusal[1], 'it no longer opens a first install');
     }
     /**
      * Behind nginx, Caddy, cloudflared or ngrok on the same host, every visitor on the internet

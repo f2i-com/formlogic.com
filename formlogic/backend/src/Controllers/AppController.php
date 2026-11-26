@@ -189,7 +189,7 @@ class AppController
             if (($data['customScreen']['kind'] ?? '') === 'dashboard' && is_array($data['customScreen']['dashboard'] ?? null) && $this->reportValidator !== null) {
                 $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboard($data['customScreen']['dashboard'], []);
             }
-            $screenJson = json_encode($data['customScreen']);
+            $screenJson = json_encode($data['customScreen'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($screenJson !== false && strlen($screenJson) > 2097152) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 2MB or smaller'], 400);
             }
@@ -205,7 +205,7 @@ class AppController
                 return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
             }
             if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 400);
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (256 KB max)'], 400);
             }
         }
 
@@ -401,7 +401,7 @@ class AppController
             if (($data['customScreen']['kind'] ?? '') === 'dashboard' && is_array($data['customScreen']['dashboard'] ?? null) && $this->reportValidator !== null) {
                 $data['customScreen']['dashboard'] = $this->reportValidator->sanitizeDashboardForApp($data['customScreen']['dashboard'], $args['id']);
             }
-            $screenJson = json_encode($data['customScreen']);
+            $screenJson = json_encode($data['customScreen'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             // 2MB: screens may carry image assets as data: URIs in `files` (base64 inflates ~4/3).
             if ($screenJson !== false && strlen($screenJson) > 2097152) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom home must be 2MB or smaller'], 400);
@@ -412,7 +412,9 @@ class AppController
             if (!is_array($data['reports'])) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Reports must be an array'], 400);
             }
-            $reportsJson = json_encode($data['reports']);
+            // As UTF-8 text, as the AI's report tools and a pack measure them (ChatToolsService,
+            // PackService): escaped, a report in any language but English met the limit at a third of it.
+            $reportsJson = json_encode($data['reports'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($reportsJson !== false && strlen($reportsJson) > 262144) {
                 return $this->jsonResponse($response, ['error' => true, 'message' => 'Reports data is too large'], 400);
             }
@@ -436,7 +438,7 @@ class AppController
                 return $this->jsonResponse($response, ['error' => true, 'message' => $e->getMessage()], 400);
             }
             if (!\FormLogic\Helpers\CustomLogicSanitizer::withinSizeCap($data['customLogic'])) {
-                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (100KB max)'], 400);
+                return $this->jsonResponse($response, ['error' => true, 'message' => 'Custom logic is too large (256 KB max)'], 400);
             }
         }
 

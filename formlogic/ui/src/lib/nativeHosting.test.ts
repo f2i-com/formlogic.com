@@ -104,6 +104,43 @@ describe('importNativeProject', () => {
     expect(imported.assets).toEqual({});
   });
 
+  it('keeps the .htaccess files of an app with a container backend, which the host applies', async () => {
+    // A PHP app protects install.php and its includes/ folder with them. Dropped at import, as the
+    // one beside the manifest was (and one in a folder refused), nothing protected either.
+    const php = {
+      'manifest.json': JSON.stringify({ name: 'Shop', main: 'index.html', engine: 2, backend: { runtime: 'php', entry: 'index.php' } }),
+      'index.html': '<h1>Shop</h1>', 'index.php': '<?php echo 1;', 'install.php': '<?php echo 2;', 'includes/config.php': '<?php $key = 1;',
+    };
+    const rules = { '.htaccess': '<Files "install.php">\n  Require all denied\n</Files>\n', 'includes/.htaccess': 'Require all denied\n', 'assets/.htaccess': 'Options -Indexes\n' };
+    const project = await importNativeProject(softn({ ...php, ...rules }));
+    expect(project.files).toMatchObject(rules);
+    expect(project.assets).toEqual({});
+    // What the owner downloads carries them, so the app can be brought back as it was.
+    const again = await importNativeProject(new File([exportNativeProject(project) as BlobPart], 'again.softn'));
+    expect(again.files).toEqual(project.files);
+    expect(sourceNameProblem('includes/.htaccess')).toBeNull();
+    // The runner reads none of one over 64 KB, so it is refused rather than kept and ignored.
+    await expect(importNativeProject(softn({ ...php, '.htaccess': '#'.repeat(64 * 1024 + 1) }))).rejects.toThrow('.htaccess is larger than this host reads of an .htaccess (64 KB), so none of its rules would be applied');
+    await expect(importNativeProject(softn({ ...php, '.htaccess': '#'.repeat(64 * 1024) }))).resolves.toMatchObject({ version: 0 });
+    await expect(importNativeProject(softn({ ...php, 'includes/.htaccess': new Uint8Array([0xff, 0xfe, 0xfd]) }))).rejects.toThrow('includes/.htaccess is not UTF-8 text');
+  });
+
+  it('leaves out the .htaccess of an app with no container backend, as before: nothing here would apply it', async () => {
+    // A static package carries one for the web server it was made for.
+    const project = await importNativeProject(softn({ ...client, '.htaccess': 'Options -Indexes\n' }));
+    expect(Object.keys(project.files)).not.toContain('.htaccess');
+    await expect(importNativeProject(softn({ ...client, 'docs/.htaccess': 'Require all denied\n' }))).rejects.toThrow('docs/.htaccess is a kind of file this host cannot keep with an app. Remove it');
+  });
+
+  it('names an .htaccess and holds it to the size the server does', () => {
+    const php = readFileSync(resolve(process.cwd(), '../backend/src/Services/NativeAppService.php'), 'utf8');
+    const browser = readFileSync(resolve(process.cwd(), 'src/lib/nativeHosting.ts'), 'utf8');
+    const server = /HTACCESS_PATH = '~([^']*)~D'/.exec(php)?.[1];
+    expect(server).toBe('^(?:[a-zA-Z0-9_-]+/)*\\.htaccess$');
+    expect(/HTACCESS_PATH = \/([^\n]*)\/;/.exec(browser)?.[1].replace(/\\\//g, '/')).toBe(server);
+    expect(/MAX_HTACCESS_BYTES = ([0-9 *]+);/.exec(php)?.[1]).toBe(/HTACCESS_BYTES = ([0-9 *]+);/.exec(browser)?.[1]);
+  });
+
   it('keeps the same source file kinds as the server', () => {
     // NativeAppService::SOURCE_PATH and this file's must name the same extensions, or a file one takes the other refuses.
     const php = readFileSync(resolve(process.cwd(), '../backend/src/Services/NativeAppService.php'), 'utf8');
@@ -189,11 +226,12 @@ describe('importNativeProject', () => {
     const imported = await importNativeProject(softn(phpContainer));
     expect(imported.files['backend/index.php']).toContain('json_encode');
     expect(imported.files['backend/schema.sql']).toContain('CREATE TABLE');
-    // Root .htaccess from standalone Web Container bundles is stripped rather than stored on the host.
-    expect(imported.files['.htaccess']).toBeUndefined();
-    // Other dotfiles and nested .htaccess files are still refused.
+    // A container app's .htaccess is kept, beside the manifest or in a folder: the host applies its
+    // rules and sends it to no page. (It was stripped or refused, and protected nothing.)
+    expect(imported.files['.htaccess']).toBe(phpContainer['.htaccess']);
+    await expect(importNativeProject(softn({ ...phpContainer, 'backend/.htaccess': 'Deny from all' }))).resolves.toMatchObject({ files: { 'backend/.htaccess': 'Deny from all' } });
+    // Other dotfiles are still refused.
     await expect(importNativeProject(softn({ ...phpContainer, '.env': 'SECRET=1' }))).rejects.toThrow();
-    await expect(importNativeProject(softn({ ...phpContainer, 'backend/.htaccess': 'Deny from all' }))).rejects.toThrow();
 
     await expect(
       importNativeProject(softn({
@@ -222,5 +260,42 @@ describe('importNativeProject', () => {
         'server/main.logic': 'function ping() { return { status: 200 }; }',
       }))
     ).rejects.toThrow(/both/i);
+  });
+
+  it('names a container backend as SoftN names it: runtime and entry, never engine or entrypoint', async () => {
+    // This host once took `engine` and `entrypoint` in their place. SoftN's runner reads neither,
+    // so such an app was refused as it was installed, for a capability it never asked for, and
+    // would run on no other SoftN host.
+    const withBackend = (backend: Record<string, unknown>) => softn({
+      'manifest.json': JSON.stringify({ id: 'test.alias', name: 'Alias', engine: 2, main: 'index.html', backend }),
+      'index.html': '<h1>Alias</h1>',
+      ...(String(backend.engine ?? backend.runtime) === 'python' ? { 'backend/main.py': 'def handle(req): pass' } : { 'backend/index.php': '<?php echo 1;' }),
+    });
+    const runtime = 'manifest.json\'s backend names its runtime as "engine", which SoftN does not read, so the app would run on no SoftN host. Rename "engine" to "runtime".';
+    const entry = 'manifest.json\'s backend names its entry as "entrypoint", which SoftN does not read, so the app would run on no SoftN host. Rename "entrypoint" to "entry".';
+    await expect(importNativeProject(withBackend({ engine: 'php', entrypoint: 'backend/index.php' }))).rejects.toThrow(runtime);
+    await expect(importNativeProject(withBackend({ engine: 'python', entry: 'backend/main.py' }))).rejects.toThrow(runtime);
+    await expect(importNativeProject(withBackend({ runtime: 'php', entrypoint: 'backend/index.php' }))).rejects.toThrow(entry);
+    await expect(importNativeProject(withBackend({ runtime: 'php', entry: 'backend/index.php' }))).resolves.toMatchObject({ version: 0 });
+    // Beside SoftN's own names, another key is one more it does not read.
+    await expect(importNativeProject(withBackend({ runtime: 'php', entry: 'backend/index.php', engine: 'cobol', entrypoint: 'missing.php' }))).resolves.toMatchObject({ version: 0 });
+  });
+
+  it('holds backend.root to a folder of the project, as it holds backend.entry', async () => {
+    // backend.root says which files stay on the server: FormLogic hides them from pages, and the
+    // runner refuses to run a script under it by its address. Each reads the name its own way, so
+    // one that is not plainly a folder of the project could keep different files private on each.
+    const withRoot = (root: unknown) => softn({
+      'manifest.json': JSON.stringify({ id: 'test.root', name: 'Root', engine: 2, main: 'index.html', backend: { runtime: 'php', entry: 'api/index.php', root } }),
+      'index.html': '<h1>Root</h1>',
+      'api/index.php': '<?php echo 1;',
+    });
+    const refused = 'manifest.json\'s backend.root must name a folder in the project, such as "api" or "server/api": no "..", no leading "/" or drive letter, and at most 240 characters.';
+    for (const root of ['api', 'api/', 'server/api_v2', 'a-b/c_d', 'a'.repeat(240), '', null, undefined]) {
+      await expect(importNativeProject(withRoot(root)), String(root)).resolves.toMatchObject({ version: 0 });
+    }
+    for (const root of ['../api', 'api/../..', '..', '/api', '\\api', 'api\\lib', 'C:/api', 'c:api', 'api//lib', './api', 'api.v2', ' api', 7, true, ['api'], { path: 'api' }, `${'a'.repeat(240)}/`, 'a'.repeat(241)]) {
+      await expect(importNativeProject(withRoot(root)), JSON.stringify(root)).rejects.toThrow(refused);
+    }
   });
 });

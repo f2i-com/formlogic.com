@@ -306,8 +306,8 @@ impl App {
             return Err(NOT_NOW.to_string());
         }
         self.jobs.step(job, "Waiting for you to sign in in your browser");
-        let account = link::sign_in(server, native::computer_name().as_deref())?;
-        link::save(&self.data, &account)?;
+        // Saved in there, before the browser's tab is told anything: link::sign_in.
+        let account = link::sign_in(server, native::computer_name().as_deref(), &self.data)?;
         self.note(|standing| *standing = Standing::default());
         self.ask_formlogic(&account, true);
         Ok(json!({"server": account.base_url, "accountEmail": account.account_email}))
@@ -357,8 +357,11 @@ impl App {
         if !native::confirm(&asked)? {
             return Err(NOT_NOW.to_string());
         }
-        let account = Self::redeemed(server, code, owner).inspect_err(|_| self.note(|standing| standing.offer_failed = true))?;
-        link::save(&self.data, &account)?;
+        // A link that can't be saved is no link: it is ended at FormLogic like one for the wrong
+        // account, and the page says it didn't connect.
+        let account = Self::redeemed(server, code, owner)
+            .and_then(|account| link::keep(&self.data, &account).map(|()| account))
+            .inspect_err(|_| self.note(|standing| standing.offer_failed = true))?;
         self.note(|standing| *standing = Standing::default());
         self.ask_formlogic(&account, true);
         Ok(json!({"server": account.base_url, "accountEmail": account.account_email}))

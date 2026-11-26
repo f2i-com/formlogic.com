@@ -994,6 +994,9 @@ class AppPublicController
         } catch (\FormLogic\Services\PrivateFormEncryptedException $e) {
             // §9.2: answer filters/sort/search over ciphertext refuse loudly.
             return $this->jsonError($response, $e->getMessage(), 400, \FormLogic\Services\PrivateFormEncryptedException::ERROR_CODE);
+        } catch (\FormLogic\Services\ResponseListRefused $e) {
+            // A form kept in an app's table, asked for a list that table cannot give.
+            return $this->jsonError($response, $e->getMessage(), 400, $e->errorCode);
         }
         $responses = $result['responses'];
         $total = (int) ($result['total'] ?? count($responses));
@@ -1720,20 +1723,29 @@ class AppPublicController
             if ($scope === 'own') {
                 $searchOptions['submittedByUserId'] = $userId;
             }
-            $result = $this->responseService->getFormResponsesSearchable(
-                $targetFormId,
-                $searchQuery,
-                $effectiveSearchFields,
-                $searchOptions
-            );
+            try {
+                $result = $this->responseService->getFormResponsesSearchable(
+                    $targetFormId,
+                    $searchQuery,
+                    $effectiveSearchFields,
+                    $searchOptions
+                );
+            } catch (\FormLogic\Services\ResponseListRefused $e) {
+                // A target kept in an app's table, asked for rows past where it is read by offset.
+                return $this->jsonError($response, $e->getMessage(), 400, $e->errorCode);
+            }
             $matchedResponses = $result['responses'];
             $totalCount = $result['total'];
         } else {
             // No search — use existing pagination at SQL level
-            $matchedResponses = $this->appResponseService->getResponses($targetFormId, $scope, $userId, [
-                'limit' => $limit,
-                'offset' => $offset,
-            ]);
+            try {
+                $matchedResponses = $this->appResponseService->getResponses($targetFormId, $scope, $userId, [
+                    'limit' => $limit,
+                    'offset' => $offset,
+                ]);
+            } catch (\FormLogic\Services\ResponseListRefused $e) {
+                return $this->jsonError($response, $e->getMessage(), 400, $e->errorCode);
+            }
             // Get total count for pagination (scoped to user if scope=own)
             $totalCount = $this->responseService->getResponseCount(
                 $targetFormId,

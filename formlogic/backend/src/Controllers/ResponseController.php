@@ -12,6 +12,7 @@ use FormLogic\Services\EnvelopeValidator;
 use FormLogic\Services\EncryptionEnablingException;
 use FormLogic\Services\FormEncryptionService;
 use FormLogic\Services\PrivateFormEncryptedException;
+use FormLogic\Services\ResponseListRefused;
 use FormLogic\Services\ResponseService;
 use FormLogic\Services\FormService;
 use FormLogic\Services\AppService;
@@ -398,12 +399,23 @@ class ResponseController
             // §9.2: answer filters / answer-field sorting on a private form. Plain
             // listing (no content params) is allowed and never reaches here.
             return $this->privateFormError($response, $e);
+        } catch (ResponseListRefused $e) {
+            return $this->listRefused($response, $e);
         }
 
         return $this->jsonResponse($response, [
             'responses' => $responses,
             'count' => count($responses),
         ]);
+    }
+
+    /**
+     * A form kept in an app's table was asked for a list that table cannot give (a filter it has
+     * no column for, rows past where it is read by offset): the reason, never other rows.
+     */
+    private function listRefused(Response $response, ResponseListRefused $e): Response
+    {
+        return $this->jsonError($response, $e->getMessage(), 400, $e->errorCode);
     }
 
     /**
@@ -1563,11 +1575,17 @@ class ResponseController
                 // Defensive (§9.2): a private form can never be a linked-record
                 // target (enable preflight), but refuse loudly if one is asked for.
                 return $this->privateFormError($response, $e);
+            } catch (ResponseListRefused $e) {
+                return $this->listRefused($response, $e);
             }
             $matched = $result['responses'];
             $totalCount = $result['total'];
         } else {
-            $matched = $this->responseService->getFormResponses($targetFormId, ['limit' => $limit, 'offset' => $offset]);
+            try {
+                $matched = $this->responseService->getFormResponses($targetFormId, ['limit' => $limit, 'offset' => $offset]);
+            } catch (ResponseListRefused $e) {
+                return $this->listRefused($response, $e);
+            }
             $totalCount = $this->responseService->getResponseCount($targetFormId, null);
         }
 

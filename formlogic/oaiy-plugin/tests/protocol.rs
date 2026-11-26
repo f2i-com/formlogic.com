@@ -42,6 +42,16 @@ fn folder() -> PathBuf {
 
 impl Plugin {
     fn start() -> Plugin {
+        Plugin::start_with(json!({"desktopVersion": "0.1.11", "pluginApiVersion": 1, "devMode": false}))
+    }
+
+    /// Started by an OAIY that says it answers `calls` (`hostCalls`, as OAIY's `plugin.init` has it).
+    #[cfg(windows)]
+    fn start_answering(calls: &[&str]) -> Plugin {
+        Plugin::start_with(json!({"desktopVersion": "0.1.12", "pluginApiVersion": 1, "devMode": false, "hostCalls": calls}))
+    }
+
+    fn start_with(init: Value) -> Plugin {
         let folder = folder();
         let mut child = Command::new(env!("CARGO_BIN_EXE_formlogic-backups"))
             .env_clear()
@@ -65,8 +75,35 @@ impl Plugin {
             }
         });
         let mut plugin = Plugin { child, stdin, lines, held: Vec::new(), next_id: 0, next_request: 0, folder };
-        assert_eq!(plugin.rpc("plugin.init", json!({"desktopVersion": "0.1.11", "pluginApiVersion": 1, "devMode": false}))["result"], json!({"ok": true}));
+        assert_eq!(plugin.rpc("plugin.init", init)["result"], json!({"ok": true}));
         plugin
+    }
+
+    /// A request the plugin makes of OAIY, once it does.
+    #[cfg(windows)]
+    fn asked_of_oaiy(&mut self, method: &str) -> Value {
+        if let Some(at) = self.held.iter().position(|message| message["method"] == method) {
+            return self.held.remove(at);
+        }
+        loop {
+            let message = self.lines.recv_timeout(IN_TIME).unwrap_or_else(|_| panic!("the plugin did not ask OAIY {method} in time"));
+            if message["method"] == method {
+                return message;
+            }
+            self.held.push(message);
+        }
+    }
+
+    /// OAIY's answer to a request of the plugin's: `answer` is its `result` or its `error` member.
+    #[cfg(windows)]
+    fn answer_as_oaiy(&mut self, id: &Value, answer: Value) {
+        let mut line = json!({"jsonrpc": "2.0", "id": id});
+        for (key, value) in answer.as_object().unwrap() {
+            line[key] = value.clone();
+        }
+        let stdin = self.stdin.as_mut().unwrap();
+        writeln!(stdin, "{line}").unwrap();
+        stdin.flush().unwrap();
     }
 
     fn send(&mut self, id: u64, method: &str, params: Value) {
@@ -416,11 +453,15 @@ fn the_browser_opens_and_the_sign_in_comes_back_through_the_plugin() {
     let started = plugin.data("link.connect", json!({"server": formlogic.base}));
     let opened = plugin.windows().join("opened.txt");
     let until = Instant::now() + IN_TIME;
-    while !opened.exists() {
+    // The whole line: the file is there a moment before what is written to it.
+    let url = loop {
+        let url = std::fs::read_to_string(&opened).unwrap_or_default();
+        if url.ends_with('\n') {
+            break url;
+        }
         assert!(Instant::now() < until, "the browser never opened");
         std::thread::sleep(Duration::from_millis(20));
-    }
-    let url = std::fs::read_to_string(&opened).unwrap();
+    };
     assert!(url.starts_with(&format!("{}/oauth/authorize?", formlogic.base)), "{url}");
     assert!(url.contains("device=Test%20Computer"), "{url}");
     assert!(!started.to_string().contains("oauth/authorize"), "the address is not in an answer");
@@ -434,6 +475,130 @@ fn the_browser_opens_and_the_sign_in_comes_back_through_the_plugin() {
     assert_eq!(job["state"], "failed");
     assert!(job["message"].as_str().unwrap().contains("refused"), "{job}");
     assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+}
+
+/// The port a sign-in's address says the plugin listens on, and its state.
+#[cfg(windows)]
+fn sign_in_in(url: &str) -> (u16, String) {
+    let field = |name: &str| url.trim().split(['?', '&']).find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_string)).unwrap();
+    let port = field("redirect_uri").split("%3A").nth(2).unwrap().split('%').next().unwrap().parse().unwrap();
+    (port, field("state"))
+}
+
+/// On Windows a browser the plugin starts itself is in the job OAIY ends when it exits, so one
+/// first started by Connect was closed with OAIY, every tab in it too. An OAIY that opens pages
+/// itself is asked to, and the plugin opens nothing of its own.
+#[cfg(windows)]
+#[test]
+fn on_windows_an_oaiy_that_opens_the_browser_is_asked_to_and_the_plugin_opens_none_itself() {
+    let mut plugin = Plugin::start_answering(&["flow.run", "oaiy.browser.open"]);
+    let formlogic = fake_formlogic(&[("/api/oauth/authorize-info", 200, json!({"clientName": "FormLogic Backups"}))]);
+    plugin.answer(&["yes"]);
+    let started = plugin.data("link.connect", json!({"server": formlogic.base}));
+    let asked = plugin.asked_of_oaiy("oaiy.browser.open");
+    let url = asked["params"]["url"].as_str().unwrap().to_string();
+    assert!(url.starts_with(&format!("{}/oauth/authorize?", formlogic.base)), "{url}");
+    assert!(asked["id"].is_string(), "{asked}");
+    plugin.answer_as_oaiy(&asked["id"], json!({"result": {"ok": true}}));
+
+    // The sign-in goes on as it did: the browser says no, and the wait ends. The plugin opened none.
+    let (port, state) = sign_in_in(&url);
+    let mut browser = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(browser, "GET /callback?error=access_denied&state={state} HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+    let job = plugin.wait_for_job(started["jobId"].as_str().unwrap());
+    assert_eq!(job["state"], "failed", "{job}");
+    assert!(!plugin.windows().join("opened.txt").exists(), "the plugin opened a browser of its own");
+}
+
+/// An OAIY that will not open it (the person did not grant the plugin that, or it could not)
+/// leaves the plugin to open it, as it always did.
+#[cfg(windows)]
+#[test]
+fn on_windows_an_oaiy_that_does_not_open_the_browser_leaves_the_plugin_to_open_it_itself() {
+    let mut plugin = Plugin::start_answering(&["oaiy.browser.open"]);
+    let formlogic = fake_formlogic(&[("/api/oauth/authorize-info", 200, json!({"clientName": "FormLogic Backups"}))]);
+    plugin.answer(&["yes"]);
+    let started = plugin.data("link.connect", json!({"server": formlogic.base}));
+    let asked = plugin.asked_of_oaiy("oaiy.browser.open");
+    let refused = json!({"code": -32601, "message": "formlogic-backups does not declare the oaiy.browser.open capability", "data": {"code": "capability_denied"}});
+    plugin.answer_as_oaiy(&asked["id"], json!({"error": refused}));
+    let (port, state) = sign_in_opened(&plugin);
+    let mut browser = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(browser, "GET /callback?error=access_denied&state={state} HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+    assert_eq!(plugin.wait_for_job(started["jobId"].as_str().unwrap())["state"], "failed");
+}
+
+/// The sign-in the plugin opened a browser for, once it has: the port it listens on, and its state.
+fn sign_in_opened(plugin: &Plugin) -> (u16, String) {
+    let opened = plugin.windows().join("opened.txt");
+    let until = Instant::now() + IN_TIME;
+    let url = loop {
+        let url = std::fs::read_to_string(&opened).unwrap_or_default();
+        if url.contains("&state=") && url.ends_with('\n') {
+            break url;
+        }
+        assert!(Instant::now() < until, "the browser never opened");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let field = |name: &str| url.trim().split(['?', '&']).find_map(|pair| pair.strip_prefix(&format!("{name}=")).map(str::to_string)).unwrap();
+    let port = field("redirect_uri").split("%3A").nth(2).unwrap().split('%').next().unwrap().parse().unwrap();
+    (port, field("state"))
+}
+
+/// The key FormLogic answers a sign-in with is in the plugin's memory until it is saved. With
+/// nowhere to save it the tab had already said "connected", FormLogic went on holding a key for
+/// a computer that had none, and the next start found no link.
+#[test]
+fn a_sign_in_whose_link_cannot_be_saved_connects_nothing_and_ends_it_at_formlogic() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[
+        ("/api/oauth/authorize-info", 200, json!({"clientName": "FormLogic Backups"})),
+        ("/api/oauth/token", 200, json!({"formlogic_api_key": "flk_test", "api_key_id": "k1", "account_id": "u1", "account_email": "owner@example.test"})),
+        ("/api/v1/data-node/self", 200, json!({"data": {"ok": true}})),
+    ]);
+    // A folder has the link's name, so no file can take it.
+    std::fs::create_dir(plugin.data_dir().join("link.json")).unwrap();
+    plugin.answer(&["yes"]);
+    let started = plugin.data("link.connect", json!({"server": formlogic.base}));
+    let (port, state) = sign_in_opened(&plugin);
+
+    let mut browser = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(browser, "GET /callback?code=the-code&state={state} HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+    let mut shown = String::new();
+    browser.read_to_string(&mut shown).unwrap();
+    assert!(shown.contains("Nothing was connected"), "{shown}");
+    assert!(!shown.contains("is connected"), "{shown}");
+
+    let job = plugin.wait_for_job(started["jobId"].as_str().unwrap());
+    assert_eq!(job["state"], "failed", "{job}");
+    let said = job["message"].as_str().unwrap();
+    assert!(said.starts_with("Could not save the link: ") && said.ends_with(". Nothing was connected."), "{job}");
+    assert!(formlogic.saw("POST /api/oauth/token"), "the code was swapped");
+    assert!(formlogic.saw("DELETE /api/v1/data-node/self"), "the key it got is ended");
+    assert!(!formlogic.saw("/api/v1/data-node/register"), "and FormLogic is not told of a computer that kept nothing");
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+}
+
+/// The same for a link FormLogic offered: the key the code was swapped for is ended, not left.
+#[test]
+fn an_offered_link_that_cannot_be_saved_is_ended_at_formlogic() {
+    let mut plugin = Plugin::start();
+    let formlogic = fake_formlogic(&[
+        ("/api/oauth/backup-link", 200, json!({"formlogic_api_key": "flk_test", "api_key_id": "k1", "account_id": "u1", "account_email": "owner@example.test"})),
+        ("/api/v1/data-node/self", 200, json!({"data": {"ok": true}})),
+    ]);
+    std::fs::create_dir(plugin.data_dir().join("link.json")).unwrap();
+    plugin.answer(&["yes"]);
+
+    let job = plugin.job("link.accept", offer(&formlogic.base));
+
+    assert_eq!(job["state"], "failed", "{job}");
+    let said = job["message"].as_str().unwrap();
+    assert!(said.starts_with("Could not save the link: ") && said.ends_with(". Nothing was connected."), "{job}");
+    assert!(formlogic.saw("DELETE /api/v1/data-node/self"), "the key it got is ended");
+    assert!(!formlogic.saw("/api/v1/data-node/register"));
+    assert_eq!(plugin.data("link.get", json!({})), json!({"linked": false}));
+    assert_eq!(plugin.data("status.get", json!({}))["detail"], "That didn't connect. Start again from FormLogic", "the plugin's page says so too");
 }
 
 /// A stand-in for FormLogic: answers each path it is given, and says what it was sent.

@@ -571,6 +571,40 @@ fwrite(STDOUT, "completed");
         $this->assertSame(['Kept', 'Second', 'After going back'], array_column($native->records(self::APP, 'notes')['rows'], 'title'));
     }
 
+    /**
+     * An `.htaccess` a container backend keeps is part of its version's source: kept with it, listed
+     * when it changed as a text file that can be shown, shown to its owner as every other file of
+     * the backend is, and back with the version when the app goes back to it. The comparison listed
+     * it, and opening it was refused as a file the version did not have.
+     */
+    public function testAContainerBackendsHtaccessIsKeptShownAndBroughtBackWithItsVersion(): void
+    {
+        // A container backend is started by Node, as the app host runs it (FORMLOGIC_NODE_BIN).
+        $native = new NativeAppService($this->storage);
+        if (!$native->available()) $this->markTestSkipped('The native runtime is not prepared.');
+        $versions = new NativeAppVersions($native);
+        $shop = static fn (string $rules): array => ['access' => 'application', 'home' => true, 'assets' => [], 'files' => [
+            'manifest.json' => '{"id":"test.shop","name":"Shop","main":"index.html","backend":{"runtime":"php","entry":"server/index.php"}}',
+            'index.html' => '<h1>Shop</h1>', 'server/index.php' => '<?php echo "{}";', 'includes/config.php' => '<?php return [];',
+            '.htaccess' => $rules, 'includes/.htaccess' => "Require all denied\n",
+        ]];
+        $one = "<Files \"install.php\">\nRequire all denied\n</Files>\n";
+        $native->install(self::APP, $shop($one), 0, null, ['by' => 'ana', 'how' => 'upload']);
+        $native->install(self::APP, $shop("<Files \"setup.php\">\nRequire all denied\n</Files>\n"), 1, null, ['by' => 'ana', 'how' => 'page']);
+
+        $this->assertContains(['path' => '.htaccess', 'text' => true], $versions->get(self::APP, 1)['differs']['changed']);
+        $this->assertSame($one, $versions->file(self::APP, 1, '.htaccess')['text']);
+        $this->assertSame("Require all denied\n", $versions->file(self::APP, 1, 'includes/.htaccess')['text']);
+        $this->assertStringContainsString('setup.php', $versions->file(self::APP, 2, '.htaccess')['text']);
+        // Not one the version does not hold.
+        $this->assertSame(404, $this->refused(fn () => $versions->file(self::APP, 1, 'server/.htaccess'))[0]);
+
+        // Going back brings them back with the rest of the version's source.
+        $this->assertSame(3, $versions->restore(self::APP, 1, 2, 'ana')['version']);
+        $now = $native->get(self::APP);
+        $this->assertSame([$one, "Require all denied\n"], [$now['files']['.htaccess'], $now['files']['includes/.htaccess']]);
+    }
+
     // ── An index that cannot be read, or is not one ──────────────────────────────────────────
 
     /** Three versions, each with a picture of its own: the history then keeps versions 2 and 1. */

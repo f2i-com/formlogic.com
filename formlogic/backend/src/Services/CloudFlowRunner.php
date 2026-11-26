@@ -168,7 +168,8 @@ class CloudFlowRunner
             return ['ok' => false, 'code' => 'cloud_unsupported_node', 'nodes' => $offenders];
         }
 
-        $snapshot = json_encode($inputs);
+        // As UTF-8 text, the measure FlowService holds every other run's inputs to.
+        $snapshot = json_encode($inputs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($snapshot === false || strlen($snapshot) > FlowService::MAX_INPUT_SNAPSHOT_BYTES) {
             throw new \InvalidArgumentException('inputs exceed the 64KB limit');
         }
@@ -702,7 +703,15 @@ class CloudFlowRunner
             };
         }
 
-        $raw = $this->responses->getFormResponses($formId, $options);
+        try {
+            $raw = $this->responses->getFormResponses($formId, $options);
+        } catch (ResponseListRefused $refused) {
+            // A form kept in an app's table refuses a list that table cannot answer (a filter it
+            // has no answer for, rows past what it reads by offset), and says why. Said on this
+            // node in those words, as every node's failure is: the closed node_failed set carries
+            // the refusal's code in the message. It was the run's "The flow run failed".
+            throw new CloudFlowNodeError('node_failed', "Node '{$node['id']}': " . $refused->getMessage() . " ({$refused->errorCode})", $node['id']);
+        }
         $rows = [];
         foreach ($raw as $item) {
             $row = $this->normalizeResponseRow($item);
@@ -1611,6 +1620,8 @@ class CloudFlowRunner
         ];
         $groupAppIds = $this->apps->sharedDatabaseGroupAppIds($targetAppId);
         $subscriptions = $this->flowService->nativeRecordSubscriptionsForApps($groupAppIds);
+        // The call asks for one of the site's workers: counted in its account's share of them.
+        $this->nativeApps->ownedBy($targetAppId, $owner);
         try {
             if (NativeAppService::hasContainerBackend($project)) {
                 if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], true)) {
@@ -1625,6 +1636,9 @@ class CloudFlowRunner
                     $rawBody = is_string($body) ? $body : json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
                     $bodyBase64 = base64_encode($rawBody);
                 }
+                // A flow has no request of its own to read the site's name from, so the backend is
+                // told the address the site is configured with: the one a page of this app is
+                // reached by, where its absolute links must point.
                 $rawResult = $this->nativeApps->containerRequest($targetAppId, [
                     'method' => $method,
                     'path' => $path,
@@ -1632,7 +1646,7 @@ class CloudFlowRunner
                     'headers' => (object) $headers,
                     'bodyBase64' => $bodyBase64,
                     'client_ip' => '127.0.0.1',
-                ], $identity, (int) ($project['version'] ?? 0), $subscriptions);
+                ] + NativeAppService::containerAddress($this->siteBaseUrl), $identity, (int) ($project['version'] ?? 0), $subscriptions);
                 $decodedText = base64_decode($rawResult['bodyBase64'], true);
                 $decodedText = is_string($decodedText) ? $decodedText : '';
                 $parsed = json_decode($decodedText, true);

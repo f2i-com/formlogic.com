@@ -19,6 +19,10 @@ use PDO;
  *   delete INTENT, so completing them is safe by construction. Orphaned SQLite files /
  *   upload dirs with no recorded intent are reported but never auto-deleted (they may
  *   hold recoverable data).
+ *
+ * A form whose records are kept in an app's table (`settings.nativeTableBinding`,
+ * NativeTableFormBridge) has none in a SQLite file of its own: its count is the table's,
+ * counted as the bridge counts it, and it is no drift that it has no file.
  */
 class ReconcileService
 {
@@ -30,8 +34,47 @@ class ReconcileService
         private SQLiteConnection $sqlite,
         private string $formsPath,
         private string $uploadsPath,
-        private ?FormService $formService = null
+        private ?FormService $formService = null,
+        private ?NativeTableFormBridge $nativeTables = null
     ) {
+    }
+
+    /**
+     * The forms that name a table of an app to keep their records in. Cheap: one read of the
+     * forms that say so, with no app's database opened. Whether each is bound in fact (the
+     * same owner, not private: resolveBinding) is boundForms()'s.
+     *
+     * @return array<string, true>
+     */
+    private function namingATable(): array
+    {
+        $out = [];
+        foreach ($this->mysql->query("SELECT id, settings FROM forms WHERE settings LIKE '%nativeTableBinding%'") ?: [] as $row) {
+            $settings = is_string($row['settings'] ?? null) ? json_decode($row['settings'], true) : null;
+            if (is_array($settings) && is_array($settings['nativeTableBinding'] ?? null)) {
+                $out[(string) $row['id']] = true;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * The forms whose records ResponseService reads from an app's table, by the rule it reads them
+     * by (NativeTableFormBridge::resolveBinding), with their bindings.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function boundForms(): array
+    {
+        $this->nativeTables ??= new NativeTableFormBridge($this->mysql, new NativeAppService());
+        $out = [];
+        foreach (array_keys($this->namingATable()) as $formId) {
+            $binding = $this->nativeTables->resolveBinding($formId);
+            if ($binding !== null) {
+                $out[$formId] = $binding;
+            }
+        }
+        return $out;
     }
 
     /** @return array<string, string[]> formId lists keyed by drift type — cheap (no SQLite opens). */
@@ -39,6 +82,8 @@ class ReconcileService
     {
         $formIds = $this->formIds();
         $formSet = array_fill_keys($formIds, true);
+        // Their records are in an app's table: no file of their own is no file missing.
+        $inATable = $this->namingATable();
 
         $sqliteIds = [];
         foreach (glob(rtrim($this->formsPath, '/') . '/*.sqlite') ?: [] as $path) {
@@ -56,7 +101,7 @@ class ReconcileService
         }
 
         return [
-            'missingSqlite' => array_values(array_filter($formIds, fn($id) => !isset($sqliteSet[$id]))),
+            'missingSqlite' => array_values(array_filter($formIds, fn($id) => !isset($sqliteSet[$id]) && !isset($inATable[$id]))),
             'orphanedSqlite' => array_values(array_filter($sqliteIds, fn($id) => !isset($formSet[$id]))),
             'orphanedUploads' => array_values(array_filter($uploadIds, fn($id) => !isset($formSet[$id]))),
         ];
@@ -77,7 +122,18 @@ class ReconcileService
         foreach ($this->mysql->query('SELECT form_id, COUNT(*) AS c FROM response_metadata GROUP BY form_id') as $r) {
             $metaCounts[$r['form_id']] = (int) $r['c'];
         }
+        $bound = $this->boundForms();
         foreach (array_keys($cached) as $formId) {
+            if (isset($bound[$formId])) {
+                // The table's count, as ResponseService::syncResponseCount keeps it. Its own file,
+                // where it has one, holds none of its records (or the ones it had before it was
+                // bound, which were copied to the table): fix() set the count to that.
+                $tableCount = $this->nativeTables?->countRows($bound[$formId]);
+                if ($tableCount !== null && $tableCount !== $cached[$formId]) {
+                    $countDrift[] = ['formId' => $formId, 'table' => $tableCount, 'cached' => $cached[$formId]];
+                }
+                continue; // a table that cannot be read is no count to set
+            }
             if (in_array($formId, $files['missingSqlite'], true)) {
                 continue; // no SQLite file → already reported
             }
@@ -251,7 +307,8 @@ class ReconcileService
             // Preserve updated_at (mirrors ResponseService::syncResponseCount) — a count resync
             // is maintenance, not a content edit, so it must not bump the form's "Last Modified".
             $stmt = $this->mysql->prepare('UPDATE forms SET response_count = :c, updated_at = updated_at WHERE id = :id');
-            $stmt->execute(['c' => $d['sqlite'], 'id' => $d['formId']]);
+            // A form kept in an app's table is counted there.
+            $stmt->execute(['c' => $d['table'] ?? $d['sqlite'], 'id' => $d['formId']]);
             $resynced[] = $d['formId'];
         }
         $linksDeleted = $this->mysql->exec(

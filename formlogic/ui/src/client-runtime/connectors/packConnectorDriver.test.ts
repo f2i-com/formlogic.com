@@ -119,6 +119,13 @@ describe('validateConnectorManifest', () => {
       expect(validateConnectorManifest({ ...MANIFEST, connectorId: id })).toContain('reserved');
     }
   });
+
+  // "flows" is the source of OAIY's own events (how its flows' runs ended), which the hub keeps
+  // from every listener: a connector under that name would be handed them as its own, or nothing.
+  it('rejects the id the desktop gives its own events', () => {
+    expect(validateConnectorManifest({ ...MANIFEST, connectorId: 'flows' })).toContain('reserved');
+    expect(registerPackConnector({ manifest: { ...MANIFEST, connectorId: 'flows' }, demoDriver: DRIVER }, new Set(['connector.flows.driver.demo']))).toContain('reserved');
+  });
 });
 
 describe('reserved-id registration guard (never clobber a built-in connector)', () => {

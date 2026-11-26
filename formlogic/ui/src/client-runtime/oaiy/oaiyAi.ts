@@ -55,6 +55,16 @@ export type OaiyAiChatResult =
   | { ok: false; error: DesktopErrorShape; transportFailure?: boolean; refusal?: { code: string; status: number } };
 
 /**
+ * What a request this page stopped waiting for comes to, a chat or a picture: its own time ran
+ * out, or the caller's signal did. It went out, so it is not a transport failure (the mark a
+ * caller reads as "OAIY was not there" and may answer by asking again, or by another route):
+ * OAIY may be working on it, and a provider billing for it, still.
+ */
+function unanswered(): { ok: false; error: DesktopErrorShape } {
+  return { ok: false, error: { code: 'connector_uncertain', message: 'OAIY Desktop did not answer in time.' } };
+}
+
+/**
  * Run a credential-hidden chat completion against an OAIY-hosted provider by id.
  * OAIY injects the key server-side; FormLogic only ever holds its pairing token.
  * Returns the raw OpenAI chat-completion object as `data` (matching
@@ -99,12 +109,7 @@ export async function oaiyAiChat(
     );
     text = await resp.text();
   } catch {
-    if (controller.signal.aborted) {
-      return {
-        ok: false,
-        error: { code: 'connector_uncertain', message: 'OAIY Desktop did not answer in time.' },
-      };
-    }
+    if (controller.signal.aborted) return unanswered();
     return {
       ok: false,
       transportFailure: true,
@@ -153,6 +158,11 @@ const IMAGE_TIMEOUT_MS = 10 * 60_000;
  * (`{ data: [{ b64_json }] }`). The page names no model and no service: what OAIY has is what
  * is used. Returns the raw answer as `data`, or a typed error with OAIY's own sentence; a
  * transport failure is marked. Never throws.
+ *
+ * A picture it stopped waiting for (its own ten minutes, or the caller's signal) is
+ * `connector_uncertain`, as a chat is (oaiyAiChat), and not a transport failure: OAIY took the
+ * request and its engine may be drawing still, so nothing was unreachable and nobody should ask
+ * for the same picture again on the strength of it.
  */
 export async function oaiyEngineImage(
   body: Record<string, unknown>,
@@ -178,6 +188,7 @@ export async function oaiyEngineImage(
     });
     text = await resp.text();
   } catch {
+    if (controller.signal.aborted) return unanswered();
     return {
       ok: false,
       transportFailure: true,

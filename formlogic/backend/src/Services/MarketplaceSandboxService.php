@@ -32,6 +32,14 @@ class MarketplaceSandboxService
 {
     public const SESSION_TTL_SECONDS = 1800;
     private const MAX_SWEEP_PER_CALL = 25;
+    /**
+     * The account every demo is counted as for the workers one account's apps may hold at once
+     * (NativeAppService::ownedBy), and the owner a demo's backend is told it is serving. All the
+     * site's demos are this one account's apps, however many listings and visitors there are: no
+     * real account's id (a UUID, or PluginService's system account), so no member's share is spent
+     * on a demo and visitors trying demos always leave a worker for the members' apps.
+     */
+    public const DEMO_OWNER = 'marketplace-sandbox-owner';
 
     private const WEB_MIME = [
         'html' => 'text/html; charset=utf-8',
@@ -203,6 +211,8 @@ class MarketplaceSandboxService
             'assets' => is_array($project['assets'] ?? null) ? $project['assets'] : [],
         ];
 
+        // The install's own check runs the backend in one of the site's workers: the demos' account's.
+        $this->native->ownedBy($demoAppId, self::DEMO_OWNER);
         $installed = $this->native->install($demoAppId, $normalized, $expectedVersion, null, [
             'by' => 'marketplace',
             'how' => 'upload',
@@ -220,8 +230,12 @@ class MarketplaceSandboxService
      * Lazily install a bundled Free SoftN business pack's `.softn` archive under a deterministic
      * internal demo app ID and seed its turnkey demo workspace (`POST /api/setup` + `POST /api/sample/load`)
      * ONCE so every sandbox visitor immediately explores a rich populated app in an isolated SQLite copy.
+     *
+     * $publicOrigin is the address the visitor reached this site by (McpOAuthService::publicOrigin):
+     * a container backend is told it as its host and scheme while it sets the workspace up, as every
+     * later demo request tells it (handleBackendRequest). Empty: no address, and the runner says localhost.
      */
-    public function ensureBundledDemoInstalled(string $slug, string $archivePath, string $businessName): string
+    public function ensureBundledDemoInstalled(string $slug, string $archivePath, string $businessName, string $publicOrigin = ''): string
     {
         $demoAppId = SoftnPackCatalog::demoAppIdFor($slug);
         if ($this->native->project($demoAppId) !== null) {
@@ -230,6 +244,8 @@ class MarketplaceSandboxService
         $project = NativeAppService::extractProjectFromArchive($archivePath);
         $project['home'] = true;
         $project['access'] = 'members';
+        // The install's check and the setup below each run in one of the site's workers: the demos' account's.
+        $this->native->ownedBy($demoAppId, self::DEMO_OWNER);
         $this->native->install($demoAppId, $project, 0, null, [
             'by' => 'marketplace-bundled',
             'how' => 'pack',
@@ -241,14 +257,15 @@ class MarketplaceSandboxService
                 'demo' => true,
                 'sandbox' => true,
                 'authenticated' => true,
-                'userId' => 'marketplace-sandbox-owner',
+                'userId' => self::DEMO_OWNER,
                 'roleId' => 'owner',
                 'formlogic' => [
                     'appId' => $demoAppId,
-                    'userId' => 'marketplace-sandbox-owner',
+                    'userId' => self::DEMO_OWNER,
                     'roleId' => 'owner',
                 ],
             ];
+            $address = NativeAppService::containerAddress($publicOrigin);
             try {
                 $setupPayload = json_encode([
                     'business_name' => $businessName !== '' ? $businessName : 'Demo Workspace',
@@ -263,14 +280,14 @@ class MarketplaceSandboxService
                     'query' => '',
                     'headers' => [['content-type', 'application/json']],
                     'bodyBase64' => base64_encode($setupPayload),
-                ], $ownerIdentity);
+                ] + $address, $ownerIdentity);
                 $this->native->containerRequest($demoAppId, [
                     'method' => 'POST',
                     'path' => '/api/sample/load',
                     'query' => '',
                     'headers' => [['content-type', 'application/json']],
                     'bodyBase64' => base64_encode('{}'),
-                ], $ownerIdentity);
+                ] + $address, $ownerIdentity);
             } catch (\Throwable) {
                 // Non-turnkey or custom apps may not implement /api/setup or /api/sample/load; ignore cleanly.
             }
@@ -535,11 +552,14 @@ class MarketplaceSandboxService
      * SQLite database (supports both classic `.logic` backends and v2 PHP/JS/TS/Rust/Python
      * container backends).
      *
+     * $publicOrigin is the address the visitor reached this site by (McpOAuthService::publicOrigin),
+     * which a container backend is told as its host and scheme, as an app's own page tells it.
+     *
      * @param array<string, mixed> $catalog
      * @param array<string, mixed> $payload
      * @return array{status: int, body: mixed, contentType: string, isRaw: bool}
      */
-    public function handleBackendRequest(array $catalog, string $token, array $payload): array
+    public function handleBackendRequest(array $catalog, string $token, array $payload, string $publicOrigin = ''): array
     {
         $session = $this->verifySession($catalog, $token);
         $demoAppId = $session['demoAppId'];
@@ -576,14 +596,16 @@ class MarketplaceSandboxService
             'demo' => true,
             'sandbox' => true,
             'authenticated' => true,
-            'userId' => 'marketplace-sandbox-owner',
+            'userId' => self::DEMO_OWNER,
             'roleId' => 'owner',
             'formlogic' => [
                 'appId' => $demoAppId,
-                'userId' => 'marketplace-sandbox-owner',
+                'userId' => self::DEMO_OWNER,
                 'roleId' => 'owner',
             ],
         ];
+        // The request runs in one of the site's workers: counted in the demos' account's share.
+        $this->native->ownedBy($demoAppId, self::DEMO_OWNER);
 
         $rawQuery = $payload['query'] ?? [];
         $queryMap = is_array($rawQuery) ? $rawQuery : [];
@@ -614,7 +636,7 @@ class MarketplaceSandboxService
                 'query' => $queryString,
                 'headers' => $reqHeaders,
                 'bodyBase64' => base64_encode($bodyRaw),
-            ], $identity);
+            ] + NativeAppService::containerAddress($publicOrigin), $identity);
             $decodedBody = base64_decode($res['bodyBase64'], true);
             $decodedBody = $decodedBody === false ? '' : $decodedBody;
             $ct = 'application/json; charset=utf-8';
@@ -740,10 +762,25 @@ class MarketplaceSandboxService
      * Execute `bin/marketplace-dom-render.mjs` on the server to render `.ui` + `.logic` purely
      * into sanitized HTML DOM + CSS.
      *
+     * The renderer runs the app's code and starts its backend's runner itself, never through this
+     * site's host: it holds one of the site's workers while it runs (NativeAppService::withSlots),
+     * counted in the demos' account's share as every other demo request is, or is answered busy
+     * (429) as they are. Without one, a page of demos rendering at once took no worker at all.
+     *
      * @param array<string, mixed> $event
      * @return array{title: string, html: string, css: string, backendCalls: int}
      */
     private function runServerDomRender(string $demoAppId, string $sessionDir, array $event): array
+    {
+        $this->native->ownedBy($demoAppId, self::DEMO_OWNER);
+        return $this->native->withSlots($demoAppId, fn (): array => $this->renderDom($demoAppId, $sessionDir, $event));
+    }
+
+    /**
+     * @param array<string, mixed> $event
+     * @return array{title: string, html: string, css: string, backendCalls: int}
+     */
+    private function renderDom(string $demoAppId, string $sessionDir, array $event): array
     {
         $paths = $this->native->internalPaths($demoAppId);
         if ($paths === null) {

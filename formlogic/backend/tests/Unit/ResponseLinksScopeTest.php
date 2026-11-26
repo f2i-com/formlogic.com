@@ -8,6 +8,8 @@ use FormLogic\Database\MySQLConnection;
 use FormLogic\Database\SQLiteConnection;
 use FormLogic\Services\AppResponseService;
 use FormLogic\Services\FormEncryptionService;
+use FormLogic\Services\NativeAppService;
+use FormLogic\Services\NativeTableFormBridge;
 use FormLogic\Services\ResponseService;
 use PDO;
 use PHPUnit\Framework\TestCase;
@@ -97,6 +99,53 @@ final class ResponseLinksScopeTest extends TestCase
 
         $this->assertSame(['theirs-in', 'theirs-out'], $this->links());
         $this->assertSame(['5' => 'form-theirs', '6' => 'form-mine'], $this->indexed());
+    }
+
+    // A form bound to an app's table keeps its records in that table, and deleting one of them went
+    // no further than the table: its links stayed, pointing at a record that was gone and then at
+    // whichever row the table gave that key to next. Only a clear of the whole form took them.
+
+    /** form-mine as a form bound to an app's table, whose rows the bridge deletes (or fails to). */
+    private function bindFormMine(bool $deletes = true): void
+    {
+        $bridge = $this->createStub(NativeTableFormBridge::class);
+        $bridge->method('resolveBinding')->willReturnCallback(
+            static fn (string $formId): ?array => $formId === 'form-mine' ? ['formId' => $formId, 'appId' => 'app-1', 'table' => 'jobs'] : null
+        );
+        $bridge->method('deleteResponse')->willReturn($deletes);
+        $this->responses->setNativeTableBridge($bridge);
+    }
+
+    public function testDeletingARowOfABoundFormTakesItsLinksAndNoOtherForms(): void
+    {
+        $this->bindFormMine();
+
+        $this->assertTrue($this->responses->deleteResponse('form-mine', '5'));
+
+        $this->assertSame(['theirs-in', 'theirs-out'], $this->links());
+    }
+
+    public function testARowThatWasNotDeletedKeepsItsLinks(): void
+    {
+        $this->bindFormMine(deletes: false);
+
+        $this->assertFalse($this->responses->deleteResponse('form-mine', '5'));
+
+        $this->assertSame(['mine-in', 'mine-out', 'theirs-in', 'theirs-out'], $this->links());
+    }
+
+    public function testADemoVisitorsCopyOfTheTableLeavesTheRealFormsLinks(): void
+    {
+        // A demo visitor deletes rows of their own copy of the table. The links are the real form's.
+        $this->bindFormMine();
+        NativeAppService::setSandboxRootOverride('app-1', $this->dir);
+        try {
+            $this->assertTrue($this->responses->deleteResponse('form-mine', '5'));
+        } finally {
+            NativeAppService::clearSandboxRootOverrides();
+        }
+
+        $this->assertSame(['mine-in', 'mine-out', 'theirs-in', 'theirs-out'], $this->links());
     }
 
     public function testClearingAFormLeavesAnotherFormsRecordsAlone(): void

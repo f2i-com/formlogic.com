@@ -51,7 +51,7 @@ class MarketplaceController
      *
      * @return array<string, mixed>|null
      */
-    private function resolveCatalogForDemo(string $slug, ?string $viewerId = null, bool $ensureInstalled = false, ?string $sandboxToken = null): ?array
+    private function resolveCatalogForDemo(string $slug, ?string $viewerId = null, bool $ensureInstalled = false, ?string $sandboxToken = null, string $publicOrigin = ''): ?array
     {
         if ($slug === 'landing-pottery-studio') {
             $archivePath = dirname(__DIR__, 2) . '/resources/landing-demos/pottery-studio.softn';
@@ -72,7 +72,8 @@ class MarketplaceController
                 $record['demo_app_id'] = $this->sandbox->ensureBundledDemoInstalled(
                     'landing-pottery-studio',
                     $archivePath,
-                    'Kiln & Wheel Pottery Studio'
+                    'Kiln & Wheel Pottery Studio',
+                    $publicOrigin
                 );
             }
             return $record;
@@ -98,7 +99,8 @@ class MarketplaceController
             $bundled['demo_app_id'] = $this->sandbox->ensureBundledDemoInstalled(
                 $slug,
                 (string) $bundled['_archivePath'],
-                (string) ($bundled['name'] ?? $slug)
+                (string) ($bundled['name'] ?? $slug),
+                $publicOrigin
             );
         }
         return $bundled;
@@ -354,7 +356,7 @@ class MarketplaceController
         $slug = (string) ($args['slug'] ?? '');
         $viewerId = $request->getAttribute('userId');
         try {
-            $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, true);
+            $catalog = $this->resolveCatalogForDemo($slug, is_string($viewerId) ? $viewerId : null, true, null, McpOAuthService::publicOrigin($request));
             if (!$catalog) {
                 return $this->jsonError($response, 'Marketplace listing not found', 404);
             }
@@ -435,7 +437,8 @@ class MarketplaceController
                 ->withHeader('Access-Control-Allow-Origin', '*')
                 ->withHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         } catch (RuntimeException $e) {
-            $status = in_array($e->getCode(), [400, 403, 404, 410], true) ? $e->getCode() : 500;
+            // 429: every worker the site's demos may hold is busy rendering one (MarketplaceSandboxService::DEMO_OWNER).
+            $status = in_array($e->getCode(), [400, 403, 404, 410, 429], true) ? $e->getCode() : 500;
             $response->getBody()->write($e->getMessage());
             return $response->withStatus($status)->withHeader('Content-Type', 'text/plain; charset=utf-8')->withHeader('Cache-Control', 'no-store');
         }
@@ -521,7 +524,7 @@ class MarketplaceController
         }
 
         try {
-            $result = $this->sandbox->handleBackendRequest($catalog, $token, $body);
+            $result = $this->sandbox->handleBackendRequest($catalog, $token, $body, McpOAuthService::publicOrigin($request));
             if ($result['isRaw']) {
                 $safeContentTypes = [
                     'application/json',
@@ -866,7 +869,7 @@ class MarketplaceController
         }
         $appId = is_string($body['appId'] ?? null) && trim($body['appId']) !== '' ? trim($body['appId']) : null;
         try {
-            $res = $this->memberPlugins->invokePluginBackend($userId, (string) ($args['id'] ?? ''), $body, $appId);
+            $res = $this->memberPlugins->invokePluginBackend($userId, (string) ($args['id'] ?? ''), $body, $appId, \FormLogic\Services\McpOAuthService::publicOrigin($request));
             return $this->jsonResponse($response, is_array($res['body']) ? $res['body'] : ['data' => $res['body']], $res['status']);
         } catch (InvalidArgumentException $e) {
             return $this->jsonError($response, $e->getMessage(), 400);

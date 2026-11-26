@@ -78,6 +78,24 @@ modules (`.wasm`) are media too from SoftN v0.0.41, which runs each in a worker 
 reaches nothing of the page or the network (`softn.wasm.*` from the app's logic, `<WasmApp>` for a
 program that draws).
 
+**Apps an app nests.** A web app's page (`engine: 2`, an HTML page as its `main`) can run another
+SoftN app it carries, in a box of the page: `<softn-app src="/assets/widgets/clock.softn">`. Here
+the archive is a media file like the others: a `.softn` under `assets/`, kept byte for byte, held to
+32 MB a file and to the app's 64 MB in all and 1,000 media files, sent to the page in its media pack,
+downloaded with the app and brought back as it was. It is never a source file and the server never
+unpacks or runs it; nor is one kept anywhere but `assets/` (one beside the page, `widgets/clock.softn`,
+is refused with where to move it; one in `server/`, `backend/` or `private/` is refused). The frame
+puts every media file in the archive SoftN's container opens, under its own path, so the page names
+it by that path (from the root, `/assets/…`, or relative to the page). SoftN runs the nested app in
+a Worker and engine of its own and decides what it may do: no more than the app around it was
+allowed, nothing kept between visits (what it stores lasts as long as the page), three deep, eight
+to a page and sixteen in all. A file it saves (in an app allowed **Files on this device**) is asked
+about in the app's own bar, and it has no
+`softn.backend.call` of its own, so FormLogic's wallet, listening and offers are the outer app's.
+Frames of other sites (`<iframe>`) stay off in an app hosted here. This FormLogic pins SoftN
+v0.0.52, whose frame is handed such an archive with the app's media but runs none: nesting needs
+the SoftN release after it. An archive named `.zip` is not kept as an app.
+
 Source files include `.html` and classic `.ui` pages, `.js`, `.mjs`, `.jsx`, `.vue`, `.ts`, `.logic`, `.py`, CSS, JSON and `.xdb` seed data. Studio and Builder keep original JSX and Vue components alongside their generated JavaScript. Save component edits in either editor to update both files. A custom backend uses `server/*.logic` handlers and `server/migrations/*.sql`. Source file extensions are lowercase, filenames cannot contain two consecutive dots, and `apiVersion` must be the integer `1`.
 
 The owner manages it at `/apps/<id>/web`, a page of six sections, each at its own address so a
@@ -863,7 +881,10 @@ that route within one request:
   request failed.
 - On a decline the page opens FormLogic's wallet: `softn.backend.call("formlogicWallet", {op: "open"})`.
   It opens over the app (a frame can have no PayPal of its own) and answers when the person closes it:
-  `{closed: true, balanceCents}`. The app never sees the wallet itself.
+  `{closed: true, balanceCents}`. The app never sees the wallet itself. A web app (`engine: 2`, run in
+  SoftN's web container) opens it the same way from the SoftN release after v0.0.52, whose web frame
+  passes the call on; v0.0.52's frame answers it "Use an app-relative API route under /api/." as it
+  answered every call but an upload and a request to one of the app's own routes.
 
 **The wallet sheet** shows the balance and its latest lines, the top-ups the administrator offers
 ($2 at least), PayPal's buttons, and, where the site can send email, **Save my balance with an email**
@@ -1036,6 +1057,13 @@ does not know them and fails the call (`response.error`), which is how an app kn
 No call waits on the person: each answers at once, and the app asks again (`status`) to learn what
 they chose.
 
+A web app (`engine: 2`) asks the same way, from the SoftN release after v0.0.52: its web frame
+passes these three and `formlogicWallet` to the page, which holds each to the same rules as for any
+other app. The frame passes nothing else by name, so an app cannot send the frame's own calls (its
+storage, its backend's HTTP). v0.0.52's web frame refuses all four ("Use an app-relative API route
+under /api/."), which an app reads as the older FormLogic above: no microphone button, no offer. An
+app nested in a web app's page ([apps an app nests](#supported-bundles)) can call none of them.
+
 ```javascript
 softn.backend.call("formlogicHost", {op: "abilities"}, function (response) {
   if (response.error) return;                    // an older FormLogic: no microphone button, no offer
@@ -1145,7 +1173,10 @@ as their own.
   `/api/site/`, which FormLogic calls as the person once they have said yes. It answers JSON holding
   `files`, an object of path to text (the SoftN app's files: `manifest.json`, its pages, its logic),
   and optionally `name`, at the top level or under `data`. The page takes up to 200 files and 4 MB of
-  text in all: an app made in a page, not one with media.
+  text in all: an app made in a page, not one with media. A web app with a backend of its own (a
+  `backend` block, run here in SoftN's container runner) is asked as its page asks it, and its
+  answer's body is read as that JSON; FormLogic read only a `server` block's answers before, so such
+  an app's offer failed once the person said yes.
 - **`name`** is what FormLogic shows the person while it asks. It is display text only.
 - **`refused`**: `off` (the owner has not allowed it), `signed_out` (an app is added to an account:
   a visitor has none, and a session on an app's own domain opens that app alone), `busy` (an offer is
@@ -1521,12 +1552,52 @@ sent), as on SoftN's PHP host, so an app that retries a write with the same key 
 retry from a second write. The other headers the app's own request carries are there too, by
 name in lower case (up to 64, 8 KB each), except the ones the host speaks for: `cookie`, `host`,
 `origin`, `referer`, `forwarded`, `x-real-ip`, `content-length`, the connection's own, the
-method and address overrides (`x-http-method-override`, `x-original-url`, `x-rewrite-url`), and
-any `proxy-*`, `sec-*`, `x-forwarded-*` or `x-formlogic*`. A caller can put anything in the
-rest, so none of them says who or where the caller is. The method is sent upper-cased, and
-bodies keep `{}` and `[]` apart
+method and address overrides (`x-http-method-override`, `x-method-override`, `x-original-url`,
+`x-rewrite-url`), and any `proxy-*`, `sec-*`, `x-forwarded-*` or `x-formlogic*`; a value longer
+than 8 KB is left out, never cut. A container backend is given the same headers, and its page's
+`cookie` too (its sessions are its own), whether its page or the app's API called it. A caller
+can put anything in the rest, so none of them says who or where the caller is. The method is
+sent upper-cased, and bodies keep `{}` and `[]` apart
 both ways. The frame waits 35 seconds for an answer, longer than the server's 25-second
 deadline, so a write that was made is never reported to the app as failed.
+
+**A container backend is declared as SoftN declares one.** `backend.runtime` names what it is
+written in and `backend.entry` the file it starts from. FormLogic once also took `engine` and
+`entrypoint` for them, which SoftN's runner never read: an install that used either is refused
+with the name to write (`Rename "engine" to "runtime"`), so an app that is taken here runs on
+SoftN's other hosts too.
+
+**Which files of a container backend stay on the server.** An app with a `backend` block (PHP,
+JavaScript, TypeScript, Rust or Python, run in the sandbox) keeps its backend where its manifest
+says, and no page is ever sent those files: the `backend.entry` file, everything under
+`backend.root`, each database's `file`, `seedSql` and `seedJson`, the `server/`, `backend/`,
+`private/`, `db/`, `database/` and `migrations/` folders, any `seed.json` or `database.seed.json`,
+and any `.php`, `.phtml`, `.rs`, `.sql` or `Cargo.toml`. With no `backend.root` declared, the folder the entry is kept in is the backend's
+root, as on SoftN's own host: `api/lib/keys.js` beside an entry of `api/handler.js` stays on the
+server with it. The entry alone is private when its folder cannot be the backend's: an entry at the
+top of the project, one in the manifest's `frontendRoot`, or one in a folder called `public`,
+`assets`, `static`, `js` or `css`. An app that keeps page files in the same folder as its entry
+declares `backend.root` (the folder its backend really lives in), and those page files are sent
+again.
+
+**A container backend's `.htaccess` files.** An app with a `backend` block keeps the `.htaccess`
+files it is imported with, beside the manifest or in any folder (64 KB each at most, which is all
+SoftN's runner reads of one). They are its author's rules for who may ask for its files, and
+FormLogic holds to the part of them that denies, as SoftN's own hosts do:
+
+- No page is sent an `.htaccess`, nor a file one denies: `Require all denied` or `Deny from all`
+  written for a folder withholds everything under it, and written inside `<Files name>`,
+  `<Files ~ regex>` or `<FilesMatch regex>` it withholds the files so named, there and below.
+- A PHP backend runs a `.php` file by its address, so a request for a script those rules deny is
+  answered `403` (`{"error":"Forbidden.","code":"forbidden"}`) and the script is not run: by its
+  name (`/install.php`), by its name without the ending (`/install`), and anywhere under a folder
+  denied whole (`/includes/config.php`).
+- A deny is never lifted by a later `Require all granted`; `<Limit>`, `<LimitExcept>` and `<If>`
+  sections are skipped (a deny for some requests is not a deny for all); rewrites, redirects and
+  passwords are not applied.
+
+An app with no `backend` block has nothing that would apply one: the `.htaccess` beside a static
+package's manifest (written for the web server it was made for) is left out at import, as before.
 
 Native browser storage is scoped to the selected app (32 MB and 1,000 keys in IndexedDB; 256 KB and 200 keys where only localStorage is), including
 session persistence across reloads. A failed persistence acknowledgement is shown in the
@@ -1602,9 +1673,19 @@ to 96 MB there: a proxy in front of PHP must allow as much (nginx: `client_max_b
 Apache's own default allows it). The browser action bridge currently limits an individual message to 32 KB.
 At most four native workers run concurrently across apps in one storage root (`NATIVE_WORKERS`, up
 to 64), with a 25-second worker deadline; a request waits up to three seconds for one before it is
-answered busy (`429`). One app holds at most two of them at a time (`NATIVE_WORKERS_PER_APP`). That
-share is each app's, not each account's: two apps of one account can hold all four between them, so
-a site that hosts apps for many accounts raises `NATIVE_WORKERS` to what its server can run at once.
+answered busy (`429`). One app holds at most two of them at a time (`NATIVE_WORKERS_PER_APP`), and
+all the apps of one account hold at most every worker but one between them
+(`NATIVE_WORKERS_PER_OWNER`: three of the default four), so one account's busy apps always leave a
+worker for another account's. A request over either share waits the same three seconds for one of
+its own to finish, and is then answered busy. `NATIVE_WORKERS_PER_OWNER=0` turns the account's
+share off, for a site that hosts one account's apps; a site with a single worker has none to
+leave and keeps no such share. Every request that asks for a worker names the app's owner to the
+host first: through the app's page, its API, a flow, a member's plugin, and App AI's deliveries
+and parts. The marketplace's live demos are all one account's apps (`marketplace-sandbox-owner`),
+whatever listing they are, so visitors trying them hold at most that one share between them, and
+a classic demo drawn on the server holds one of those workers while it is drawn (busy is a `429`,
+as for any request). A site's own plugin belongs to no account. A site that hosts apps for many
+accounts still raises `NATIVE_WORKERS` to what its server can run at once.
 This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
 browser storage are not counted against the frame's four calls at a time.
 

@@ -334,11 +334,12 @@ export interface FlowExecutorDeps {
    * A picture from the paired OAIY's own engine: the picture model switched on there, or the
    * one `body.model` names (an OpenAI-compatible images answer). image_gen's source when the
    * node names neither an endpoint nor a service. Null when no OAIY is paired here.
+   * `unanswered`: OAIY took the request and no answer came in time (it may be drawing still).
    */
   generateDesktopImage?(
     body: Record<string, unknown>,
     signal?: AbortSignal
-  ): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string } | null>;
+  ): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; message: string; unanswered?: true } | null>;
   /**
    * List the paired Desktop's managed services (id/name/category/status/port +
    * loopback url when running) for the `desktop_services` node. Absent desktop
@@ -1049,6 +1050,12 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
   // replies each get exactly one more attempt; a still-empty SECOND
   // completion returns normally so flow-level fallback text applies.
   // Mirrors the Rust runner (flows/runner.rs run_llm_chat).
+  //
+  // The second attempt can be a second billed chat, and that is not narrowed here because it
+  // cannot be. A browser's fetch rejects with the same bare TypeError whether the connection was
+  // refused or was lost with the provider already answering (the Fetch standard hides which), so
+  // "never sent" cannot be told from "sent and lost". And the retry this exists for, an empty
+  // completion, is of a chat that did run. The Desktop leg above can tell (DesktopAiUnansweredError).
   let failure: FlowExecError | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 750));
@@ -1498,7 +1505,10 @@ async function runImageGen(ctx: FlowNodeContext): Promise<unknown> {
     if (!made.ok) {
       throw new FlowExecError(
         'node_failed',
-        `Node '${node.id}': OAIY could not make the picture: ${made.message} (Is a picture model switched on in OAIY, under Engines?)`,
+        // Not answered in time is not a refusal: nothing in OAIY needs switching on for it.
+        made.unanswered
+          ? `Node '${node.id}': OAIY took the request and had no picture in time. It may be making it still: a picture can take minutes on a modest computer.`
+          : `Node '${node.id}': OAIY could not make the picture: ${made.message} (Is a picture model switched on in OAIY, under Engines?)`,
         node.id
       );
     }

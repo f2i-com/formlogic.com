@@ -1592,15 +1592,44 @@ class ResponseService
      * so a client whose last sync is older than `since` must compare its whole
      * copy instead. `complete` is false when the list was cut at `$limit`.
      *
+     * A form kept in an app's table lists the records deleted through FormLogic (one delete, a
+     * clear: recordNativeTombstones) whose key no row has been given again. The app deletes rows
+     * of its own, and anything else that can write to its database can, unseen: that list is never
+     * whole, so it is never `complete`, and `since` is now, the time from which a client is told to
+     * compare its whole copy (the rule above, for any client that reads `since` alone).
+     *
      * @return array{deleted: list<array{id: string, deletedAt: string}>, complete: bool, since: string}
      */
     public function getResponseTombstones(string $formId, string $since, int $limit = 5000): array
     {
         $now = gmdate('Y-m-d H:i:s');
+        if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
+            $deleted = [];
+            if ($this->sqlite->formDatabaseExists($formId)) {
+                $deleted = $this->readTombstones($formId, $since, $limit)[0];
+                $gone = array_flip($this->nativeTableBridge->stillGone($binding, array_column($deleted, 'id')));
+                $deleted = array_values(array_filter($deleted, static fn (array $d): bool => isset($gone[$d['id']])));
+            }
+            return ['deleted' => $deleted, 'complete' => false, 'since' => $now];
+        }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             // Never had a record, so nothing was ever deleted.
             return ['deleted' => [], 'complete' => true, 'since' => $now];
         }
+        [$deleted, $complete, $horizon] = $this->readTombstones($formId, $since, $limit);
+        return ['deleted' => $deleted, 'complete' => $complete, 'since' => $horizon];
+    }
+
+    /**
+     * The tombstones of a form's own database deleted at or after `$since`, oldest first, after
+     * those older than TOMBSTONE_DAYS are pruned: the list (at most `$limit`), whether it was not
+     * cut at the limit, and the time from which it is whole.
+     *
+     * @return array{0: list<array{id: string, deletedAt: string}>, 1: bool, 2: string}
+     */
+    private function readTombstones(string $formId, string $since, int $limit): array
+    {
+        $now = gmdate('Y-m-d H:i:s');
         $db = $this->sqlite->getFormDatabase($formId);
         $cutoff = gmdate('Y-m-d H:i:s', time() - self::TOMBSTONE_DAYS * 86400);
         try {
@@ -1619,23 +1648,62 @@ class ResponseService
         $stmt->bindValue('limit', $limit + 1, PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll();
-        $complete = count($rows) <= $limit;
         $deleted = array_map(
             static fn (array $r): array => ['id' => (string) $r['id'], 'deletedAt' => (string) $r['deleted_at']],
             array_slice($rows, 0, $limit)
         );
-        return ['deleted' => $deleted, 'complete' => $complete, 'since' => $horizon];
+        return [$deleted, count($rows) <= $limit, $horizon];
+    }
+
+    /**
+     * Tombstones for records of a form kept in an app's table that FormLogic deleted, where a
+     * form's own deletions are kept (its database's response_tombstones, which the triggers on its
+     * own records fill): the table is the app's, and has no trigger of FormLogic's. Best effort,
+     * as the rest of a delete's cross-store cleanup is: the rows are gone already, and a list of a
+     * kept table's deletions is never said to be whole (getResponseTombstones).
+     *
+     * @param list<string> $ids
+     */
+    private function recordNativeTombstones(string $formId, array $ids): void
+    {
+        if ($ids === []) {
+            return;
+        }
+        $db = null;
+        try {
+            $db = $this->sqlite->getFormDatabase($formId);
+            $at = gmdate('Y-m-d H:i:s');
+            $db->beginTransaction();
+            $put = $db->prepare('INSERT OR REPLACE INTO response_tombstones (id, deleted_at) VALUES (:id, :at)');
+            foreach ($ids as $id) {
+                $put->execute(['id' => $id, 'at' => $at]);
+            }
+            $db->commit();
+        } catch (\Throwable $e) {
+            if ($db !== null && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            $this->logger->error('Failed to record tombstones after native-table delete', [
+                'formId' => $formId, 'count' => count($ids), 'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
      * A record's version as a client sees it: changes whenever its answers, its
      * status or its updatedAt do. Sent as `etag` by the external API, and
      * matched against `If-Match` before an update is written.
+     *
+     * A record of an app's table whose row holds no time is given the time it is
+     * read (`metadata.timeUnknown`, NativeTableFormBridge::formatRow), which is
+     * no version of it: its answers and status are.
      */
     public static function etagOf(array $response): string
     {
+        $metadata = is_array($response['metadata'] ?? null) ? $response['metadata'] : [];
+        $timeUnknown = isset($metadata['nativeTable']) && ($metadata['timeUnknown'] ?? false) === true;
         $basis = json_encode(
-            [$response['answers'] ?? null, $response['status'] ?? null, $response['updatedAt'] ?? null],
+            [$response['answers'] ?? null, $response['status'] ?? null, $timeUnknown ? null : ($response['updatedAt'] ?? null)],
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION
         );
         return substr(hash('sha256', (string) $basis), 0, 32);
@@ -1734,7 +1802,19 @@ class ResponseService
     private static function matchesAnswersRange(array $row, array $options): bool
     {
         $answers = json_decode((string) ($row['answers'] ?? ''), true);
-        $answers = is_array($answers) ? $answers : [];
+        return self::answersWithinRange(is_array($answers) ? $answers : [], $options);
+    }
+
+    /**
+     * matchesAnswersRange over a record's answers as they are read. A form bound to an app's table
+     * checks its rows with this too (NativeTableFormBridge), so both stores answer `gte` and `lte`
+     * by the one rule.
+     *
+     * @param array<array-key, mixed> $answers
+     * @param array<string, mixed> $options
+     */
+    public static function answersWithinRange(array $answers, array $options): bool
+    {
         $cmp = static function ($stored, $bound): int {
             if (is_numeric($stored) && is_numeric($bound)) {
                 return (float) $stored <=> (float) $bound;
@@ -1990,13 +2070,8 @@ class ResponseService
             return [];
         }
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            $out = [];
-            foreach (array_slice($responseIds, 0, 250) as $rid) {
-                if (!is_string($rid)) continue;
-                $row = $this->nativeTableBridge->getResponse($binding, $rid);
-                if ($row !== null) $out[] = $row;
-            }
-            return $out;
+            // Every id asked for, as below: the first 250 were read and the rest left out.
+            return $this->nativeTableBridge->getResponses($binding, $responseIds);
         }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return [];
@@ -2073,12 +2148,9 @@ class ResponseService
             if ($searchQuery !== '') {
                 $opts['search'] = $searchQuery;
             }
-            $rows = $this->nativeTableBridge->listResponses($binding, $opts);
-            $submittedBy = is_string($opts['submittedByUserId'] ?? null) && $opts['submittedByUserId'] !== ''
-                ? $opts['submittedByUserId']
-                : null;
-            $total = $searchQuery !== '' ? count($rows) : $this->nativeTableBridge->countResponses($binding, $submittedBy);
-            return ['responses' => $rows, 'total' => $total];
+            // The rows that match, counted under the conditions they are read by. The table's
+            // every row was the total of any filtered list, and a search's was its page's length.
+            return $this->nativeTableBridge->listResponsesWithTotal($binding, $opts);
         }
 
         if (!$this->sqlite->formDatabaseExists($formId)) {
@@ -2421,6 +2493,14 @@ class ResponseService
                         $this->flowService->enqueueScriptFlowRuns($formId, (string) $created['id'], $scriptResult->flowRuns, $sourceRunId);
                     }
                 } catch (\Throwable) {}
+            }
+            // The form's count, as a record of its own store recounts it below. Not in a demo
+            // sandbox: the table counted would be a visitor's copy, and the count is the real form's.
+            if (!NativeAppService::hasSandboxRootOverrides()) {
+                $this->syncResponseCount($formId);
+                // Records retention, as a record of its own store ages them out below, where it
+                // applies: a table made for the form (retentionApplies).
+                $this->purgeExpiredFromTableIfDue($formId, $binding);
             }
             return $created;
         }
@@ -3112,7 +3192,8 @@ class ResponseService
      * Update a response. With `$ifMatch` (an etag from etagOf) the update is
      * written only if the record is still that version, checked in the UPDATE
      * itself so a write that lands in between cannot be overwritten; otherwise
-     * ResponseVersionConflict carries the record as it is now.
+     * ResponseVersionConflict carries the record as it is now. A form kept in an
+     * app's table checks it inside the table's write (NativeTableFormBridge).
      */
     public function updateResponse(string $formId, string $responseId, array $data, ?string $ifMatch = null): ?array
     {
@@ -3126,7 +3207,7 @@ class ResponseService
         $this->assertNotPrivate($formId);
 
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            return $this->nativeTableBridge->updateResponse($binding, $responseId, $data);
+            return $this->nativeTableBridge->updateResponse($binding, $responseId, $data, $ifMatch);
         }
 
         if (!$this->sqlite->formDatabaseExists($formId)) {
@@ -3345,7 +3426,7 @@ class ResponseService
             // the next submission retries this hour rather than letting expired PII
             // linger an extra hour. (deleteResponse tolerates a concurrent
             // double-purge, so reading before claiming introduces no race.)
-            $days = $this->retentionDaysOf($formId);
+            [$days] = $this->retentionOf($formId);
 
             // Claim this hour's slot now — concurrent submitters skip the work below.
             $claim = $db->prepare(
@@ -3449,11 +3530,29 @@ class ResponseService
     /**
      * Everything past a form's retention period, for the nightly job: the purge above only runs
      * when a new record arrives, so a form that has gone quiet would keep its old records.
+     *
+     * A form kept in an app's table is purged there, through the bridge, when the table was made
+     * for it (purgeExpiredFromTable). A form that names a table and is read without the bridge is
+     * not purged at all: its own file then holds no record of its (or the copies it had before it
+     * was bound, under the ids its live records have), and deleting those took the live records'
+     * links, sent `response.deleted` for records that were there, and set the count to the file's.
      */
     public function purgeAllExpired(string $formId): int
     {
-        $days = $this->retentionDaysOf($formId);
-        if ($days <= 0 || !$this->sqlite->formDatabaseExists($formId)) {
+        [$days, $namesTable] = $this->retentionOf($formId);
+        if ($days <= 0) {
+            return 0;
+        }
+        $binding = $this->nativeTableBridge?->resolveBinding($formId);
+        if ($binding !== null) {
+            $total = 0;
+            do {
+                $deleted = $this->purgeExpiredFromTable($formId, $binding, $days);
+                $total += $deleted;
+            } while ($deleted > 0);
+            return $total;
+        }
+        if (($namesTable && $this->nativeTableBridge === null) || !$this->sqlite->formDatabaseExists($formId)) {
             return 0;
         }
         $db = $this->sqlite->getFormDatabase($formId);
@@ -3465,12 +3564,116 @@ class ResponseService
         return $total;
     }
 
-    private function retentionDaysOf(string $formId): int
+    /**
+     * A form's retention period in days (0 for none), and whether its settings name an app's
+     * table to keep its records in.
+     *
+     * @return array{0: int, 1: bool}
+     */
+    private function retentionOf(string $formId): array
     {
         $stmt = $this->mysql->prepare("SELECT settings FROM forms WHERE id = :id");
         $stmt->execute(['id' => $formId]);
         $settings = json_decode((string) ($stmt->fetchColumn() ?: '{}'), true);
-        return (int) (is_array($settings) ? ($settings['retentionDays'] ?? 0) : 0);
+        $settings = is_array($settings) ? $settings : [];
+        return [(int) ($settings['retentionDays'] ?? 0), is_array($settings['nativeTableBinding'] ?? null)];
+    }
+
+    /**
+     * Whether a form's retention period deletes its records: always for a form's own store, and
+     * for a form kept in a table that was made for it (an app's Unified SQLite database, its own
+     * records moved there: `managedByForm`). Never for a form bound to a table of an app's own:
+     * those rows are the app's data, which other tables and the app's own code refer to, and an
+     * owner who set a period on the form did not set one on the app.
+     */
+    public static function retentionApplies(array $settings): bool
+    {
+        $binding = $settings['nativeTableBinding'] ?? null;
+        return !is_array($binding) || ($binding['managedByForm'] ?? false) === true;
+    }
+
+    /**
+     * purgeExpiredIfDue for a form kept in an app's table, after a record is made there: hour by
+     * hour, by the same marker in the form's own database, and only where the period applies.
+     *
+     * @param array<string, mixed> $binding
+     */
+    private function purgeExpiredFromTableIfDue(string $formId, array $binding): int
+    {
+        if (($binding['managedByForm'] ?? false) !== true) {
+            return 0;
+        }
+        try {
+            // In purgeExpiredIfDue's order: the hour's marker, the setting, then the claim.
+            $db = $this->sqlite->getFormDatabase($formId);
+            $hour = (string) intdiv(time(), 3600);
+            $stmt = $db->prepare("SELECT value FROM form_data WHERE key = 'retention_purged_hour'");
+            $stmt->execute();
+            $purgedHour = (string) $stmt->fetchColumn();
+            $stmt->closeCursor();
+            if ($purgedHour === $hour) {
+                return 0;
+            }
+            [$days] = $this->retentionOf($formId);
+            $db->prepare("INSERT OR REPLACE INTO form_data (key, value, updated_at) VALUES ('retention_purged_hour', :h, datetime('now'))")
+                ->execute(['h' => $hour]);
+            if ($days <= 0) {
+                return 0;
+            }
+            return $this->purgeExpiredFromTable($formId, $binding, $days);
+        } catch (\Throwable $e) {
+            $this->logger->error('Retention purge failed', ['formId' => $formId, 'error' => $e->getMessage()]);
+            return 0;
+        }
+    }
+
+    /**
+     * One batch of a form's records past its retention period, from the table it is kept in, each
+     * deleted as one delete is (deleteResponse: its links, its tombstone, the count). A record's
+     * age is the table's created-at column, as a form's own store ages a record by when it was
+     * submitted: with no such column nothing says when a row was made, and none is purged. Never
+     * a table of an app's own (retentionApplies).
+     *
+     * @param array<string, mixed> $binding
+     * @return int the records deleted
+     */
+    private function purgeExpiredFromTable(string $formId, array $binding, int $days): int
+    {
+        if (($binding['managedByForm'] ?? false) !== true || $this->nativeTableBridge === null) {
+            return 0;
+        }
+        $cutoff = time() - $days * 86400;
+        $before = gmdate('Y-m-d H:i:s', $cutoff);
+        try {
+            // `to` takes the second it names, so the second before the cutoff: older than it.
+            $expired = $this->nativeTableBridge->listResponses($binding, [
+                'to' => gmdate('Y-m-d H:i:s', $cutoff - 1),
+                'sort' => 'submittedAt', 'sortDir' => 'asc',
+                'limit' => self::RETENTION_BATCH,
+            ]);
+        } catch (ResponseListRefused $e) {
+            $this->logger->warning('Retention cannot tell how old a form\'s records are', ['formId' => $formId, 'error' => $e->getMessage()]);
+            return 0;
+        }
+        $deleted = 0;
+        foreach ($expired as $record) {
+            // A row whose time is empty is shown as made now, and is not old.
+            if (!is_string($record['submittedAt'] ?? null) || $record['submittedAt'] >= $before) {
+                continue;
+            }
+            try {
+                if ($this->deleteResponse($formId, (string) $record['id'])) {
+                    $deleted++;
+                }
+            } catch (\Throwable $e) {
+                // One the table will not let go (a row that refers to it) holds no other back.
+                $this->logger->error('Retention purge could not delete a record', ['formId' => $formId, 'responseId' => $record['id'], 'error' => $e->getMessage()]);
+            }
+        }
+        if ($deleted > 0) {
+            $this->logger->info('Retention purge removed expired responses', ['formId' => $formId, 'deleted' => $deleted, 'retentionDays' => $days]);
+        }
+        return $deleted;
     }
 
     private function deleteExpiredBatch(PDO $db, string $formId, int $days): int
@@ -3511,7 +3714,25 @@ class ResponseService
     {
         $this->assertDeletableUnderPlacement($formId);
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            return $this->nativeTableBridge->deleteResponse($binding, $responseId);
+            $deleted = $this->nativeTableBridge->deleteResponse($binding, $responseId);
+            // The row's links go with it, as a record's do below and a cleared table's do in
+            // deleteAllResponses. Left behind, they pointed at a record that was gone, and at
+            // whichever row the table gave that key to next. Not in a demo sandbox: its table is
+            // a visitor's copy, and the links are the real form's.
+            if ($deleted && !NativeAppService::hasSandboxRootOverrides()) {
+                try {
+                    $this->deleteResponseLinks($formId, $responseId);
+                } catch (\Throwable $linkErr) {
+                    $this->logger->error('Cross-store link cleanup failed after native-table response delete', [
+                        'formId' => $formId, 'responseId' => $responseId, 'error' => $linkErr->getMessage(),
+                    ]);
+                }
+                // So that a client keeping a copy hears it is gone (getResponseTombstones).
+                $this->recordNativeTombstones($formId, [$responseId]);
+                // The form's count goes down with it, as below (and likewise not for a visitor's copy).
+                $this->syncResponseCount($formId);
+            }
+            return $deleted;
         }
         if (!$this->sqlite->formDatabaseExists($formId)) {
             return false;
@@ -3552,12 +3773,7 @@ class ResponseService
                 $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id AND form_id = :form");
                 $mysqlStmt->execute(['id' => $responseId, 'form' => $formId]);
 
-                $linkStmt = $this->mysql->prepare(
-                    "DELETE FROM response_links
-                     WHERE (source_form_id = :form1 AND source_response_id = :id1)
-                        OR (target_form_id = :form2 AND target_response_id = :id2)"
-                );
-                $linkStmt->execute(['form1' => $formId, 'id1' => $responseId, 'form2' => $formId, 'id2' => $responseId]);
+                $this->deleteResponseLinks($formId, $responseId);
             } catch (\Throwable $metaErr) {
                 $this->logger->error('Cross-store cleanup failed after response delete', [
                     'formId' => $formId, 'responseId' => $responseId, 'error' => $metaErr->getMessage(),
@@ -3600,6 +3816,20 @@ class ResponseService
     }
 
     /**
+     * Forget the links one record holds and the links that point at it. By form as well as id:
+     * the table holds every account's records, and an id is not one record across them (a form
+     * bound to an app's table names its records by the table's key, "5").
+     */
+    private function deleteResponseLinks(string $formId, string $responseId): void
+    {
+        $this->mysql->prepare(
+            "DELETE FROM response_links
+             WHERE (source_form_id = :form1 AND source_response_id = :id1)
+                OR (target_form_id = :form2 AND target_response_id = :id2)"
+        )->execute(['form1' => $formId, 'id1' => $responseId, 'form2' => $formId, 'id2' => $responseId]);
+    }
+
+    /**
      * Delete EVERY response of a form in bulk — the 'start fresh' testing
      * reset. One SQLite DELETE instead of N requests; the same cross-store
      * hygiene as deleteResponse, batched: chunked response_metadata +
@@ -3619,7 +3849,13 @@ class ResponseService
         // Audit FL-05: same refusal as deleteResponse — see that method.
         $this->assertDeletableUnderPlacement($formId);
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
-            $deleted = $this->nativeTableBridge->deleteAllResponses($binding);
+            $gone = [];
+            $deleted = $this->nativeTableBridge->deleteAllResponses($binding, $gone);
+            // As one delete: not in a demo sandbox, whose table is a visitor's copy, while the
+            // links, the tombstones and the count are the real form's.
+            if (NativeAppService::hasSandboxRootOverrides()) {
+                return $deleted;
+            }
             try {
                 $this->mysql->prepare('DELETE FROM response_links WHERE source_form_id = :f OR target_form_id = :f2')
                     ->execute(['f' => $formId, 'f2' => $formId]);
@@ -3628,6 +3864,7 @@ class ResponseService
                     'formId' => $formId, 'error' => $metaErr->getMessage(),
                 ]);
             }
+            $this->recordNativeTombstones($formId, $gone);
             $this->syncResponseCount($formId);
             return $deleted;
         }
@@ -4626,9 +4863,11 @@ class ResponseService
                 $now = date('Y-m-d H:i:s');
                 foreach ($ready as [$rowIndex, $answers]) {
                     try {
+                        // No status: a CSV carries none, and the status column is the table's own,
+                        // often one of the columns imported. Sent as 'submitted', it took the place
+                        // of the imported value, and a column of numbers refused every row.
                         $this->nativeTableBridge->createResponse($binding, [
                             'answers' => $answers,
-                            'status' => 'submitted',
                             'metadata' => [
                                 'source' => 'csv_import',
                                 'importedAt' => $now,
@@ -5000,9 +5239,12 @@ class ResponseService
                 continue;
             }
 
-            $status = isset($row['status']) && is_string($row['status']) && in_array($row['status'], $allowedStatuses, true)
+            // The status the row carries, if any: a form's own store gives a row with none
+            // 'submitted', and a form kept in an app's table writes none (below).
+            $carried = isset($row['status']) && is_string($row['status']) && in_array($row['status'], $allowedStatuses, true)
                 ? $row['status']
-                : 'submitted';
+                : null;
+            $status = $carried ?? 'submitted';
             $submittedAt = $now;
             if (isset($row['submittedAt']) && is_string($row['submittedAt']) && trim($row['submittedAt']) !== '') {
                 $ts = strtotime(trim($row['submittedAt']));
@@ -5017,6 +5259,7 @@ class ResponseService
                 'answers' => $answers,
                 'answersJson' => $answersJson,
                 'status' => $status,
+                'carriedStatus' => $carried,
                 'submittedAt' => $submittedAt,
             ];
         }
@@ -5028,16 +5271,20 @@ class ResponseService
         if ($this->nativeTableBridge !== null && ($binding = $this->nativeTableBridge->resolveBinding($formId)) !== null) {
             foreach ($ready as $item) {
                 try {
-                    $createdRow = $this->nativeTableBridge->createResponse($binding, [
+                    $record = [
                         'answers' => $item['answers'],
-                        'status' => $item['status'],
                         'submittedAt' => $item['submittedAt'],
                         'metadata' => [
                             'source' => 'database_import',
                             'importedAt' => $now,
                             'submittedByUserId' => $submittedByUserId,
                         ],
-                    ]);
+                    ];
+                    // A status only where the row carries one. The table's status column is its
+                    // own, and with none carried it keeps the value imported for it, or its default.
+                    if ($item['carriedStatus'] !== null) {
+                        $record['status'] = $item['carriedStatus'];
+                    }                    $createdRow = $this->nativeTableBridge->createResponse($binding, $record);
                     $newId = (string) ($createdRow['id'] ?? '');
                     if ($newId !== '') {
                         $created++;

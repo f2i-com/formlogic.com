@@ -62,7 +62,7 @@ The [folder catalogue](PACK_PROJECTS.md) compiles `pack.json`, `install.json`, p
   "settings": {},                     // object (≤ 10KB) — notifications are stripped on export + import
   "theme": {},                        // object (≤ 256KB)
   "logicScript": "function onSubmit(ctx){…}", // optional (≤ 100KB), the ZIPP onSubmit script
-  "customScreen": { /* see below */ }, // optional (≤ 512KB)
+  "customScreen": { /* see below */ }, // optional (≤ 2MB)
   "fields": [ /* ≤ 200 */             // required
     { "id": "customer", "type": "linked_record", "label": "Customer", "required": false,
       "properties": { "targetFormId": "@pack:customers" } } // cross-form ref, see @pack:
@@ -104,7 +104,8 @@ Object-shaped fields (`settings`, `theme`, field `properties`) export as `{}` wh
 ## Reports
 
 `PackApp` may include an optional `reports` array of pre-configured chart reports and PDF documents that appear
-in the app's Reports section when the pack is installed. The entire `reports` array is capped at **256KB**.
+in the app's Reports section when the pack is installed. The entire `reports` array is capped at **256KB**, its
+JSON measured as UTF-8 text, as the app's own save and the AI's report tools measure it.
 
 Each item is either a `kind:'chart'` (a query-backed visualization) or a `kind:'document'` (a PDF report
 composed of text blocks and embedded charts). `reportId` is a pack-local stable string used to cross-reference
@@ -223,6 +224,6 @@ owner/user ids, and all real UUIDs (only `@pack:` refs + fresh ids). An app expo
 
 ## Limits
 
-≤ 50 forms, ≤ 20 apps, ≤ 200 fields/form; `logicScript` ≤ 100KB, `fields` ≤ 500KB, `settings` ≤ 10KB, `theme` ≤ 256KB,
-`customScreen` ≤ 512KB (app `navConfig`/`settings`/`theme` ≤ 10KB), app `reports` ≤ 256KB. Oversized packs
-are rejected with a clear message.
+≤ 50 forms, ≤ 20 apps, ≤ 200 fields/form; `logicScript` ≤ 100KB, `fields` ≤ 2MB, `settings` ≤ 10KB, `theme` ≤ 256KB,
+`customScreen` ≤ 2MB (app `navConfig`/`settings`/`theme` ≤ 10KB), app `reports` ≤ 256KB, app `customLogic` ≤ 256KB
+(each measured as UTF-8 JSON, as the editors measure them on save). Oversized packs are rejected with a clear message.

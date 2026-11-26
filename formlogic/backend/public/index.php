@@ -1637,7 +1637,7 @@ $app->add(function (\Psr\Http\Message\ServerRequestInterface $request, \Psr\Http
                             $softnCat = new \FormLogic\Services\SoftnPackCatalog();
                             $meta = $softnCat->getMeta($packSlug);
                             if (is_array($meta) && is_string($meta['_archivePath'] ?? null) && is_file((string) $meta['_archivePath'])) {
-                                $demoAppId = $sandbox->ensureBundledDemoInstalled($packSlug, (string) $meta['_archivePath'], (string) ($meta['shortName'] ?? $packSlug));
+                                $demoAppId = $sandbox->ensureBundledDemoInstalled($packSlug, (string) $meta['_archivePath'], (string) ($meta['shortName'] ?? $packSlug), \FormLogic\Services\McpOAuthService::publicOrigin($request));
                                 $catalogRow = [
                                     'slug' => $packSlug,
                                     'demo_enabled' => 1,

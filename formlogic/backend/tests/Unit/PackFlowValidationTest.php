@@ -226,6 +226,42 @@ class PackFlowValidationTest extends TestCase
         $this->assertSame(['connector.aokie.call.operatorSpeak'], $withheld);
     }
 
+    /**
+     * An output action is one of the review's lines, by the grant it asks for. Declined, it is not
+     * kept because a wildcard was approved: that wildcard is another line (a role's or a script's
+     * `connector.aokie.*`), and approving it is not approving this. The same rule a node's grant
+     * and a capability are held to.
+     */
+    public function testAnOutputActionIsKeptByTheApprovalOfItsOwnLineAndNoWildcards(): void
+    {
+        $flows = [['slug' => 'call-triage', 'flowJson' => ['nodes' => [], 'edges' => []]]];
+        $bindings = [['flow' => 'call-triage', 'event' => 'call.ended', 'mode' => 'async', 'outputActions' => [
+            ['type' => 'connector.request', 'connectorId' => 'aokie', 'command' => 'call.dial', 'payload' => ['to' => '+15550001']],
+            ['type' => 'call.speak', 'message' => 'Thanks.'],
+            // Names no command: the review lists it as every command of the connector.
+            ['type' => 'connector.request', 'connectorId' => 'printer'],
+            ['type' => 'formlogic.toast', 'message' => 'Done'],
+        ]]];
+        $dial = 'connector.aokie.call.dial';
+        $speak = 'connector.aokie.call.operatorSpeak';
+        $kept = static fn (array $stored): array => array_map(static fn (array $a): string => $a['type'] . (isset($a['command']) ? ' ' . $a['command'] : ''), $stored['actions'][0]);
+
+        // Every line the review lists, approved.
+        [$stored, $withheld] = $this->importFlows($flows, [$dial, $speak, 'connector.printer.*'], $bindings);
+        $this->assertSame(['connector.request call.dial', 'call.speak', 'connector.request', 'formlogic.toast'], $kept($stored));
+        $this->assertSame([], $withheld);
+
+        // Dialling and speaking declined, with the wildcards of other lines still approved.
+        [$stored, $withheld] = $this->importFlows($flows, ['connector.aokie.*', 'connector.*', 'connector.printer.*'], $bindings);
+        $this->assertSame(['connector.request', 'formlogic.toast'], $kept($stored));
+        $this->assertSame([$dial, $speak], $withheld);
+
+        // The printer's line declined: the wildcard over every connector does not stand in for it.
+        [$stored, $withheld] = $this->importFlows($flows, [$dial, $speak, 'connector.*'], $bindings);
+        $this->assertSame(['connector.request call.dial', 'call.speak', 'formlogic.toast'], $kept($stored));
+        $this->assertSame(['connector.printer.*'], $withheld);
+    }
+
     public function testBadBindingModeRejected(): void
     {
         $pack = $this->basePack();

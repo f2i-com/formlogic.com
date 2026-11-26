@@ -44,8 +44,12 @@ html.fl-dark {
 
 html, body { background: transparent; }
 
+/* The page's gutter is the host's (OAIY pads the body with --host-page-pad, and sets it to 0 where the screen sits
+   flush). It is given here once, on the body as the host gives it, and not again on .fb: padded twice, the screen
+   stood a whole gutter further in than every other plugin's. */
 body {
   margin: 0;
+  padding: var(--host-page-pad, 20px);
   color: var(--text);
   font-family: var(--font-body);
   font-size: 13px;
@@ -55,7 +59,7 @@ body {
 
 [hidden] { display: none !important; }
 
-.fb { max-width: 820px; margin: 0 auto; padding: var(--host-page-pad, 20px); display: flex; flex-direction: column; gap: 12px; }
+.fb { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 .fb h1 { margin: 0; font-size: 20px; }
 .fb h2 { margin: 0; font-size: 14px; flex: 1; min-width: 0; }
 .fb p { margin: 0 0 8px; }

@@ -808,6 +808,9 @@ class NativeAppController
                     + $ownerMeta + $updates + $this->lookForRuntime($app, $plugin) + $this->engineForRuntime($app['id'], $languages);
             }
             $input = $request->getParsedBody();
+            // From here the request asks for one of the site's workers, and its account's share of
+            // them is counted (NativeAppService::ownedBy). A plugin's app is the site's, and nobody's.
+            if ($plugin === null) $this->native->ownedBy((string) $app['id'], (string) ($app['ownerId'] ?? ''));
             if ($plugin === null && NativeAppService::hasContainerBackend($project)) {
                 $method = is_array($input) && is_string($input['method'] ?? null) ? strtoupper(trim($input['method'])) : '';
                 $path = is_array($input) && is_string($input['path'] ?? null) ? $input['path'] : '';
@@ -823,7 +826,21 @@ class NativeAppController
                 ) {
                     throw new \InvalidArgumentException('Provide a valid container API path and method');
                 }
-                $decodedPath = strtolower(preg_replace('#/+#', '/', rawurldecode($path)) ?? $path);
+                // The path the app's .htaccess and its backend read: decoded once, as SoftN's hosts
+                // decode it at ingress and as this site's public API does (ExternalAppApiController).
+                // Handed on as it came, `/api/%61dmin` passed a rule written for `/api/admin` that the
+                // PHP app's own router, which decodes, then served. With `%25` refused, nothing in what
+                // is handed on can be decoded again into something else.
+                $decoded = rawurldecode($path);
+                if (
+                    preg_match('/%(?![0-9A-Fa-f]{2})|%(?:25|3f|23)/i', $path) === 1
+                    || preg_match('/[\x00-\x1f\x7f]/', $decoded) === 1
+                    || preg_match('//u', $decoded) !== 1
+                ) {
+                    throw new \InvalidArgumentException('Provide a valid container API path and method');
+                }
+                $path = $decoded;
+                $decodedPath = strtolower(preg_replace('#/+#', '/', $path) ?? $path);
                 if (str_starts_with($decodedPath, PluginService::SITE_ROUTE_PREFIX)) throw new \RuntimeException('Not found', 404);
                 if (in_array($method, ['GET', 'POST', 'PUT', 'DELETE'], true)) {
                     $call = ['method' => $method, 'path' => $path, 'caller' => $owner ? 'owner' : ($project['access'] === 'members' ? 'member' : 'visitor')];
@@ -852,19 +869,17 @@ class NativeAppController
                 $addresses = \FormLogic\Helpers\IpResolver::fromEnvironment();
                 // The name and scheme the person reached this site by, as every other address the
                 // site hands out is made (McpOAuthService::publicOrigin), and never a `host` the
-                // app's page sent (refused above). Without them the runner tells a PHP backend it
-                // is http://localhost, and every link the backend writes says so.
-                $publicOrigin = \FormLogic\Services\McpOAuthService::publicOrigin($request);
+                // app's page sent (refused above), as every caller of a container backend gives
+                // them (NativeAppService::containerAddress). Without them the runner tells a PHP
+                // backend it is http://localhost, and every link the backend writes says so.
                 $containerReq = [
                     'method' => $method,
                     'path' => $path,
                     'query' => $query,
                     'headers' => (object) $headers,
                     'bodyBase64' => $bodyBase64,
-                    'host' => (string) substr($publicOrigin, (int) strpos($publicOrigin, '://') + 3),
-                    'https' => str_starts_with($publicOrigin, 'https://'),
                     'client_ip' => $addresses->getClientIp($request),
-                ];
+                ] + NativeAppService::containerAddress(\FormLogic\Services\McpOAuthService::publicOrigin($request));
                 $subscriptions = $this->recordSubscriptionsFor((string) $app['id']);
                 $result = $this->native->containerRequest($app['id'], $containerReq, $identity, (int) ($project['version'] ?? 0), $subscriptions);
                 $extractedHeaders = NativeRecordEventRouter::extractContainerTriggers($result['headers']);
@@ -1393,43 +1408,15 @@ class NativeAppController
     /**
      * The headers an app's own request carries to its backend, by name in lower case: what the
      * app's page set on its call, which reaches this site as part of the call's body. They are
-     * never this site's own request headers (its session and the rest stay here). Left out are
-     * the names the host answers for and a page must not say for it: the host and the address
-     * asked for, where the caller is, the connection's own, and anything of FormLogic's. Held to
-     * 64 headers of 8 KB each. A container backend keeps its page's cookie header, as its
-     * sessions are its own to keep; a SoftN handler ($cookies false) is given none, as on SoftN's
-     * hosts, nor a `forwarded` it might read as the caller's address.
+     * never this site's own request headers (its session and the rest stay here). The rule is
+     * AppRequestHeaders', which the app's API applies too (ExternalAppApiController).
      *
      * @param array<array-key, mixed> $sent
      * @return array<string, string>
      */
     private static function appRequestHeaders(array $sent, bool $cookies = true): array
     {
-        $refused = [
-            'host', 'origin', 'referer', 'connection', 'keep-alive', 'transfer-encoding',
-            'te', 'trailer', 'upgrade', 'content-length', 'x-real-ip', 'x-http-method-override',
-            'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
-        ];
-        if (!$cookies) array_push($refused, 'cookie', 'forwarded');
-        $headers = [];
-        foreach ($sent as $k => $v) {
-            if (!is_string($k) || !is_scalar($v)) continue;
-            $lk = strtolower(trim($k));
-            // Enforce strict token-with-hyphens (blocks underscore CGI spoofing like x_formlogic_user_id).
-            if ($lk === '' || strlen($lk) > 128 || preg_match('/^[a-z0-9-]+$/', $lk) !== 1) continue;
-            if (
-                str_starts_with($lk, 'x-formlogic')
-                || str_starts_with($lk, 'x-forwarded-')
-                || str_starts_with($lk, 'proxy-')
-                || str_starts_with($lk, 'sec-')
-                || in_array($lk, $refused, true)
-            ) continue;
-            $sv = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
-            if (strlen($sv) > 8192) continue;
-            $headers[$lk] = $sv;
-            if (count($headers) >= 64) break;
-        }
-        return $headers;
+        return \FormLogic\Helpers\AppRequestHeaders::fromApp($sent, $cookies);
     }
 
     /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */

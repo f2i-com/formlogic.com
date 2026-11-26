@@ -177,7 +177,8 @@ final class NativeRecordStore
     }
 
     /**
-     * What a list or an export was asked for (`sort`, `dir`, `q`, `filter`), as SQL over the
+     * What a list or an export was asked for (`sort`, `dir`, `q`, `filter`, and a PHP caller's
+     * `anyOf`), as SQL over the
      * table's SHOWN columns: a hidden column, or one past those a list shows, is refused as a
      * column that does not exist is, so nothing here can order by, match or test a value that is
      * never shown. Names are the table's own, quoted; every value is bound. `q` finds rows where
@@ -214,28 +215,40 @@ final class NativeRecordStore
         }
         if (!is_array($filter) || !array_is_list($filter) || count($filter) > self::FILTERS) throw new InvalidArgumentException('The filter must be a list of at most ' . self::FILTERS . ' conditions.');
         $types = array_column($columns, 'type', 'name');
-        foreach ($filter as $index => $condition) {
-            $which = 'Filter ' . ($index + 1);
+        // One condition as SQL, its value bound after those of the conditions before it.
+        $term = static function (mixed $condition, string $which) use ($visible, $types, $like, &$bound): string {
             if (!is_array($condition) || !is_string($condition['column'] ?? null) || !in_array($condition['column'], $visible, true)) throw new InvalidArgumentException($which . ' names an unknown column.');
             $column = 't.' . self::quote($condition['column']);
             $op = $condition['op'] ?? null;
-            if ($op === 'empty') { $terms[] = "($column IS NULL OR $column = '')"; continue; }
-            if ($op === 'notEmpty') { $terms[] = "($column IS NOT NULL AND $column != '')"; continue; }
+            if ($op === 'empty') return "($column IS NULL OR $column = '')";
+            if ($op === 'notEmpty') return "($column IS NOT NULL AND $column != '')";
             if (!is_string($op) || !in_array($op, ['contains', 'starts', ...array_keys(self::COMPARISONS)], true)) throw new InvalidArgumentException($which . ' has an unknown op.');
             $value = $condition['value'] ?? null;
             if (is_int($value) || is_float($value)) $value = (string) $value;
             if (!is_string($value)) throw new InvalidArgumentException($which . ' needs a value.');
             if (strlen($value) > self::FILTER_VALUE_LENGTH) throw new InvalidArgumentException($which . ' has a value longer than ' . self::FILTER_VALUE_LENGTH . ' bytes.');
             if ($op === 'contains' || $op === 'starts') {
-                $terms[] = "(typeof($column) != 'blob' AND $column LIKE ? ESCAPE '\\')";
                 $bound[] = ($op === 'contains' ? '%' : '') . $like($value) . '%';
-                continue;
+                return "(typeof($column) != 'blob' AND $column LIKE ? ESCAPE '\\')";
             }
             // Compared as the column compares: its affinity reads the text as a number where the
             // column holds numbers. A column with no type has no affinity to do that, so a value
             // that is a number is given one.
-            $terms[] = $column . ' ' . self::COMPARISONS[$op] . (self::typeless((string) ($types[$condition['column']] ?? '')) && is_numeric($value) ? ' CAST(? AS NUMERIC)' : ' ?');
             $bound[] = $value;
+            return $column . ' ' . self::COMPARISONS[$op] . (self::typeless((string) ($types[$condition['column']] ?? '')) && is_numeric($value) ? ' CAST(? AS NUMERIC)' : ' ?');
+        };
+        foreach ($filter as $index => $condition) $terms[] = $term($condition, 'Filter ' . ($index + 1));
+        // `anyOf`: groups of the same conditions, of which a row passes one or more of each group
+        // ("this status, or none"). For a caller in PHP that reads a table as something else (a
+        // form's responses, NativeTableFormBridge): no route passes it on, and a request's own
+        // `filter` stays a list of conditions a row passes all of.
+        $groups = $options['anyOf'] ?? [];
+        if (!is_array($groups) || !array_is_list($groups) || count($groups) > self::FILTERS) throw new InvalidArgumentException('There can be at most ' . self::FILTERS . ' groups of alternatives.');
+        foreach ($groups as $number => $group) {
+            if (!is_array($group) || !array_is_list($group) || $group === [] || count($group) > self::FILTERS) throw new InvalidArgumentException('A group of alternatives is a list of 1 to ' . self::FILTERS . ' conditions.');
+            $any = [];
+            foreach ($group as $index => $condition) $any[] = $term($condition, 'Alternative ' . ($number + 1) . '.' . ($index + 1));
+            $terms[] = '(' . implode(' OR ', $any) . ')';
         }
         return [$terms ? ' WHERE ' . implode(' AND ', $terms) : '', $bound, $sort];
     }
@@ -262,6 +275,38 @@ final class NativeRecordStore
     {
         $column = 't.' . self::quote($name);
         return "CASE typeof($column) WHEN 'blob' THEN length($column) WHEN 'text' THEN substr($column,1,401) ELSE $column END,typeof($column)";
+    }
+
+    /**
+     * One shown column where its value is read whole (browse()'s `whole`, wholeRecord()): the
+     * value, never a binary one's bytes, then its storage class.
+     */
+    private static function wholeColumn(string $name): string
+    {
+        $column = 't.' . self::quote($name);
+        return "CASE typeof($column) WHEN 'blob' THEN NULL ELSE $column END,typeof($column)";
+    }
+
+    /**
+     * A row's values whole, from the pairs wholeColumn() selected for $names: a text as it is
+     * stored, with any bytes that are not UTF-8 replaced (as an export replaces them, so the row
+     * still reads as JSON); a binary value marked as a list marks it; anything else as SQLite
+     * gives it, a number as a number.
+     *
+     * @param list<string> $names
+     * @param list<mixed> $values
+     * @return array<string, mixed>
+     */
+    private static function wholeRow(array $names, array $values): array
+    {
+        $row = [];
+        foreach ($names as $i => $name) {
+            [$value, $type] = [$values[2 * $i], $values[2 * $i + 1]];
+            if ($type === 'blob') $value = '[binary]';
+            elseif (is_string($value) && !mb_check_encoding($value, 'UTF-8')) $value = mb_scrub($value, 'UTF-8');
+            $row[$name] = $value;
+        }
+        return $row;
     }
 
     /**
@@ -300,6 +345,13 @@ final class NativeRecordStore
      * exactly; a `stamp` for each row that has a usable key (deleteMany's proof that the row is
      * still the one listed); which texts were `cut` to their preview; the `sort` applied; and how
      * many of the table's columns are never shown (`hiddenColumns`).
+     *
+     * Two options are for a caller in PHP that reads the table as something else (a form's
+     * responses, NativeTableFormBridge), and no route passes them on. `whole` gives each shown
+     * value whole (wholeRow()) where a list gives previews, so nothing is `cut`, and no stamps:
+     * a form's export, its API and its records are the values, not a page of the data manager.
+     * `count` => false leaves `total` and `matching` out, and the two counts of the whole table
+     * they take: for a caller that reads the next page of a list it has counted, or never counts.
      */
     public function browse(string $table, int $offset = 0, array $options = []): array
     {
@@ -309,27 +361,32 @@ final class NativeRecordStore
         [$columns, $visible] = $this->layout($table);
         [$where, $bound, $sort] = self::conditions($columns, $visible, $options);
         $limit = in_array($options['limit'] ?? null, self::PAGE_SIZES, true) ? $options['limit'] : self::PAGE;
+        $whole = ($options['whole'] ?? false) === true;
         // Paging contract (FL-S06): the response says which offset it actually used and why it
         // stops. A requested offset past the window is clamped to it and reported, never
         // silently repeated under a new page number: `end` is 'more' (a next page exists inside
         // the window), 'limit' (rows exist beyond the window; the browser is bounded) or 'end'.
         $effective = min(self::OFFSET_LIMIT, max(0, $offset));
         $paging = ['offset' => $effective, 'limit' => $limit, 'offsetLimit' => self::OFFSET_LIMIT];
-        $total = $matching = (int) $this->db->query('SELECT COUNT(*) FROM ' . $quoted)->fetchColumn();
-        if ($where !== '') {
-            $count = $this->db->prepare('SELECT COUNT(*) FROM ' . $quoted . ' AS t' . $where);
-            $count->execute($bound);
-            $matching = (int) $count->fetchColumn();
+        $counts = [];
+        if (($options['count'] ?? true) !== false) {
+            $total = $matching = (int) $this->db->query('SELECT COUNT(*) FROM ' . $quoted)->fetchColumn();
+            if ($where !== '') {
+                $count = $this->db->prepare('SELECT COUNT(*) FROM ' . $quoted . ' AS t' . $where);
+                $count->execute($bound);
+                $matching = (int) $count->fetchColumn();
+            }
+            $counts = ['total' => $total, 'matching' => $matching];
         }
-        $counts = ['total' => $total, 'matching' => $matching, 'sort' => $sort,
+        $counts += ['sort' => $sort,
             'hiddenColumns' => count(array_filter(array_column($this->db->query('PRAGMA table_xinfo(' . $quoted . ')')->fetchAll(PDO::FETCH_ASSOC), 'name'), self::hidden(...)))];
         if (!$visible) return ['tables' => $tables, 'columns' => [], 'rows' => [], 'hasMore' => false, 'end' => 'end'] + $paging + $counts + ['stamps' => [], 'cut' => new \stdClass()];
         $schema = $this->schema($table);
         $keyNames = $schema['primaryKey'];
         // One query gives the previews, the stamps' other columns and the keys, so the three are
         // of the same rows whatever the order. Result columns carry no names: see order().
-        $stamped = $keyNames ? self::stamped($columns, $visible, $keyNames) : $visible;
-        $select = [...array_map(self::preview(...), $stamped), ...array_map(static fn($name) => 'CAST(t.' . self::quote($name) . ' AS TEXT)', $keyNames)];
+        $stamped = $whole || !$keyNames ? $visible : self::stamped($columns, $visible, $keyNames);
+        $select = [...array_map($whole ? self::wholeColumn(...) : self::preview(...), $stamped), ...array_map(static fn($name) => 'CAST(t.' . self::quote($name) . ' AS TEXT)', $keyNames)];
         $statement = $this->db->prepare('SELECT ' . implode(',', $select) . ' FROM ' . $quoted . ' AS t' . $where . ' ORDER BY ' . self::order($columns, $sort) . ' LIMIT ' . ($limit + 1) . ' OFFSET ' . $effective);
         $statement->execute($bound);
         $found = $statement->fetchAll(PDO::FETCH_NUM);
@@ -337,6 +394,15 @@ final class NativeRecordStore
         $end = !$more ? 'end' : ($effective + $limit > self::OFFSET_LIMIT ? 'limit' : 'more');
         $rows = $keys = $stamps = $cut = [];
         foreach (array_slice($found, 0, $limit) as $index => $values) {
+            $key = null;
+            if ($keyNames) {
+                $key = array_combine($keyNames, array_slice($values, 2 * count($stamped)));
+                $keys[] = $key = in_array(null, $key, true) ? null : $key;
+            }
+            if ($whole) {
+                $rows[] = self::wholeRow($visible, $values);
+                continue;
+            }
             [$shown, $clipped, $stamp] = self::previews($table, $values, count($stamped), $this->revisionKey);
             $row = [];
             foreach ($visible as $i => $name) {
@@ -346,11 +412,6 @@ final class NativeRecordStore
                 if (isset($clipped[$i])) $cut[$index][] = $name;
             }
             $rows[] = $row;
-            $key = null;
-            if ($keyNames) {
-                $key = array_combine($keyNames, array_slice($values, 2 * count($stamped)));
-                $keys[] = $key = in_array(null, $key, true) ? null : $key;
-            }
             $stamps[] = $key === null ? null : $stamp;
         }
         // `cut` is an object in JSON whichever rows it names (row 0 alone would make it a list).
@@ -565,16 +626,71 @@ final class NativeRecordStore
         return [$rows[0], $where, $values];
     }
 
+    /**
+     * One record by its key, each value whole as browse()'s `whole` gives it (wholeRow()), or null
+     * when no row has the key: what a form kept in the table reads as one of its responses
+     * (NativeTableFormBridge). operate()'s read is the record editor's: every value as text, and
+     * none past 100 KB, which it will not make editable, so a response read that way lost such an
+     * answer. The columns are the ones that read gives, every column that is not hidden.
+     *
+     * @return array<string, mixed>|null
+     * @throws RuntimeException 404 for a table the owner is not shown
+     * @throws InvalidArgumentException for anything but the table's whole primary key
+     */
+    public function wholeRecord(string $table, mixed $key): ?array
+    {
+        return $this->wholeRecords($table, [$key])[0];
+    }
+
+    /**
+     * Several records by their keys, each as wholeRecord() gives it (null where no row has the
+     * key), in the order of the keys: one statement, made once, for a caller that asks for many
+     * (a form's records by id, NativeTableFormBridge::getResponses).
+     *
+     * @param list<mixed> $keys
+     * @return list<array<string, mixed>|null>
+     * @throws RuntimeException 404 for a table the owner is not shown
+     * @throws InvalidArgumentException for anything but the table's whole primary key
+     */
+    public function wholeRecords(string $table, array $keys): array
+    {
+        $schema = $this->schema($table);
+        $names = array_column($schema['fields'], 'name');
+        $stmt = null;
+        $out = [];
+        foreach ($keys as $key) {
+            [$where, $values] = self::locate($schema, $key);
+            $stmt ??= $this->db->prepare('SELECT ' . implode(',', array_map(self::wholeColumn(...), $names)) . ' FROM ' . self::quote($table) . ' AS t WHERE ' . $where . ' LIMIT 2');
+            $stmt->execute($values);
+            $rows = $stmt->fetchAll(PDO::FETCH_NUM);
+            $out[] = count($rows) === 1 ? self::wholeRow($names, $rows[0]) : null;
+        }
+        return $out;
+    }
+
     private function revision(array $row): string
     {
         return $this->revisionKey === null ? hash('sha256', serialize($row)) : hash_hmac('sha256', serialize($row), $this->revisionKey);
     }
 
+    /**
+     * One record read, made, changed or deleted, or several deleted (deleteMany()), in one
+     * transaction: an update or a delete names the record by its key and gives the `revision` its
+     * read gave it, and is refused (409) when the row is no longer that one.
+     *
+     * `expect` is for a caller in PHP, never a request (a closure, which no JSON body can carry):
+     * an update or a delete that gives one has it called with the record as wholeRecord() gives
+     * it, inside this transaction and after the write lock is taken, in place of the revision. It
+     * throws to refuse the write, and nothing is written. A form kept in the table checks its
+     * client's `If-Match` with it (NativeTableFormBridge::updateResponse), so a change that lands
+     * between its read and its write cannot be written over.
+     */
     public function operate(array $input, array $subscriptions = []): array
     {
         $table = $input['table'] ?? null;
         $action = $input['action'] ?? null;
         if (!is_string($table) || !in_array($action, ['read', 'create', 'update', 'delete', 'deleteMany'], true)) throw new InvalidArgumentException('Choose a table and record action.');
+        $expect = ($input['expect'] ?? null) instanceof \Closure && in_array($action, ['update', 'delete'], true) ? $input['expect'] : null;
         $schema = $this->schema($table);
         if ($action === 'deleteMany') {
             // Refused for its shape before the database is asked for its write lock.
@@ -612,6 +728,8 @@ final class NativeRecordStore
                     }
                     unset($field);
                     $result = ['record' => ['values' => (object) $values, 'revision' => $this->revision($row), 'fields' => $schema['fields']]];
+                } elseif ($expect !== null) {
+                    $expect($this->wholeRecord($table, $input['key']));
                 } elseif (!is_string($input['revision'] ?? null) || !hash_equals($this->revision($row), $input['revision'])) {
                     throw new RuntimeException('This record changed since you opened it. Close the editor and refresh before trying again.', 409);
                 }
@@ -724,21 +842,43 @@ final class NativeRecordStore
      * Not an action of operate(): that takes its input from requests, where every delete names
      * its records and shows it has read them (a revision, a stamp).
      *
+     * @param list<array<string>>|null $keys given, the key of each row that went, its columns'
+     *   values as text, as a list gives keys (browse()'s `keys`): read in the same transaction as
+     *   the delete, so a row that arrives meanwhile is either named here or not deleted. None for
+     *   a table with no usable key. A form kept in the table records its deletions by them.
      * @return int the rows of this table that went (not those a cascade took elsewhere)
      */
-    public function clear(string $table): int
+    public function clear(string $table, ?array &$keys = null): int
     {
-        $this->schema($table);
+        $names = $this->schema($table)['primaryKey'];
         $this->db->exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1500');
         $began = false;
         try {
             $this->db->exec('BEGIN IMMEDIATE');
             $began = true;
+            if ($keys !== null) {
+                $keys = [];
+                if ($names) {
+                    $found = $this->db->query('SELECT ' . implode(',', array_map(static fn($name) => 'CAST(' . self::quote($name) . ' AS TEXT)', $names)) . ' FROM ' . self::quote($table));
+                    while (($values = $found->fetch(PDO::FETCH_NUM)) !== false) {
+                        // Each part as text, or NULL, which names no row.
+                        $key = [];
+                        foreach ($names as $i => $name) {
+                            if (!is_string($values[$i] ?? null)) continue 2;
+                            $key[$name] = $values[$i];
+                        }
+                        $keys[] = $key;
+                    }
+                    $found->closeCursor();
+                }
+            }
             $deleted = (int) $this->db->exec('DELETE FROM ' . self::quote($table));
             $this->db->exec('COMMIT');
             return $deleted;
         } catch (\Throwable $error) {
             if ($began) $this->db->exec('ROLLBACK');
+            // Nothing went.
+            if ($keys !== null) $keys = [];
             if ($error instanceof \PDOException) {
                 if (($error->errorInfo[1] ?? 0) === 19) throw new RuntimeException('The database rejected this change. Other records still refer to these, or a table rule forbids deleting them.', 422);
                 if (in_array($error->errorInfo[1] ?? 0, [5, 6], true)) throw new RuntimeException('The database is busy. Please try again.', 409);

@@ -200,6 +200,164 @@ final class ExternalAppApiPolicyTest extends TestCase
         $this->assertSame(403, $resDisabled->getStatusCode());
     }
 
+    /**
+     * A `.logic` handler reads the same headers whether its app's page called it or the app's API
+     * did: `authorization` and `idempotency-key` always, and the request's others by the page's
+     * rule (AppRequestHeaders). Over HTTP the headers are this site's own request's, so what the
+     * caller says to the site alone (its key, its cookie, its CSRF token) is never among them.
+     */
+    public function testALogicHandlerIsGivenTheApiRequestsHeadersAndNoneOfTheSitesOwn(): void
+    {
+        $app = [
+            'id' => 'app-logic-1', 'ownerId' => 'owner-1', 'name' => 'Notes API', 'slug' => 'notes', 'status' => 'published',
+            'settings' => ['softnApp' => true, 'externalApi' => ['enabled' => true, 'authMode' => 'both']],
+        ];
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(null);
+        $apps->method('getAppBySlug')->willReturn($app);
+        $apps->method('sharedDatabaseGroupAppIds')->willReturn(['app-logic-1']);
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn(['version' => 1, 'files' => ['manifest.json' => json_encode(['name' => 'Notes API', 'server' => ['routes' => 'server/routes.logic']])]]);
+        $given = [];
+        $native->method('request')->willReturnCallback(static function (string $appId, array $input) use (&$given): array {
+            $given[] = (array) $input['headers'];
+            return ['status' => 200, 'body' => ['ok' => true]];
+        });
+        $native->expects($this->never())->method('containerRequest');
+        // Each call asks for a worker, and says first whose app it is (the account's share of them).
+        $native->expects($this->exactly(3))->method('ownedBy')->with('app-logic-1', 'owner-1');
+        $flows = $this->createMock(FlowService::class);
+        $flows->method('nativeRecordSubscriptionsForApps')->willReturn([]);
+        $plans = $this->createMock(PlanService::class);
+        $plans->method('isEnforced')->willReturn(false);
+        $controller = new ExternalAppApiController($apps, $native, $flows, $this->createMock(CloudFlowRunner::class), $plans, $this->createMock(NativeRecordEventRouter::class));
+        $rf = new ServerRequestFactory();
+
+        // Over HTTP, as a visitor: the request's own headers.
+        $direct = $rf->createServerRequest('POST', 'https://forms.example.test/api/public/apps/notes/routes/api/notes')
+            ->withHeader('Content-Type', 'application/json')->withHeader('Accept-Language', 'fr-CA')->withHeader('X-Device-Id', 'tablet-7')
+            ->withHeader('Idempotency-Key', 'save-1')->withHeader('X-App-Authorization', 'Bearer app-session')
+            ->withHeader('Authorization', 'Bearer flk_the_callers_key')->withHeader('Cookie', 'formlogic_session=theirs')
+            ->withHeader('X-CSRF-Token', 'their-csrf-token')->withHeader('X-Admin-Confirmation', 'their-confirmation')
+            ->withHeader('X-Demo-Sandbox-Token', 'their-sandbox')->withHeader('Mcp-Session-Id', 'their-mcp-session')
+            ->withHeader('X-FormLogic-Visitor', 'v1')->withHeader('Host', 'elsewhere.example')->withHeader('Origin', 'https://frontend.example')
+            ->withHeader('Referer', 'https://frontend.example/page')->withHeader('Forwarded', 'for=198.51.100.9')
+            ->withHeader('X-Forwarded-For', '198.51.100.9')->withHeader('X-Real-IP', '198.51.100.9')->withHeader('Proxy-Authorization', 'Basic eA==')
+            ->withHeader('Sec-Fetch-Site', 'cross-site')->withHeader('Connection', 'keep-alive')->withHeader('Content-Length', '18');
+        $direct->getBody()->write('{"title":"A note"}');
+        $this->assertSame(200, $controller->publicRouteApp($direct, new SlimResponse(), ['appId' => 'notes', 'path' => 'api/notes'])->getStatusCode());
+        $this->assertSame([
+            'authorization' => 'Bearer app-session', 'idempotency-key' => 'save-1',
+            'content-type' => 'application/json', 'accept-language' => 'fr-CA', 'x-device-id' => 'tablet-7',
+        ], $given[0]);
+
+        // Sent none, a handler still reads the two it always could.
+        $controller->publicRouteApp($rf->createServerRequest('GET', '/api/public/apps/notes/routes/api/notes'), new SlimResponse(), ['appId' => 'notes', 'path' => 'api/notes']);
+        $this->assertSame(['authorization' => '', 'idempotency-key' => ''], $given[1]);
+
+        // In an envelope, with a key: the headers the caller listed for the app, by the same rule.
+        $envelope = $rf->createServerRequest('POST', '/api/v1/apps/notes/invoke')->withAttribute('userId', 'owner-1')
+            ->withHeader('Authorization', 'Bearer flk_the_callers_key')->withHeader('Cookie', 'formlogic_session=theirs')->withHeader('X-CSRF-Token', 'their-csrf-token')
+            ->withParsedBody(['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'A note'], 'headers' => [
+                'Authorization' => 'Bearer app-session', 'X-Device-Id' => 'tablet-7', 'Content-Type' => 'application/json',
+                'Cookie' => 'sid=1', 'Forwarded' => 'for=198.51.100.9', 'X-FormLogic-User' => 'owner', 'Sec-Fetch-Site' => 'same-origin', 'Connection' => 'close',
+            ]]);
+        $this->assertSame(200, $controller->invokeApp($envelope, new SlimResponse(), ['appId' => 'notes'])->getStatusCode());
+        $this->assertSame([
+            'authorization' => 'Bearer app-session', 'idempotency-key' => '',
+            'x-device-id' => 'tablet-7', 'content-type' => 'application/json',
+        ], $given[2]);
+    }
+
+    /** A container backend called over HTTP is not handed the site's own headers either. */
+    public function testAContainerBackendIsNotGivenTheSitesOwnHeadersOverHttp(): void
+    {
+        $app = [
+            'id' => 'app-ext-2', 'ownerId' => 'owner-1', 'name' => 'Shop API', 'slug' => 'shop', 'status' => 'published',
+            'settings' => ['softnApp' => true, 'externalApi' => ['enabled' => true, 'authMode' => 'public']],
+        ];
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(null);
+        $apps->method('getAppBySlug')->willReturn($app);
+        $apps->method('sharedDatabaseGroupAppIds')->willReturn(['app-ext-2']);
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn(['version' => 1, 'files' => ['manifest.json' => json_encode(['name' => 'Shop API', 'backend' => ['runtime' => 'php', 'entry' => 'server/index.php']])]]);
+        $given = [];
+        $native->method('containerRequest')->willReturnCallback(static function (string $appId, array $req) use (&$given): array {
+            $given = (array) $req['headers'];
+            return ['status' => 200, 'headers' => [['content-type', 'application/json']], 'bodyBase64' => base64_encode('{}')];
+        });
+        $flows = $this->createMock(FlowService::class);
+        $flows->method('nativeRecordSubscriptionsForApps')->willReturn([]);
+        $plans = $this->createMock(PlanService::class);
+        $plans->method('isEnforced')->willReturn(false);
+        $controller = new ExternalAppApiController($apps, $native, $flows, $this->createMock(CloudFlowRunner::class), $plans, $this->createMock(NativeRecordEventRouter::class));
+
+        $request = (new ServerRequestFactory())->createServerRequest('GET', '/api/public/apps/shop/routes/api/products')
+            ->withHeader('X-Device-Id', 'tablet-7')->withHeader('X-App-Authorization', 'Bearer app-session')
+            ->withHeader('Authorization', 'Bearer flk_the_callers_key')->withHeader('Cookie', 'formlogic_session=theirs')
+            ->withHeader('X-CSRF-Token', 'their-csrf-token')->withHeader('X-Admin-Confirmation', 'their-confirmation')
+            ->withHeader('X-Demo-Sandbox-Token', 'their-sandbox')->withHeader('Mcp-Session-Id', 'their-mcp-session');
+        $this->assertSame(200, $controller->publicRouteApp($request, new SlimResponse(), ['appId' => 'shop', 'path' => 'api/products'])->getStatusCode());
+        $this->assertSame(['x-device-id' => 'tablet-7', 'authorization' => 'Bearer app-session'], $given);
+    }
+
+    /**
+     * A container backend reads the same headers whichever way it was called: through the app's
+     * API, by the rule its page is held to (AppRequestHeaders). The API had a filter of its own,
+     * which passed on what the page's never did (the connection's own headers, a browser's `sec-*`,
+     * a name that only begins `x-formlogic`) and cut a value past 8 KB short instead of leaving it
+     * out. Neither lets a caller say where it is, or override the method the API allows.
+     */
+    public function testAContainerBackendIsGivenTheApisHeadersByThePagesRule(): void
+    {
+        $app = [
+            'id' => 'app-ext-3', 'ownerId' => 'owner-1', 'name' => 'Shop API', 'slug' => 'shop', 'status' => 'published',
+            'settings' => ['softnApp' => true, 'externalApi' => ['enabled' => true, 'authMode' => 'both']],
+        ];
+        $apps = $this->createMock(AppService::class);
+        $apps->method('getApp')->willReturn(null);
+        $apps->method('getAppBySlug')->willReturn($app);
+        $apps->method('sharedDatabaseGroupAppIds')->willReturn(['app-ext-3']);
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn(['version' => 1, 'files' => ['manifest.json' => json_encode(['name' => 'Shop API', 'backend' => ['runtime' => 'php', 'entry' => 'server/index.php']])]]);
+        $given = [];
+        $native->method('containerRequest')->willReturnCallback(static function (string $appId, array $req) use (&$given): array {
+            $given[] = (array) $req['headers'];
+            return ['status' => 200, 'headers' => [['content-type', 'application/json']], 'bodyBase64' => base64_encode('{}')];
+        });
+        $flows = $this->createMock(FlowService::class);
+        $flows->method('nativeRecordSubscriptionsForApps')->willReturn([]);
+        $plans = $this->createMock(PlanService::class);
+        $plans->method('isEnforced')->willReturn(false);
+        $controller = new ExternalAppApiController($apps, $native, $flows, $this->createMock(CloudFlowRunner::class), $plans, $this->createMock(NativeRecordEventRouter::class));
+        $rf = new ServerRequestFactory();
+        $kept = ['X-Device-Id' => 'tablet-7', 'Accept-Language' => 'fr-CA'];
+        $withheld = [
+            'Connection' => 'close', 'Keep-Alive' => 'timeout=5', 'TE' => 'trailers', 'Upgrade' => 'websocket', 'Transfer-Encoding' => 'chunked',
+            'Content-Length' => '3', 'Sec-Fetch-Site' => 'cross-site', 'X-FormLogicUser' => 'owner', 'X-Long' => str_repeat('a', 8193),
+            'Forwarded' => 'for=198.51.100.9', 'X-Forwarded-For' => '198.51.100.9', 'X-Real-IP' => '198.51.100.9',
+            'X-HTTP-Method-Override' => 'DELETE', 'X-Method-Override' => 'DELETE', 'Host' => 'elsewhere.example', 'Origin' => 'https://frontend.example',
+        ];
+
+        // In an envelope, with a key: the headers the caller listed for the app.
+        $listed = ['Authorization' => 'Bearer app-session', 'Cookie' => 'sid=1'] + $kept + $withheld;
+        $envelope = $rf->createServerRequest('POST', '/api/v1/apps/shop/invoke')->withAttribute('userId', 'owner-1')
+            ->withParsedBody(['method' => 'GET', 'path' => '/api/products', 'headers' => $listed]);
+        $this->assertSame(200, $controller->invokeApp($envelope, new SlimResponse(), ['appId' => 'shop'])->getStatusCode());
+        $this->assertSame(['authorization' => 'Bearer app-session', 'cookie' => 'sid=1', 'x-device-id' => 'tablet-7', 'accept-language' => 'fr-CA'], $given[0]);
+        $this->assertSame(\FormLogic\Helpers\AppRequestHeaders::fromApp($listed), $given[0], 'the page\'s rule, exactly');
+
+        // Over HTTP, as a visitor: the request's own headers, but for what it says to this site alone.
+        $direct = $rf->createServerRequest('GET', 'https://forms.example.test/api/public/apps/shop/routes/api/products')
+            ->withHeader('X-App-Authorization', 'Bearer app-session');
+        foreach ($kept + $withheld as $name => $value) {
+            $direct = $direct->withHeader($name, $value);
+        }
+        $this->assertSame(200, $controller->publicRouteApp($direct, new SlimResponse(), ['appId' => 'shop', 'path' => 'api/products'])->getStatusCode());
+        $this->assertEqualsCanonicalizing(['authorization' => 'Bearer app-session', 'x-device-id' => 'tablet-7', 'accept-language' => 'fr-CA'], $given[1]);
+    }
+
     public function testPublicRouteRefusesDraftAppsAndApiKeyOnlyMode(): void
     {
         $draftApp = [

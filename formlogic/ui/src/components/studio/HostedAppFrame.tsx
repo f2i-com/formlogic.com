@@ -97,6 +97,21 @@ function exceedsInputLimit(value: unknown, limit: number): boolean {
 const CONTAINER_QUERY_LIMIT = 4096;
 
 /**
+ * A container backend's answer to one of its routes (`{status, headers, bodyBase64}`, as the
+ * server sends a container app's every answer) in the shape an app's own route answers
+ * (`{status, body}`): what reads a route as the person (the files of an app it offers) takes. Its
+ * body is read as JSON text, and is none where it is not.
+ */
+function routeAnswerOf(answer: { status?: unknown; bodyBase64?: unknown } | undefined): { status?: number; body?: unknown } | undefined {
+  if (!answer || typeof answer.status !== "number") return undefined;
+  let body: unknown;
+  if (typeof answer.bodyBase64 === "string" && answer.bodyBase64 !== "") {
+    try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(atob(answer.bodyBase64), (c) => c.charCodeAt(0)))); } catch { body = undefined; }
+  }
+  return { status: answer.status, body };
+}
+
+/**
  * A container's HTTP call this page will not pass on, said as the response a server would send.
  * The frame hands it to the app's own code with that status. A bare `{ error }` reads there as
  * 502, a gateway that failed, which tells an app nothing about a request that was only too large.
@@ -436,6 +451,14 @@ export function HostedAppFrame({
     const readFromApp: AppReader = async (from) => {
       const url = new URL(from, window.location.origin);
       if (url.origin !== window.location.origin) throw new Error("This URL is not part of the app backend");
+      // A container backend is asked as the frame asks it (`containerHttp`) and answers in its own
+      // shape, its body in base64: read as a route's JSON, or the files of an app a web app with a
+      // backend offered were never found in it, and every such offer failed once the person said yes.
+      if (webContainer && mountNative?.containerBackend === "host") {
+        const result = await api.runNativeContainerRequest(slug, { method: "GET", path: url.pathname, query: url.search.slice(1), headers: {}, bodyBase64: "" }, undefined, clientEngine, !!mountNative.visitor);
+        if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
+        return result.error ? { error: result.error, ...(result.status !== undefined ? { status: result.status } : {}) } : { data: { result: routeAnswerOf(result.data?.result) } };
+      }
       const result = await api.runNativeRequest(slug, { path: url.pathname, query: Object.fromEntries(url.searchParams), method: "GET", headers: {}, body: {} }, undefined, clientEngine, !!mountNative?.visitor);
       if (isCurrentMount() && engineChanged(result)) void remountOnNewEngine();
       return result;
