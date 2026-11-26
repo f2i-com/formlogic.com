@@ -17,7 +17,7 @@ vi.mock('../../lib/formlogic/zipp-bytes', () => ({
   engineNeedsBytes: (id: string) => id !== 'host-js',
   hostZippFiles: () => ({ glue: { url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_wasm.js', sha256: 'g'.repeat(64) }, torch: { url: 'http://localhost:3000/zipp/a844efe3d7d0/zipp_torch.wasm', sha256: 't'.repeat(64) } }),
 }));
-vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
+vi.mock('../../lib/api', () => ({ api: { runHostedAction: vi.fn(), runNativeRequest: vi.fn(), runNativeContainerRequest: vi.fn(), getHostedRuntime: vi.fn(), getNativeRuntime: vi.fn() } }));
 vi.mock('../../lib/softn/workspaceBridge', () => ({ workspaceBridge: vi.fn() }));
 import { HostedAppFrame as ActualHostedAppFrame } from './HostedAppFrame';
 import { admitHostedActor, captureHostedRequest } from '../../lib/hostedActor';
@@ -578,6 +578,51 @@ describe('a remount on the server’s new decision', () => {
     await act(async () => sendReady(next));
     expect(initOf(post).client).toEqual(fresh);
     expect(initOf(post).appId).toBe('hosted-notes-4');
+  });
+});
+
+describe("a container's HTTP call this page will not pass on", () => {
+  // SoftN's frame takes 16 MiB bodies and 8,192-character queries; this page and the server take
+  // less. What is over is answered as the response a server would send, which the frame hands to
+  // the app's own code: a bare `{ error }` reads there as 502, and a query cut to fit is another
+  // request than the one the app made.
+  const client = { 'manifest.json': '{"engine":2,"main":"index.html"}', 'index.html': '<main>Notes</main>' };
+  type Refusal = { result: { status: number; statusText: string; headers: [string, string][]; bodyBase64: string } };
+  async function openContainer() {
+    root = createRoot(container);
+    await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={{ ...application, assets: {}, containerBackend: 'host' }} />));
+    const { iframe } = spyOnFrame();
+    await act(async () => window.dispatchEvent(new MessageEvent('message', { source: iframe.contentWindow!, data: { type: 'formlogic:ready', nativeProtocol: 1, webContainer: 1 } })));
+    vi.mocked(api.runNativeContainerRequest).mockResolvedValue({ data: { result: { status: 200, headers: [], bodyBase64: '' } } });
+    return channels[0];
+  }
+  const call = (channel: StubChannel, id: number, input: Record<string, unknown>) =>
+    act(async () => channel.port1.onmessage?.({ data: { type: 'call', id, action: 'containerHttp', input: { method: 'POST', path: '/api/notes', headers: {}, bodyBase64: '', query: '', ...input } } }));
+  const answerTo = (channel: StubChannel, id: number) =>
+    (channel.port1.postMessage.mock.calls.map(([message]) => message as { id: number; result: unknown }).find(message => message.id === id)?.result) as Refusal | undefined;
+
+  it('answers a body over the limit as 413', async () => {
+    const channel = await openContainer();
+    await call(channel, 1, { bodyBase64: 'A'.repeat(6 * 1024 * 1024 + 1) });
+    const answer = answerTo(channel, 1);
+    expect(answer?.result).toMatchObject({ status: 413, statusText: 'Payload Too Large', headers: [['content-type', 'application/json']] });
+    expect(JSON.parse(atob(answer!.result.bodyBase64))).toEqual({ error: 'Request body too large' });
+    expect(api.runNativeContainerRequest).not.toHaveBeenCalled();
+  });
+
+  it('refuses a query over the bound whole, and passes one within it on uncut', async () => {
+    const channel = await openContainer();
+    const long = `q=${'a'.repeat(4095)}`;
+    await call(channel, 1, { query: long });
+    const answer = answerTo(channel, 1);
+    expect(answer?.result).toMatchObject({ status: 414, statusText: 'URI Too Long' });
+    expect(JSON.parse(atob(answer!.result.bodyBase64))).toEqual({ error: 'Query string too long' });
+    expect(api.runNativeContainerRequest).not.toHaveBeenCalled();
+
+    const fits = long.slice(0, 4096);
+    await call(channel, 2, { query: fits });
+    expect(vi.mocked(api.runNativeContainerRequest).mock.calls[0][1]).toMatchObject({ path: '/api/notes', query: fits });
+    expect(answerTo(channel, 2)).toEqual({ result: { status: 200, headers: [], bodyBase64: '' } });
   });
 });
 

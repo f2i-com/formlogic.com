@@ -97,6 +97,18 @@ describe('approving a draft for the app directory', () => {
     expect(text).not.toContain('microphone');
   });
 
+  it('has words for every capability SoftN has, the device ones of its schema 4 among them', async () => {
+    // SoftN's list (@softn/bundle-format capabilities.ts). One with no words here was shown as not
+    // asked for: an app that reads the visitor's location was approved as using nothing of the kind.
+    const softn = ['net', 'camera', 'mic', 'files', 'qr', 'ai', 'gpu', 'sync', 'storage', 'accel', 'bluetooth', 'location', 'haptics', 'notifications'];
+    getDraft.mockResolvedValue({ data: { ...waiting, permissions: Object.fromEntries(softn.map((name) => [name, { enabled: true }])) } });
+    await open();
+    const said = container.querySelectorAll('dd');
+    const asks = Array.from(said).find((dd) => dd.previousElementSibling?.textContent === 'What it may use')?.textContent ?? '';
+    expect(asks.split(', ')).toHaveLength(softn.length);
+    expect(asks).toContain('nearby Bluetooth devices, the visitor\'s location, vibration, notifications on the device');
+  });
+
   it('says nothing is on that SoftN would not grant: only enabled: true is', async () => {
     getDraft.mockResolvedValue({ data: { ...waiting, permissions: { net: { allowed_hosts: ['x.example'] }, camera: {}, mic: true, files: { enabled: 'yes' } } } });
     await open();

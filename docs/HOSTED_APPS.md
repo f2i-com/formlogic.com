@@ -1518,7 +1518,13 @@ inside this bridge; it never forwards the FormLogic account credential as an app
 These origins are routing aliases, not permission to make arbitrary external requests.
 A handler's `req.headers` always has `authorization` and `idempotency-key` (empty when not
 sent), as on SoftN's PHP host, so an app that retries a write with the same key can tell the
-retry from a second write. The method is sent upper-cased, and bodies keep `{}` and `[]` apart
+retry from a second write. The other headers the app's own request carries are there too, by
+name in lower case (up to 64, 8 KB each), except the ones the host speaks for: `cookie`, `host`,
+`origin`, `referer`, `forwarded`, `x-real-ip`, `content-length`, the connection's own, the
+method and address overrides (`x-http-method-override`, `x-original-url`, `x-rewrite-url`), and
+any `proxy-*`, `sec-*`, `x-forwarded-*` or `x-formlogic*`. A caller can put anything in the
+rest, so none of them says who or where the caller is. The method is sent upper-cased, and
+bodies keep `{}` and `[]` apart
 both ways. The frame waits 35 seconds for an answer, longer than the server's 25-second
 deadline, so a write that was made is never reported to the app as failed.
 
@@ -1594,8 +1600,11 @@ needs `memory_limit` of at least 352M for the largest app (`php_value memory_lim
 Apache, or php.ini). The largest app is sent as about 86 MB of JSON, and FormLogic takes a body of up
 to 96 MB there: a proxy in front of PHP must allow as much (nginx: `client_max_body_size 96m;`;
 Apache's own default allows it). The browser action bridge currently limits an individual message to 32 KB.
-At most four native workers run concurrently across apps in one storage root, with a 25-second
-worker deadline; a request waits up to three seconds for one before it is answered busy (`429`).
+At most four native workers run concurrently across apps in one storage root (`NATIVE_WORKERS`, up
+to 64), with a 25-second worker deadline; a request waits up to three seconds for one before it is
+answered busy (`429`). One app holds at most two of them at a time (`NATIVE_WORKERS_PER_APP`). That
+share is each app's, not each account's: two apps of one account can hold all four between them, so
+a site that hosts apps for many accounts raises `NATIVE_WORKERS` to what its server can run at once.
 This is an initial capacity limit, not a production concurrency benchmark. Saves to the app's
 browser storage are not counted against the frame's four calls at a time.
 

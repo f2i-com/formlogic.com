@@ -184,8 +184,18 @@ class AuthController
             $userId = (string) ($result['user']['id'] ?? '');
             if ($this->mfaService !== null && $userId !== '' && $this->mfaService->isEnabled($userId)) {
                 $trust = $request->getCookieParams()[\FormLogic\Services\MfaService::TRUST_COOKIE] ?? null;
+                $user = $this->authService->getUserById($userId);
                 if (!$this->mfaService->checkTrust($userId, is_string($trust) ? $trust : null)) {
-                    $user = $this->authService->getUserById($userId);
+                    // No new prompt while the account is over its budget of code answers: each
+                    // prompt would be refused unread anyway (MfaService::secondFactorAttempt).
+                    if ($this->mfaService->secondFactorLocked($userId)) {
+                        $this->audit($request, 'auth.mfa.failed', 'user', $userId, ['reason' => 'account_budget']);
+                        return $this->jsonResponse($response, [
+                            'error' => true,
+                            'message' => 'Too many incorrect verification codes for this account. Please try again in '
+                                . $this->mfaService->secondFactorMinutesLeft() . ' minute(s).',
+                        ], 429);
+                    }
                     $mfaToken = '';
                     if ($user !== null) {
                         // The token's jti is registered as a ONE-TIME server-side
@@ -201,6 +211,10 @@ class AuthController
                         'mfaRequired' => true,
                         'mfaToken' => $mfaToken,
                     ]);
+                }
+                // A browser the account remembers stands for the code: the sign-in is whole.
+                if ($user !== null) {
+                    $this->authService->signInCompleted($user);
                 }
             }
 
@@ -983,6 +997,27 @@ class AuthController
             $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'challenge_spent']);
             return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
+        // The account's own budget, across every prompt and address: a prompt's five answers
+        // bound nobody who can sign in with the password again for a fresh one. Counted before
+        // the code is read, and refused if it cannot be counted.
+        $withinBudget = $this->mfaService->secondFactorAttempt($user->id);
+        if ($withinBudget === null) {
+            $this->logger->error('MFA verify refused: rate-limit store unavailable (failing closed)');
+            return $this->jsonResponse($response, [
+                'error' => true,
+                'message' => (new \FormLogic\Services\RateLimiterUnavailableException())->getMessage(),
+                'retryable' => true,
+            ], 503);
+        }
+        if (!$withinBudget) {
+            $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'account_budget']);
+            return $this->jsonError(
+                $response,
+                'Too many incorrect verification codes for this account. Please try again in '
+                    . $this->mfaService->secondFactorMinutesLeft() . ' minute(s).',
+                429
+            );
+        }
         if (!$this->mfaService->verifyChallenge($user->id, $code)) {
             $this->audit($request, 'auth.mfa.failed', 'user', $user->id);
             return $this->jsonError($response, 'That code didn\'t match — check your authenticator app and try again', 401);
@@ -993,6 +1028,9 @@ class AuthController
             $this->audit($request, 'auth.mfa.failed', 'user', $user->id, ['reason' => 'challenge_replayed']);
             return $this->jsonError($response, 'Your sign-in expired — enter your password again', 401);
         }
+        // The sign-in is whole: both counts against the account end.
+        $this->mfaService->secondFactorPassed($user->id);
+        $this->authService->signInCompleted($user);
 
         $response = $this->setAuthCookie($response, $this->authService->issueToken($user));
         $remember = !empty($data['rememberBrowser']);

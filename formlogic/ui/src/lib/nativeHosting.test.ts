@@ -148,6 +148,23 @@ describe('importNativeProject', () => {
     await expect(importNativeProject(softn({ ...client, 'manifest.json': `{"name":"Notes","main":"ui/main.ui","server":${server}}`, 'server/main.logic': 'function list() {}' }))).rejects.toThrow('write its "apiVersion" as 1, a whole number');
   });
 
+  it('takes back the editable copy FormLogic exports of its own app, whose id is past 120 characters', async () => {
+    // lib/softn/project.ts names one `formlogic_` and the hex of the site, the kind and the app's id.
+    const hex = (value: string) => Array.from(new TextEncoder().encode(value), byte => byte.toString(16).padStart(2, '0')).join('');
+    const exported = `formlogic_${hex('https://formlogic.com/app/3f2b8c1e-9d4a-4c7b-8e21-5a6f0c9d7b13')}`;
+    expect(exported).toHaveLength(134);
+    const named = (id: string, more: Record<string, unknown> = {}, files: Record<string, string> = {}) =>
+      importNativeProject(softn({ ...client, 'manifest.json': JSON.stringify({ ...JSON.parse(client['manifest.json']), id, ...more }), ...files }));
+    await expect(named(exported)).resolves.toMatchObject({ version: 0 });
+    await expect(named('a'.repeat(256))).resolves.toMatchObject({ version: 0 });
+    await expect(named('a'.repeat(257))).rejects.toThrow('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 256 of them).');
+    // An app with a server block runs under its id, and there the server takes 120.
+    const server = { entry: 'server/main.logic', requires: { apiVersion: 1, capabilities: ['sql'] }, database: { kind: 'private-sqlite', migrations: [] } };
+    const backend = { 'server/main.logic': 'function list() {}' };
+    await expect(named('a'.repeat(120), { server }, backend)).resolves.toMatchObject({ version: 0 });
+    await expect(named('a'.repeat(121), { server }, backend)).rejects.toThrow('manifest.json\'s id is longer than an app with a server block can run under (120 characters)');
+  });
+
   it('sends a FormLogic project with backend actions to a Forms app, where those run', async () => {
     const actions = { 'formlogic.json': JSON.stringify({ formatVersion: 1, storage: 'formlogic-forms-sqlite', actions: {} }) };
     await expect(importNativeProject(softn({ 'manifest.json': JSON.stringify({ name: 'Orders', main: 'ui/main.ui' }), 'ui/main.ui': '<Text>Orders</Text>', ...actions }))).rejects.toThrow('Screens → Hosting & app tools');

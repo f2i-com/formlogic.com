@@ -17,7 +17,7 @@ import { bytesToBase64, type NativeMediaFiles } from "../../lib/nativeHosting";
 import type { AppReader, NativeHost } from "../../lib/nativeHost";
 import { OutsideLinkBar } from "./OutsideLinkBar";
 import type { SiteProblem, SoftnConsoleEntry } from "./SiteAppFrame";
-import { isValidAppPlace } from "../../lib/nativeRouteAddress";
+import { isValidAppPlace, placeWithoutQuery } from "../../lib/nativeRouteAddress";
 
 const navigate = (path: string) => window.location.assign(path);
 /** The largest request a page sends its app's backend: a photo upload (SoftN takes 5.6 MB) and its envelope. */
@@ -91,6 +91,18 @@ function exceedsInputLimit(value: unknown, limit: number): boolean {
   } catch {
     return true;
   }
+}
+
+/** The longest query a container's HTTP call may carry: the server's own bound (NativeAppController). */
+const CONTAINER_QUERY_LIMIT = 4096;
+
+/**
+ * A container's HTTP call this page will not pass on, said as the response a server would send.
+ * The frame hands it to the app's own code with that status. A bare `{ error }` reads there as
+ * 502, a gateway that failed, which tells an app nothing about a request that was only too large.
+ */
+function containerRefusal(status: number, statusText: string, error: string) {
+  return { result: { status, statusText, headers: [["content-type", "application/json"]], bodyBase64: btoa(JSON.stringify({ error })) } };
 }
 
 /** The server's decision for one mount: the engine to run, and the revision actions send back. */
@@ -739,13 +751,16 @@ export function HostedAppFrame({
         const inputLimit = mountNative && !plugin && action === "formlogicUpload" ? NATIVE_UPLOAD_INPUT
           : mountNative && (action === "nativeRequest" || action === "containerHttp") ? NATIVE_REQUEST_INPUT
           : storage && action === "nativeStorage" && limits ? Math.max(32768, limits.input) : 32768;
-        if (
-          !input ||
-          typeof input !== "object" ||
-          Array.isArray(input) ||
-          exceedsInputLimit(input, inputLimit)
-        ) {
+        if (!input || typeof input !== "object" || Array.isArray(input)) {
           reply({ error: "Invalid action input." });
+          return;
+        }
+        if (exceedsInputLimit(input, inputLimit)) {
+          // A container's HTTP call over the limit is the body it carries: the app is told 413, as
+          // the server tells it for one this page lets through and the server finds too large.
+          reply(webContainer && mountNative?.containerBackend === "host" && action === "containerHttp"
+            ? containerRefusal(413, "Payload Too Large", "Request body too large")
+            : { error: "Invalid action input." });
           return;
         }
         // A save is answered at once from this page's storage, so it is not held to the four
@@ -797,10 +812,17 @@ export function HostedAppFrame({
                 if (typeof v === "string" && v.length <= 8192) cleanHeaders[lk] = v.replace(/[\r\n\0]+/g, "");
               }
             }
+            // A query over the server's bound is refused whole. Cut to fit, it reached the app's
+            // backend as another request than the one the app made, half a parameter and all.
+            const query = typeof input.query === "string" ? input.query : "";
+            if (query.length > CONTAINER_QUERY_LIMIT) {
+              reply(containerRefusal(414, "URI Too Long", "Query string too long"));
+              return;
+            }
             const result = await api.runNativeContainerRequest(slug, {
               method,
               path,
-              query: typeof input.query === "string" ? input.query.slice(0, 4096) : "",
+              query,
               headers: cleanHeaders,
               bodyBase64: typeof input.bodyBase64 === "string" ? input.bodyBase64 : "",
             }, controller.signal, clientEngine, !!mountNative.visitor);
@@ -977,7 +999,9 @@ export function HostedAppFrame({
           ...(largeStorage && limits ? { storageLimits: { value: limits.value, entries: limits.entries, map: limits.map, input: limits.input, queued: limits.queued } } : {}),
           dark: document.documentElement.classList.contains("dark"),
           // Where to start, for a frame that follows the app's page links and so knows its places.
-          ...(event.data.places === 1 && isValidAppPlace(placeRef.current.initialPlace) ? { place: placeRef.current.initialPlace } : {}),
+          // Without the address's query: the frame refuses a place with a `?` in it and opens the
+          // main page, so a link that came with `?utm_source=…` on it landed on the wrong page.
+          ...(event.data.places === 1 && isValidAppPlace(placeRef.current.initialPlace) ? { place: placeWithoutQuery(placeRef.current.initialPlace) } : {}),
           // The id alone: the shell serves engines by name and refuses one it does not, so an
           // object here would arrive as "[object Object]" and be refused. A shell from before the
           // handshake ignores the key and runs what it always ran.
@@ -1026,7 +1050,8 @@ export function HostedAppFrame({
   useEffect(() => {
     if (!navigateTo || blocked || actorRefused || !port.current) return;
     if (!isValidAppPlace(navigateTo.place)) return;
-    try { port.current.postMessage({ type: "formlogic:navigate", to: navigateTo.place }); } catch { /* Frame may not support navigate yet. */ }
+    // As a place is handed at the start: with no query, which the frame takes for its main page.
+    try { port.current.postMessage({ type: "formlogic:navigate", to: placeWithoutQuery(navigateTo.place) }); } catch { /* Frame may not support navigate yet. */ }
   }, [navigateTo, blocked, actorRefused]);
   // A newer version to hand to the frame on screen, once: when it arrives, or when the app it is for
   // has drawn. A frame that cannot be handed one answers `reopen` here, at once.

@@ -380,6 +380,68 @@ test('a frozen record packed from a local checkout is a developer\'s, and CI ref
   await assert.rejects(fetchOaiyCli({ root, frozen: 'frozen.json', oaiyRepo: '../oaiy.com', fetchImpl: serving(release).fetchImpl, token: null, ...quiet }), /OAIY_REPO packs the CLI from \.\.\/oaiy\.com while the frozen release record for this run names v0\.0\.5; one run installs one CLI\./);
 });
 
+// ── A developer's checkout (OAIY_REPO) ──────────────────────────────────────
+
+/**
+ * An oaiy.com checkout: its packer, and the CLI its desktop build stages,
+ * under `base` (`platform` today, the root before the tree moved there). The
+ * packer is a stand-in that hands over a prebuilt asset and notes the folder
+ * it was told to pack, since the real one is oaiy.com's and is not in this
+ * tree.
+ */
+async function oaiyCheckout(t, base, { staged = true } = {}) {
+  const repo = await mkdtemp(resolve(tmpdir(), 'oaiy-checkout-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const scripts = resolve(repo, base, 'scripts');
+  const cli = resolve(repo, base, 'desktop/src-tauri/resources/cli');
+  await mkdir(scripts, { recursive: true });
+  await mkdir(cli, { recursive: true });
+  if (staged) await writeFile(resolve(cli, 'oaiy.mjs'), '#!/usr/bin/env node\n');
+  await writeFile(resolve(scripts, 'asset.tar.gz'), cliAsset().archive);
+  await writeFile(resolve(scripts, 'pack-cli-asset.mjs'), [
+    "import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';",
+    "import { createHash } from 'node:crypto';",
+    `export const CAPABILITIES_FILE = ${JSON.stringify(CAPABILITIES_FILE)};`,
+    `export const SUMS_FILE = ${JSON.stringify(SUMS_FILE)};`,
+    'export function packCliAsset(stagedDir, out) {',
+    "  copyFileSync(new URL('./asset.tar.gz', import.meta.url), out);",
+    "  writeFileSync(new URL('./packed-from.txt', import.meta.url), stagedDir);",
+    "  return { asset: 'oaiy-cli-local.tar.gz', sha256: createHash('sha256').update(readFileSync(out)).digest('hex') };",
+    '}',
+    '',
+  ].join('\n'));
+  return { repo, cli, packedFrom: () => readFile(resolve(scripts, 'packed-from.txt'), 'utf8') };
+}
+
+test('OAIY_REPO packs from a checkout that keeps its packer and staged CLI under platform/, and from an older one that has them at its root', async (t) => {
+  for (const base of ['platform', '']) {
+    const root = await formlogicRoot(t);
+    const checkout = await oaiyCheckout(t, base);
+    if (base) {
+      // platform/ is looked in first: a file left at the old place is not the checkout's packer.
+      await mkdir(resolve(checkout.repo, 'scripts'), { recursive: true });
+      await writeFile(resolve(checkout.repo, 'scripts/pack-cli-asset.mjs'), "throw new Error('the packer at the root was imported');\n");
+    }
+    const record = await fetchOaiyCli({ root, oaiyRepo: checkout.repo, inCi: false, frozen: null, token: null, fetchImpl: async () => { throw new Error('a local pack asks the network nothing'); }, ...quiet });
+    assert.equal(record.source, 'local');
+    assert.equal(record.asset, 'oaiy-cli-local.tar.gz');
+    assert.ok(existsSync(installed(root, 'oaiy.mjs')));
+    assert.equal(await checkout.packedFrom(), checkout.cli, 'the packer is handed the CLI staged in its own layout');
+    assert.equal((await currentRecord(root)).source, 'local');
+  }
+});
+
+test('OAIY_REPO says where it looked in a folder that is no checkout, and which script stages the CLI when none is staged', async (t) => {
+  const root = await formlogicRoot(t);
+  const empty = await mkdtemp(resolve(tmpdir(), 'oaiy-checkout-'));
+  t.after(() => rm(empty, { recursive: true, force: true }));
+  const pack = (oaiyRepo) => fetchOaiyCli({ root, oaiyRepo, inCi: false, frozen: null, token: null, ...quiet });
+  await assert.rejects(pack(empty), /has no platform\/scripts\/pack-cli-asset\.mjs \(nor scripts\/pack-cli-asset\.mjs, where an older checkout keeps it\); it is not an oaiy\.com checkout\./);
+  await assert.rejects(pack((await oaiyCheckout(t, 'platform', { staged: false })).repo), /holds no staged CLI; run OAIY's platform\/desktop\/scripts\/sync-cli\.mjs in that checkout first\./);
+  await assert.rejects(pack((await oaiyCheckout(t, '', { staged: false })).repo), /holds no staged CLI; run OAIY's desktop\/scripts\/sync-cli\.mjs in that checkout first\./);
+  assert.ok(!existsSync(installed(root)), 'nothing is installed');
+});
+
 // ── The release that has no CLI asset: refuse, never walk back ──────────────
 
 test('a release without the CLI asset is refused in both --resolve-only and a fetch, and no older release is tried', async (t) => {

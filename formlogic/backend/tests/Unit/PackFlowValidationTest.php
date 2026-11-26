@@ -148,6 +148,84 @@ class PackFlowValidationTest extends TestCase
         $this->validate($pack);
     }
 
+    /**
+     * importPackFlows over a database double that keeps each flow's stored capabilities, by slug.
+     *
+     * @param list<string>|null $approved the reviewed grants (null: no review ran)
+     * @return array{0: array<string, ?list<string>>, 1: list<string>} [capabilities by flow slug, withheld grants]
+     */
+    private function importFlows(array $flows, ?array $approved, array $bindings = []): array
+    {
+        $stored = [];
+        $actions = [];
+        $statement = $this->createMock(\PDOStatement::class);
+        $statement->method('execute')->willReturnCallback(static function (?array $params = null) use (&$stored, &$actions): bool {
+            if (isset($params['slug'])) $stored[$params['slug']] = $params['node_caps'] !== null ? json_decode($params['node_caps'], true) : null;
+            if (isset($params['event'])) $actions[] = $params['actions'] !== null ? json_decode($params['actions'], true) : null;
+            return true;
+        });
+        $pdo = $this->createMock(\PDO::class);
+        $pdo->method('prepare')->willReturn($statement);
+        $svc = (new \ReflectionClass(PackService::class))->newInstanceWithoutConstructor();
+        (new \ReflectionProperty(PackService::class, 'mysql'))->setValue($svc, $pdo);
+        $withheld = [];
+        $args = [['flows' => $flows, 'flowBindings' => $bindings], ['receptionist' => 'app-1'], [], 'user-1', $approved === null ? null : array_fill_keys($approved, true), &$withheld];
+        (new \ReflectionMethod(PackService::class, 'importPackFlows'))->invokeArgs($svc, $args);
+        $withheld = array_keys($withheld);
+        sort($withheld, SORT_STRING);
+        return [$stored + ['actions' => $actions], $withheld];
+    }
+
+    /**
+     * A grant a node asks for by being there is one of the review's lines. Declined, the node
+     * must not run: the flow keeps no capability that covers it, a wildcard included, and the
+     * import says what it withheld. Approved, the flow keeps what it declared.
+     */
+    public function testADeclinedNodeGrantLeavesTheFlowNoCapabilityThatCoversIt(): void
+    {
+        $speak = 'connector.aokie.call.operatorSpeak';
+        $flows = [
+            ['slug' => 'exact', 'nodeCapabilities' => [$speak, 'model.llm.local'], 'flowJson' => ['nodes' => [['id' => 'say', 'type' => 'aokie_speak', 'data' => ['text' => 'Hi']]], 'edges' => []]],
+            ['slug' => 'wild', 'nodeCapabilities' => ['connector.aokie.*', 'connector.printer.print', 'model.llm.local'], 'flowJson' => ['nodes' => [['id' => 'say', 'type' => 'aokie_speak', 'data' => ['text' => 'Hi']]], 'edges' => []]],
+            ['slug' => 'texts', 'nodeCapabilities' => ['connector.aokie.sms.send'], 'flowJson' => ['nodes' => [['id' => 'text', 'type' => 'connector_request', 'data' => ['connectorId' => 'aokie', 'command' => 'sms.send']]], 'edges' => []]],
+        ];
+        $listed = [$speak, 'connector.aokie.*', 'connector.aokie.sms.send', 'connector.printer.print'];
+
+        // Everything the review lists approved, or no review at all: each flow as it was packed.
+        foreach ([$listed, null] as $approved) {
+            [$stored, $withheld] = $this->importFlows($flows, $approved);
+            $this->assertSame([$speak, 'model.llm.local'], $stored['exact']);
+            $this->assertSame(['connector.aokie.*', 'connector.printer.print', 'model.llm.local'], $stored['wild']);
+            $this->assertSame(['connector.aokie.sms.send'], $stored['texts']);
+            $this->assertSame([], $withheld);
+        }
+
+        // Speaking declined, the wildcard still ticked: no flow is left able to speak.
+        [$stored, $withheld] = $this->importFlows($flows, array_values(array_diff($listed, [$speak])));
+        $this->assertSame(['model.llm.local'], $stored['exact']);
+        $this->assertSame(['connector.printer.print', 'model.llm.local'], $stored['wild'], 'a wildcard left in place would grant what was declined');
+        $this->assertSame(['connector.aokie.sms.send'], $stored['texts'], 'a flow that does not speak keeps what was approved');
+        $this->assertSame(['connector.aokie.*', $speak], $withheld);
+
+        // The name the review once listed for a speak node approves nothing.
+        [$stored, $withheld] = $this->importFlows([$flows[0]], ['connector.aokie.speak']);
+        $this->assertSame(['model.llm.local'], $stored['exact']);
+        $this->assertSame([$speak], $withheld);
+    }
+
+    /** A call.speak action is kept or dropped by the same grant a speak node asks for. */
+    public function testASpeakActionIsReviewedAsTheGrantTheRunnerChecks(): void
+    {
+        $flows = [['slug' => 'call-triage', 'flowJson' => ['nodes' => [], 'edges' => []]]];
+        $bindings = [['flow' => 'call-triage', 'event' => 'call.ended', 'mode' => 'async', 'outputActions' => [['type' => 'call.speak', 'message' => 'Thanks.'], ['type' => 'formlogic.toast', 'message' => 'Done']]]];
+        [$stored, $withheld] = $this->importFlows($flows, ['connector.aokie.call.operatorSpeak'], $bindings);
+        $this->assertSame(['call.speak', 'formlogic.toast'], array_column($stored['actions'][0], 'type'));
+        $this->assertSame([], $withheld);
+        [$stored, $withheld] = $this->importFlows($flows, ['connector.aokie.speak'], $bindings);
+        $this->assertSame(['formlogic.toast'], array_column($stored['actions'][0], 'type'));
+        $this->assertSame(['connector.aokie.call.operatorSpeak'], $withheld);
+    }
+
     public function testBadBindingModeRejected(): void
     {
         $pack = $this->basePack();

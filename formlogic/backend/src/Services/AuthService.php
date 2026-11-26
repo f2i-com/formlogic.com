@@ -292,7 +292,13 @@ class AuthService
 
         // Clear rate limits on successful login
         $this->clearRateLimit($rateLimitKey);
-        $this->clearEmailRateLimit($emailKey);
+        // With two-factor on, the password is half a sign-in. Ending the account's count here let
+        // someone who knew the password ask for a new code prompt as often as they liked, each
+        // good for more guesses at the code. The count ends when the code is right, or the browser
+        // is one the account remembers (signInCompleted).
+        if (!$this->isMfaEnabled((string) $row['id'])) {
+            $this->clearEmailRateLimit($emailKey);
+        }
 
         $user = User::fromArray($row);
         $token = $this->generateToken($user);
@@ -301,6 +307,15 @@ class AuthService
             'user' => $this->userPayload($user),
             'token' => $token,
         ];
+    }
+
+    /**
+     * An account with two-factor on got through its second step: the count of sign-in attempts
+     * against it ends, as login() ends it at once for an account without one.
+     */
+    public function signInCompleted(User $user): void
+    {
+        $this->clearEmailRateLimit($this->getEmailRateLimitKey($this->loginLimitIdentity($user->email)));
     }
 
     /**
@@ -738,19 +753,45 @@ class AuthService
 
         $sql = "UPDATE users SET " . implode(', ', $updates) . " WHERE id = :id";
         $stmt = $this->mysql->prepare($sql);
+        // A new password and the end of what the old one could have made land together or not at
+        // all, as they do in resetPassword.
+        $passwordChanged = array_key_exists('password_hash', $params);
+        $ownTx = $passwordChanged && !$this->mysql->inTransaction();
+        if ($ownTx) {
+            $this->mysql->beginTransaction();
+        }
         try {
-            $stmt->execute($params);
-        } catch (\PDOException $e) {
-            // Handle UNIQUE constraint violation on email (TOCTOU race condition)
-            if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
-                throw new \RuntimeException('Unable to update email address');
+            try {
+                $stmt->execute($params);
+            } catch (\PDOException $e) {
+                // Handle UNIQUE constraint violation on email (TOCTOU race condition)
+                if (str_contains($e->getMessage(), '1062') || str_contains($e->getMessage(), 'Duplicate entry')) {
+                    throw new \RuntimeException('Unable to update email address');
+                }
+                throw $e;
+            }
+
+            // A reset link sent earlier, perhaps to the old address, must not undo this.
+            if ($bumpTokenVersion ?? false) {
+                $this->mysql->prepare("DELETE FROM password_resets WHERE user_id = :id")->execute(['id' => $userId]);
+            }
+
+            // Someone changes a password they still know when they fear someone else knows it
+            // too, and whoever knew it could have made API keys, AI connections and link codes
+            // with it. Those outlive the password unless they are ended here, as a reset ends
+            // them (resetPassword). Not for a new email address alone: nothing about that says
+            // the password was known, and the sessions it ends are ended above.
+            if ($passwordChanged) {
+                $this->revokeCredentialRows($userId);
+            }
+            if ($ownTx) {
+                $this->mysql->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($ownTx && $this->mysql->inTransaction()) {
+                $this->mysql->rollBack();
             }
             throw $e;
-        }
-
-        // A reset link sent earlier, perhaps to the old address, must not undo this.
-        if ($bumpTokenVersion ?? false) {
-            $this->mysql->prepare("DELETE FROM password_resets WHERE user_id = :id")->execute(['id' => $userId]);
         }
 
         return $this->getUserById($userId);

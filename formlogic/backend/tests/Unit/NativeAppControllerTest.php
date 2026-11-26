@@ -244,6 +244,42 @@ final class NativeAppControllerTest extends TestCase
         $this->assertSame([['javascript', 'python']], $asked->getArrayCopy());
     }
 
+    /**
+     * A container backend is told the name and scheme its app was reached by, as the site makes
+     * every address it hands out, and never what the app's page puts in a `host` header of its
+     * own. Told neither, the runner has a PHP backend believe it is http://localhost.
+     */
+    public function testAContainerBackendIsToldTheAddressTheSiteWasReachedBy(): void
+    {
+        $project = ['access' => 'application', 'version' => 1, 'assets' => [], 'files' => [
+            'manifest.json' => '{"id":"orders","engine":2,"main":"index.html","backend":{"runtime":"php","entry":"backend/index.php","routes":["/api/"]}}',
+            'index.html' => '<h1>Orders</h1>', 'backend/index.php' => '<?php echo $_SERVER["HTTP_HOST"];',
+        ]];
+        $sent = [];
+        $native = $this->createMock(NativeAppService::class);
+        $native->method('project')->willReturn($project);
+        $native->method('runtimeProject')->willReturn(['project' => $project, 'media' => ['file' => '', 'sha256' => '', 'size' => 0, 'count' => 0]]);
+        $native->method('containerRequest')->willReturnCallback(static function (string $appId, array $request) use (&$sent): array {
+            $sent[] = $request;
+            return ['status' => 200, 'headers' => [['content-type', 'text/plain']], 'bodyBase64' => base64_encode('ok')];
+        });
+        [$controller] = $this->fixture('application', $native);
+        $call = static fn (string $address): ServerRequestInterface => (new ServerRequestFactory())->createServerRequest('POST', $address, ['REMOTE_ADDR' => '203.0.113.5'])
+            ->withHeader('X-Forwarded-Proto', 'https')
+            ->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef')
+            ->withParsedBody(['method' => 'GET', 'path' => '/api/items', 'headers' => ['Host' => 'elsewhere.example', 'X-Forwarded-Host' => 'elsewhere.example', 'Accept' => 'application/json']]);
+
+        $response = $controller->runtime($call('https://forms.example.test/api/app/notes/native'), new Response(), ['slug' => 'notes']);
+        $this->assertSame(200, $response->getStatusCode(), (string) $response->getBody());
+        $this->assertSame('forms.example.test', $sent[0]['host']);
+        $this->assertTrue($sent[0]['https']);
+        $this->assertSame(['accept' => 'application/json'], (array) $sent[0]['headers'], 'the page names no host of its own');
+
+        // A port that is not the scheme's own is part of the name, as a backend's HTTP_HOST has it.
+        $controller->runtime($call('https://forms.example.test:8443/api/app/notes/native'), new Response(), ['slug' => 'notes']);
+        $this->assertSame('forms.example.test:8443', $sent[1]['host']);
+    }
+
     public function testAnAppWhoseLogicThisInstallCannotRunIsNotServedAtAll(): void
     {
         // Fail closed: the resolver refuses, and the runtime GET carries no project at all rather
@@ -284,6 +320,47 @@ final class NativeAppControllerTest extends TestCase
         $request = (new ServerRequestFactory())->createServerRequest('POST', '/', ['REMOTE_ADDR' => '127.0.0.1'])
             ->withAttribute('userId', 'member')->withParsedBody(['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'My note']]);
         $this->assertSame(200, $controller->runtime($request, new Response(), ['slug' => 'notes'])->getStatusCode());
+    }
+
+    /**
+     * A handler is given the headers its app's own request carries, as on SoftN's hosts: every
+     * one but the cookie and those the host speaks for. `authorization` and `idempotency-key` are
+     * always there, empty when not sent. What the page says of the host, of where the caller is,
+     * or in FormLogic's name is not passed on.
+     */
+    public function testAHandlerIsGivenItsAppsOwnHeadersAndNoneTheHostSpeaksFor(): void
+    {
+        [$controller, , $native] = $this->fixture('application');
+        $given = [];
+        $native->method('request')->willReturnCallback(static function (string $appId, array $input) use (&$given): array {
+            $given[] = (array) $input['headers'];
+            return ['status' => 200, 'body' => []];
+        });
+        $call = static fn (array $headers): ServerRequestInterface => (new ServerRequestFactory())->createServerRequest('POST', '/', ['REMOTE_ADDR' => '203.0.113.5'])
+            ->withHeader('Cookie', 'formlogic_session=theirs')->withHeader('X-FormLogic-Client-Engine', 'zipp-web-python;0123456789abcdef')
+            ->withParsedBody(['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'A note'], 'headers' => $headers]);
+
+        $this->assertSame(200, $controller->runtime($call([
+            'Authorization' => 'Bearer app-session', 'Idempotency-Key' => 'save-1', 'X-Device-Id' => 'tablet-7', 'Accept-Language' => 'fr-CA', 'Content-Type' => 'application/json',
+            'Cookie' => 'sid=1', 'Host' => 'elsewhere.example', 'Forwarded' => 'for=198.51.100.9', 'X-Forwarded-For' => '198.51.100.9', 'X-Real-IP' => '198.51.100.9',
+            'X-FormLogic-User' => 'owner', 'Proxy-Authorization' => 'Basic eA==', 'Content-Length' => '3', 'Connection' => 'keep-alive', 'Sec-Fetch-Site' => 'same-origin',
+            'x_underscored' => 'x', 'X-Folded' => "a\r\nX-Injected: b", 'X-Long' => str_repeat('a', 8193), 'X-List' => ['a'],
+        ]), new Response(), ['slug' => 'notes'])->getStatusCode());
+        $this->assertSame([
+            'authorization' => 'Bearer app-session', 'idempotency-key' => 'save-1', 'x-device-id' => 'tablet-7', 'accept-language' => 'fr-CA', 'content-type' => 'application/json',
+            'x-folded' => 'aX-Injected: b',
+        ], $given[0]);
+
+        // Sent none, a handler still reads the two it always could; and no more than 64 are passed on.
+        $controller->runtime($call([]), new Response(), ['slug' => 'notes']);
+        $this->assertSame(['authorization' => '', 'idempotency-key' => ''], $given[1]);
+        $many = [];
+        for ($n = 0; $n < 200; $n++) $many['x-h' . $n] = (string) $n;
+        $controller->runtime($call($many), new Response(), ['slug' => 'notes']);
+        $this->assertCount(66, $given[2]);
+        // The two it checks are still refused when they are longer than it takes.
+        $this->assertSame(400, $controller->runtime($call(['idempotency-key' => str_repeat('k', 256)]), new Response(), ['slug' => 'notes'])->getStatusCode());
+        $this->assertSame(400, $controller->runtime($call(['authorization' => str_repeat('a', 4097)]), new Response(), ['slug' => 'notes'])->getStatusCode());
     }
 
     // ── The shared demo: read-only native hosting ────────────────────────────

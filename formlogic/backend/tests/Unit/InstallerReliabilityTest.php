@@ -224,10 +224,37 @@ final class InstallerReliabilityTest extends TestCase
         foreach (['check_requirements', 'detect_install', 'run_upgrade'] as $action) {
             self::assertTrue(\flInstallerActionAllowed($action, true, false), "$action is allowed");
         }
-        // On the server itself, and before anything is installed, every step is available.
-        self::assertTrue(\flInstallerActionAllowed('run_install', true, true));
+        // Before anything is installed every step is available.
         self::assertTrue(\flInstallerActionAllowed('run_install', false, false));
         self::assertTrue(\flInstallerActionAllowed('test_database', false, false));
+    }
+
+    /**
+     * "On the server itself" is read from the address a request came from and the absence of a
+     * forwarding header, and a hop that adds none (stunnel, an SSH or kubectl port forward,
+     * HAProxy without `option forwardfor`, nginx `proxy_pass` with no `proxy_set_header`) makes
+     * every visitor look local. That alone replaced an installed site's .env while
+     * INSTALL_ENABLE=1 was set for an upgrade. It now also takes the INSTALL_TOKEN, a secret only
+     * the operator set; and the token alone, from somewhere else, is still not enough.
+     */
+    public function testAnInstalledSiteIsReconfiguredOnlyFromTheServerWithTheTokenProven(): void
+    {
+        foreach (['run_install', 'test_database'] as $action) {
+            self::assertFalse(\flInstallerActionAllowed($action, true, true), "$action: looking local is not enough");
+            self::assertFalse(\flInstallerActionAllowed($action, true, true, false), "$action: looking local is not enough");
+            self::assertFalse(\flInstallerActionAllowed($action, true, false, true), "$action: the token over the network is not enough");
+            self::assertTrue(\flInstallerActionAllowed($action, true, true, true), "$action: on the server, with the token");
+        }
+        // Inspecting and upgrading need neither, as before.
+        foreach (['check_requirements', 'detect_install', 'run_upgrade', 'delete_installer'] as $action) {
+            self::assertTrue(\flInstallerActionAllowed($action, true, true), "$action is allowed");
+            self::assertTrue(\flInstallerActionAllowed($action, true, false), "$action is allowed");
+        }
+
+        // The page offers "reconfigure" by the same rule it is held to.
+        $installer = (string) file_get_contents(dirname(__DIR__, 3) . '/install.php');
+        self::assertStringContainsString('flInstallerActionAllowed($action, $alreadyInstalled, $isLocalRequest, $installToken !== \'\')', $installer);
+        self::assertStringContainsString('$canReconfigure = !$alreadyInstalled || ($isLocalRequest && $installToken !== \'\');', $installer);
     }
 
     // ── What the wizard writes ──────────────────────────────────────────────────────────────

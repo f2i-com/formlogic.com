@@ -30,6 +30,10 @@ const PERMISSION_WORDS: Record<string, string> = {
   sync: 'syncing between devices',
   storage: 'storage on the directory',
   accel: 'fast number crunching',
+  bluetooth: 'nearby Bluetooth devices',
+  location: 'the visitor\'s location',
+  haptics: 'vibration',
+  notifications: 'notifications on the device',
 };
 
 /**

@@ -531,7 +531,17 @@ class FileStorageService
 
     private function sanitizeId(string $id): string
     {
-        return preg_replace('/[^a-zA-Z0-9\-]/', '', $id);
+        return self::folderName($id);
+    }
+
+    /**
+     * The name a form's upload folder has: its id's letters, digits and hyphens, and nothing else
+     * of it. Two ids with one folder name share their uploads, so FormService::createForm gives
+     * no new form an id whose folder another form has.
+     */
+    public static function folderName(string $formId): string
+    {
+        return (string) preg_replace('/[^a-zA-Z0-9\-]/', '', $formId);
     }
 
     private function requireSafeFormId(string $formId): string

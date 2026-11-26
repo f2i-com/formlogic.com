@@ -21,9 +21,9 @@
  * IMPORTANT: Delete this file after installation is complete. It also hard-disables itself once a
  * configured .env exists — deliberately re-enable it with INSTALL_ENABLE=1 (e.g. `SetEnv
  * INSTALL_ENABLE 1` in the web-root .htaccess) to use the upgrade mode, then remove that again.
- * While that is set the wizard answers anyone who can reach the site, so on an installed site a
- * caller that is not on the server itself can only inspect and upgrade it, never replace its
- * configuration (flInstallerActionAllowed).
+ * While that is set the wizard answers anyone who can reach the site, so an installed site is only
+ * inspected and upgraded through it. Its configuration is replaced only from the server itself by
+ * a caller that has also proven the INSTALL_TOKEN (flInstallerActionAllowed).
  */
 
 declare(strict_types=1);
@@ -197,11 +197,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     }
 
     $action = is_string($_POST['action']) ? $_POST['action'] : '';
-    if (!flInstallerActionAllowed($action, $alreadyInstalled, $isLocalRequest)) {
+    if (!flInstallerActionAllowed($action, $alreadyInstalled, $isLocalRequest, $installToken !== '')) {
         http_response_code(403);
-        echo json_encode(['success' => false, 'message' => 'This site is already installed. Over the network the wizard only '
-            . 'inspects and upgrades it; to change its configuration, edit ' . $backendRelName . '/.env on the server, '
-            . 'or open this page from the server itself (localhost).']);
+        echo json_encode(['success' => false, 'message' => 'This site is already installed, and the wizard only inspects and '
+            . 'upgrades it. To change its configuration, edit ' . $backendRelName . '/.env on the server; or set the '
+            . 'environment variable INSTALL_TOKEN to a secret of your own and open this page from the server itself '
+            . '(localhost) with ?token=<that secret>.']);
         exit;
     }
 
@@ -311,16 +312,25 @@ function flInstallerIsLocalRequest(array $server): bool
 }
 
 /**
- * What a caller may ask of the wizard. Once the site is installed, a caller that is not on the
- * server may only inspect and upgrade it. INSTALL_ENABLE=1 on an installed site is how the
- * upgrade mode is reached over the network, and while it is set the wizard answers anyone:
- * without this rule any visitor could replace the site's .env (run_install with overwrite_env)
- * and point it at a database of their own, or use the connection test to probe the server's
- * network.
+ * What a caller may ask of the wizard. Once the site is installed it is only inspected and
+ * upgraded, unless the caller is on the server itself AND has proven the INSTALL_TOKEN.
+ * INSTALL_ENABLE=1 on an installed site is how the upgrade mode is reached over the network, and
+ * while it is set the wizard answers anyone: without this rule any visitor could replace the
+ * site's .env (run_install with overwrite_env) and point it at a database of their own, or use
+ * the connection test to probe the server's network.
+ *
+ * Being on the server is not proof enough for that on its own. It is read from the address the
+ * request came from and the absence of a forwarding header (flInstallerIsLocalRequest), and a
+ * hop that adds none makes every visitor look local: stunnel, an SSH or kubectl port forward,
+ * socat, HAProxy without `option forwardfor`, nginx `proxy_pass` with no `proxy_set_header`.
+ * The token is a secret only the operator set, so what replaces a live site's configuration
+ * rests on that and not on a guess about the network.
+ *
+ * @param bool $tokenProven an INSTALL_TOKEN is configured and this caller has supplied it
  */
-function flInstallerActionAllowed(string $action, bool $alreadyInstalled, bool $isLocalRequest): bool
+function flInstallerActionAllowed(string $action, bool $alreadyInstalled, bool $isLocalRequest, bool $tokenProven = false): bool
 {
-    if (!$alreadyInstalled || $isLocalRequest) {
+    if (!$alreadyInstalled || ($isLocalRequest && $tokenProven)) {
         return true;
     }
     return in_array($action, ['check_requirements', 'detect_install', 'run_upgrade', 'delete_installer'], true);
@@ -1487,8 +1497,9 @@ function runUpgrade(): array
 $backendRelHtml = htmlspecialchars(basename(flBackendDir()), ENT_QUOTES);
 $backendAbsHtml = htmlspecialchars(str_replace('\\', '/', flBackendDir()), ENT_QUOTES);
 $isBundle = (flUiDir() === null); // deployed release zip (prebuilt SPA at the web root, backend at api/)
-// Over the network an installed site is only inspected and upgraded (flInstallerActionAllowed).
-$canReconfigure = !$alreadyInstalled || $isLocalRequest;
+// An installed site is only inspected and upgraded, unless the caller is on the server itself and
+// has proven the INSTALL_TOKEN (flInstallerActionAllowed).
+$canReconfigure = !$alreadyInstalled || ($isLocalRequest && $installToken !== '');
 $canSeedDemo = file_exists(flBackendDir() . '/bin/provision-demo.php'); // ships in bin/ (release zip included) since v0.0.1
 $defaultCors = 'http://localhost:5173';
 if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
@@ -1603,9 +1614,10 @@ if ($isBundle && !empty($_SERVER['HTTP_HOST'])) {
     </div>
     <?php if (!$canReconfigure): ?>
     <p class="help-text" style="margin-top:10px;">
-      Over the network this wizard only inspects and upgrades an installed site. To change its
-      configuration, edit <code><?= $backendRelHtml ?>/.env</code> on the server, or open this page
-      from the server itself (localhost).
+      This wizard only inspects and upgrades an installed site. To change its configuration, edit
+      <code><?= $backendRelHtml ?>/.env</code> on the server; or set the environment variable
+      <code>INSTALL_TOKEN</code> to a secret of your own and open this page from the server itself
+      (localhost) with <code>?token=</code> and that secret.
     </p>
     <?php endif; ?>
     <p class="help-text" style="margin-top:10px;">

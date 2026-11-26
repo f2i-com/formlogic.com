@@ -726,9 +726,10 @@ final class SoftnDirectoryService
 
     /**
      * What SoftN's runtime can grant, as the directory lists them (Bundle::CAPABILITIES in SoftN's softn-api, its copy of
-     * @softn/core's runtime/capabilities.ts).
+     * @softn/bundle-format's capabilities.ts). The last four are the phone's and the device's own, there since the
+     * declaration's fourth schema: a bundle that names one is one the directory takes, and is not refused here.
      */
-    private const CAPABILITIES = ['net', 'camera', 'mic', 'files', 'qr', 'ai', 'gpu', 'sync', 'storage', 'accel'];
+    private const CAPABILITIES = ['net', 'camera', 'mic', 'files', 'qr', 'ai', 'gpu', 'sync', 'storage', 'accel', 'bluetooth', 'location', 'haptics', 'notifications'];
 
     /** The storage policies a collection may have there (Storage::POLICIES in SoftN's softn-api). */
     private const STORAGE_POLICIES = ['public', 'append-only', 'owner-write', 'private', 'publisher'];

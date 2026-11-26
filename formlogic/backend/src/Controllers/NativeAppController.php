@@ -832,30 +832,7 @@ class NativeAppController
                 if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $this->plans->isEnforced() && !$this->plans->isCloudActive($app['ownerId'])) {
                     throw new \RuntimeException('The app owner’s cloud access has expired. Records remain available to read and export.', 402);
                 }
-                $rawHeaders = is_array($input['headers'] ?? null) ? $input['headers'] : [];
-                $blockedContainerHeaders = [
-                    'host', 'origin', 'referer', 'connection', 'keep-alive', 'transfer-encoding',
-                    'te', 'trailer', 'upgrade', 'content-length', 'x-real-ip', 'x-http-method-override',
-                    'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
-                ];
-                $headers = [];
-                foreach ($rawHeaders as $k => $v) {
-                    if (!is_string($k) || !is_scalar($v)) continue;
-                    $lk = strtolower(trim($k));
-                    // Enforce strict token-with-hyphens (blocks underscore CGI spoofing like x_formlogic_user_id).
-                    if ($lk === '' || strlen($lk) > 128 || preg_match('/^[a-z0-9-]+$/', $lk) !== 1) continue;
-                    if (
-                        str_starts_with($lk, 'x-formlogic')
-                        || str_starts_with($lk, 'x-forwarded-')
-                        || str_starts_with($lk, 'proxy-')
-                        || str_starts_with($lk, 'sec-')
-                        || in_array($lk, $blockedContainerHeaders, true)
-                    ) continue;
-                    $sv = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
-                    if (strlen($sv) > 8192) continue;
-                    $headers[$lk] = $sv;
-                    if (count($headers) >= 64) break;
-                }
+                $headers = self::appRequestHeaders(is_array($input['headers'] ?? null) ? $input['headers'] : []);
                 $query = '';
                 if (is_string($input['query'] ?? null)) {
                     $query = ltrim($input['query'], '?');
@@ -873,12 +850,19 @@ class NativeAppController
                 }
                 if (strlen($bodyBase64) > 7600000) throw new \RuntimeException('This request is larger than the app accepts.', 413);
                 $addresses = \FormLogic\Helpers\IpResolver::fromEnvironment();
+                // The name and scheme the person reached this site by, as every other address the
+                // site hands out is made (McpOAuthService::publicOrigin), and never a `host` the
+                // app's page sent (refused above). Without them the runner tells a PHP backend it
+                // is http://localhost, and every link the backend writes says so.
+                $publicOrigin = \FormLogic\Services\McpOAuthService::publicOrigin($request);
                 $containerReq = [
                     'method' => $method,
                     'path' => $path,
                     'query' => $query,
                     'headers' => (object) $headers,
                     'bodyBase64' => $bodyBase64,
+                    'host' => (string) substr($publicOrigin, (int) strpos($publicOrigin, '://') + 3),
+                    'https' => str_starts_with($publicOrigin, 'https://'),
                     'client_ip' => $addresses->getClientIp($request),
                 ];
                 $subscriptions = $this->recordSubscriptionsFor((string) $app['id']);
@@ -926,8 +910,10 @@ class NativeAppController
             $addresses = \FormLogic\Helpers\IpResolver::fromEnvironment();
             $nativeRequest = [
                 'method' => $input['method'], 'path' => $input['path'], 'query' => (object) ($input['query'] ?? []), 'body' => $body,
-                // Both always present, empty when not sent, as SoftN's PHP host gives them.
-                'headers' => (object) ['authorization' => $authorization, 'idempotency-key' => $idempotency],
+                // Both always present, empty when not sent, as SoftN's PHP host gives them. With
+                // them, the other headers the app's own request carries, as its handlers are given
+                // them on SoftN's hosts: every one but the cookie and those the host speaks for.
+                'headers' => (object) (['authorization' => $authorization, 'idempotency-key' => $idempotency] + self::appRequestHeaders($headers, false)),
                 'client_ip' => $addresses->getClientIp($request), 'photos' => false,
             ];
             $subscriptions = $this->recordSubscriptionsFor((string) $app['id']);
@@ -1402,6 +1388,48 @@ class NativeAppController
             'connectedApps' => $connectedApps,
             'linkedForms' => $linkedForms,
         ];
+    }
+
+    /**
+     * The headers an app's own request carries to its backend, by name in lower case: what the
+     * app's page set on its call, which reaches this site as part of the call's body. They are
+     * never this site's own request headers (its session and the rest stay here). Left out are
+     * the names the host answers for and a page must not say for it: the host and the address
+     * asked for, where the caller is, the connection's own, and anything of FormLogic's. Held to
+     * 64 headers of 8 KB each. A container backend keeps its page's cookie header, as its
+     * sessions are its own to keep; a SoftN handler ($cookies false) is given none, as on SoftN's
+     * hosts, nor a `forwarded` it might read as the caller's address.
+     *
+     * @param array<array-key, mixed> $sent
+     * @return array<string, string>
+     */
+    private static function appRequestHeaders(array $sent, bool $cookies = true): array
+    {
+        $refused = [
+            'host', 'origin', 'referer', 'connection', 'keep-alive', 'transfer-encoding',
+            'te', 'trailer', 'upgrade', 'content-length', 'x-real-ip', 'x-http-method-override',
+            'x-original-url', 'x-rewrite-url', 'proxy-authorization', 'proxy-authenticate',
+        ];
+        if (!$cookies) array_push($refused, 'cookie', 'forwarded');
+        $headers = [];
+        foreach ($sent as $k => $v) {
+            if (!is_string($k) || !is_scalar($v)) continue;
+            $lk = strtolower(trim($k));
+            // Enforce strict token-with-hyphens (blocks underscore CGI spoofing like x_formlogic_user_id).
+            if ($lk === '' || strlen($lk) > 128 || preg_match('/^[a-z0-9-]+$/', $lk) !== 1) continue;
+            if (
+                str_starts_with($lk, 'x-formlogic')
+                || str_starts_with($lk, 'x-forwarded-')
+                || str_starts_with($lk, 'proxy-')
+                || str_starts_with($lk, 'sec-')
+                || in_array($lk, $refused, true)
+            ) continue;
+            $sv = preg_replace('/[\r\n\0]+/', '', (string) $v) ?? '';
+            if (strlen($sv) > 8192) continue;
+            $headers[$lk] = $sv;
+            if (count($headers) >= 64) break;
+        }
+        return $headers;
     }
 
     /** $operation answers with an array to encode, or with a finished Response (a typed refusal). */

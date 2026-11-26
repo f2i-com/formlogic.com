@@ -344,11 +344,27 @@ function extractOaiyCompletionError(data: Record<string, unknown>): string | nul
   return null;
 }
 
-function shouldFallbackFromLocalOaiy(res: { transportFailure?: boolean; error: { code: string; message: string } }): boolean {
+/**
+ * Whether the OAIY on this computer could not be the one to answer, so the turn goes by the relay
+ * to the Desktop the account is linked to: OAIY here is unreachable or has dropped this page's
+ * pairing, or the provider chosen in Settings is not on this computer. OAIY says the last as 404
+ * `no_provider` ("No enabled AI chat provider is configured for this source."), and for its own
+ * engine, which every OAIY names, as 503 `engine_unavailable`: neither was sent to a model. They
+ * are read from OAIY's own code and status, which the error's code does not keep. A provider that
+ * is here and failed is not asked again by another road.
+ */
+function shouldFallbackFromLocalOaiy(res: {
+  transportFailure?: boolean;
+  error: { code: string; message: string };
+  refusal?: { code: string; status: number };
+}): boolean {
   return Boolean(
     res.transportFailure ||
       res.error.code === 'connector_unavailable' ||
       res.error.code === 'auth_required' ||
+      res.refusal?.status === 404 ||
+      res.refusal?.code === 'no_provider' ||
+      res.refusal?.code === 'engine_unavailable' ||
       /no provider|unknown provider/i.test(res.error.message),
   );
 }
@@ -590,6 +606,13 @@ async function defaultSiteChat(
   });
 }
 
+/**
+ * A 400 that is about the output cap, in a service's own words: "max_tokens is too large: 16384.
+ * This model supports at most 4096 completion tokens", "This model's maximum context length is
+ * 8192 tokens. However, you requested …", "Unsupported parameter: 'max_tokens'".
+ */
+const OUTPUT_CAP_REFUSED = /max_(?:completion_|output_)?tokens|context[ _-]?(?:length|window|size)/i;
+
 async function runCustomSource(
   prefs: AiPreferences,
   opts: ResolveDefaultLlmOptions,
@@ -638,15 +661,29 @@ async function runCustomSource(
     : { messages, ...(provider.model ? { model: provider.model } : {}), ...editorOutputCap };
 
   const doFetch = deps.fetchFn ?? fetch;
+  const post = (body: unknown) => doFetch(provider.url, {
+    method: 'POST',
+    headers: provider.headers,
+    body: JSON.stringify(body),
+    credentials: 'omit',
+    signal: opts.signal,
+  });
   let res: Response;
   try {
-    res = await doFetch(provider.url, {
-      method: 'POST',
-      headers: provider.headers,
-      body: JSON.stringify(requestBody),
-      credentials: 'omit',
-      signal: opts.signal,
-    });
+    res = await post(requestBody);
+    // The cap is the editor's wish, not the service's limit. A service that holds it to its model
+    // (an output limit under 16,384, a context the cap does not fit in beside the messages)
+    // answers 400 to a request it answered before the editor sent a cap. That one is asked once
+    // more as it was asked then; a 400 about anything else is the service's answer.
+    if (res.status === 400 && opts.editor && standardOpenAi) {
+      const said = await res.text().catch((err: unknown) => {
+        if (opts.signal?.aborted) throw err;
+        return '';
+      });
+      if (OUTPUT_CAP_REFUSED.test(said)) {
+        res = await post({ messages, ...(provider.model ? { model: provider.model } : {}) });
+      }
+    }
   } catch (err) {
     if (opts.signal?.aborted) throw err;
     return failure({

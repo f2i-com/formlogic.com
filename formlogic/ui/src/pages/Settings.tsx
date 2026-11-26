@@ -934,7 +934,13 @@ export function Settings() {
               is dropped), so the gap to the keys under it is the block's own; in one column the
               last panel's margin is that gap already. */}
           <div className={cn(PANEL_COLUMNS, 'lg:pb-4')}>
-            <Panel id="security" className={SECTION_TOP} title="Password" icon={<Lock className="h-4 w-4" />}>
+            <Panel
+              id="security"
+              className={SECTION_TOP}
+              title="Password"
+              icon={<Lock className="h-4 w-4" />}
+              description="Changing it signs you out everywhere else and turns off your API keys and linked apps such as OAIY"
+            >
               <div className="space-y-3">
                 <PasswordInput
                   label="Current password"

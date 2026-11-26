@@ -140,6 +140,18 @@ class NativeAppService
     public const SOURCE_PATH = '~^(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_.-]+\.(?:html|ui|js|jsx|vue|mjs|cjs|ts|tsx|logic|py|php|phtml|rs|toml|css|json|sql|xdb)$~D';
     /** Sandboxed v2 container backend runtimes executed strictly inside ZIPP WASM safe-sandbox. */
     public const CONTAINER_BACKEND_RUNTIMES = ['php', 'javascript', 'typescript', 'rust', 'python'];
+    /**
+     * The longest id a manifest may declare. It is kept in the project and the host configuration,
+     * both JSON files, and never in a column or a file's name. An editable copy FormLogic exports
+     * of its own app is named `formlogic_` and the hex of where it came from, well past 120
+     * characters (ui/src/lib/softn/project.ts); the app page's import holds an id to the same length.
+     */
+    public const MAX_MANIFEST_ID = 256;
+    /**
+     * The longest identity an app with a `server` block runs under. Its keys are named after it
+     * (the identity and ":hmac:v1"), and the runner refuses such a name over 128 characters.
+     */
+    public const MAX_BACKEND_IDENTITY = 120;
     /** Said where a file of another kind is refused. */
     public const SOURCE_KINDS = 'An app\'s source files are .html or .ui pages, .js, .jsx, .vue, .mjs, .cjs, .ts, .tsx or .logic source (.py for Python), .css, .json, .xdb seed data, and backend files (server/….logic, server/migrations/….sql, or sandboxed backend/ .php, .js, .ts, .rs, .py, .sql); pictures, sound and other media go under assets/.';
     public const MAX_SOURCE_FILE_BYTES = 1500000;
@@ -214,10 +226,13 @@ class NativeAppService
      * Workers across every app here, and how many of them any one app may hold. A worker is held
      * for a whole request, and a query can run for about twenty seconds, so without the second
      * number one app's visitors could turn every other app away. A site with one busy app can
-     * raise it with NATIVE_WORKERS_PER_APP.
+     * raise it with NATIVE_WORKERS_PER_APP. The share is each app's, not each owner's: two apps
+     * of one account hold all four between them, so a site that hosts apps for many accounts
+     * sets NATIVE_WORKERS to what its server can run at once (at most MAX_WORKERS).
      */
     private const WORKERS = 4;
     private const WORKERS_PER_APP = 2;
+    private const MAX_WORKERS = 64;
 
     /** softn-runner as a Softn release carries it in native-runtime/bin, by the server it runs on (x86-64). */
     private const RUNNER_BINARIES = ['Linux' => 'softn-runner-linux-x86_64', 'Windows' => 'softn-runner-windows-x86_64.exe'];
@@ -691,7 +706,8 @@ class NativeAppService
         // Restored under a new app id: an app that declares no id keeps the identity its keys were
         // made under, which the captured configuration names. That identity is the runner's to
         // compare, so it is held to the form a manifest id has before it is used anywhere.
-        $captured = is_string($hostConfig['appId'] ?? null) && preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $hostConfig['appId']) ? $hostConfig['appId'] : null;
+        $longest = array_key_exists('server', $manifest) ? self::MAX_BACKEND_IDENTITY : self::MAX_MANIFEST_ID;
+        $captured = is_string($hostConfig['appId'] ?? null) && preg_match('/^[a-zA-Z0-9._-]{1,' . $longest . '}$/D', $hostConfig['appId']) ? $hostConfig['appId'] : null;
         $identity = self::identity($manifest, $appId, $captured);
         $root = $this->root($appId);
         if (is_dir($root) && (is_file($root . '/project.json') || is_dir($root . '/app') || is_file($root . '/private/data/application.sqlite'))) {
@@ -1596,7 +1612,22 @@ class NativeAppService
     public static function clientFiles(array $project): array
     {
         $files = is_array($project['files'] ?? null) ? $project['files'] : [];
-        $publicPath = static fn($path) => !is_string($path) || !preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.(?:sql|php|phtml|rs)$|(?:^|/)Cargo\.toml$~i', $path);
+        // A container's backend need not live under server/, backend/ or private/: its manifest
+        // says where it is, and what it names is as private as those folders are.
+        $declared = self::manifestPrivatePaths(is_string($files['manifest.json'] ?? null) ? json_decode($files['manifest.json']) : null);
+        $publicPath = static function ($path) use ($declared): bool {
+            if (!is_string($path)) return true;
+            if (preg_match('~^(?:__softn_generated__/)?(?:server|backend|private)/|\.(?:sql|php|phtml|rs)$|(?:^|/)Cargo\.toml$~i', $path)) return false;
+            $name = strtolower(ltrim(str_replace('\\', '/', $path), '/'));
+            // The manifest is the frame's own, sent with its private parts taken out below.
+            if ($name === 'manifest.json') return true;
+            if (isset($declared['exact'][$name])) return false;
+            if ($declared['root'] !== '' && str_starts_with($name, $declared['root'])) return false;
+            // Beside a backend, SoftN keeps these folders and seed names for it, and no page of
+            // an app that runs there is ever served one.
+            if ($declared['backend'] && preg_match('~^(?:__softn_generated__/)?(?:db|database|migrations)/|(?:^|/)(?:database\.)?seed\.json$~', $name)) return false;
+            return true;
+        };
         $client = array_filter($files, $publicPath, ARRAY_FILTER_USE_KEY);
         $manifest = is_string($client['manifest.json'] ?? null) ? json_decode($client['manifest.json']) : null;
         if (is_object($manifest)) {
@@ -1627,6 +1658,40 @@ class NativeAppService
             if ($changed) $client['manifest.json'] = json_encode($manifest, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
         return $client;
+    }
+
+    /**
+     * What a manifest itself names as private, by SoftN's own rule (@softn/container's archive:
+     * isManifestPrivatePath and isBackendPrivatePath): the container backend's entry wherever it
+     * is kept, everything under backend.root, and each database's file and seeds. Names are held
+     * as SoftN compares them — lower case, forward slashes, no leading slash — and `root` ends in
+     * a slash, so it is a folder and never a name that merely begins the same way.
+     *
+     * @return array{exact: array<string, true>, root: string, backend: bool}
+     */
+    private static function manifestPrivatePaths(mixed $manifest): array
+    {
+        $private = ['exact' => [], 'root' => '', 'backend' => false];
+        if (!is_object($manifest)) return $private;
+        $name = static fn (string $path): string => strtolower(ltrim(str_replace('\\', '/', $path), '/'));
+        $backend = $manifest->backend ?? null;
+        if (is_object($backend)) {
+            $private['backend'] = true;
+            foreach ([$backend->entry ?? null, $backend->entrypoint ?? null] as $entry) {
+                if (is_string($entry) && $name($entry) !== '') $private['exact'][$name($entry)] = true;
+            }
+            $root = is_string($backend->root ?? null) ? trim($name($backend->root), '/') : '';
+            if ($root !== '') $private['root'] = $root . '/';
+        }
+        foreach (is_array($manifest->databases ?? null) ? $manifest->databases : [] as $database) {
+            if (!is_object($database)) continue;
+            foreach ([$database->file ?? null, $database->seedSql ?? null, $database->seedJson ?? null] as $path) {
+                if (!is_string($path) || $name($path) === '') continue;
+                // SQLite's own companions of a database file are that database too.
+                foreach (['', '-wal', '-shm', '-journal'] as $suffix) $private['exact'][$name($path) . $suffix] = true;
+            }
+        }
+        return $private;
     }
 
     /**
@@ -2476,7 +2541,7 @@ class NativeAppService
         try { $manifest = json_decode($files['manifest.json'], true, 64, JSON_THROW_ON_ERROR); }
         catch (\JsonException $unreadable) { throw new InvalidArgumentException('manifest.json is not valid JSON (' . $unreadable->getMessage() . ').'); }
         if (!is_array($manifest) || array_is_list($manifest)) throw new InvalidArgumentException('manifest.json must be a JSON object.');
-        if (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,120}$/D', $manifest['id']))) throw new InvalidArgumentException('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');
+        if (isset($manifest['id']) && (!is_string($manifest['id']) || !preg_match('/^[a-zA-Z0-9._-]{1,' . self::MAX_MANIFEST_ID . '}$/D', $manifest['id']))) throw new InvalidArgumentException('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to ' . self::MAX_MANIFEST_ID . ' of them).');
         // A JavaScript app: its pages are a built site under site/, named by the manifest's `site`
         // block, and it has no SoftN page for "main" to name. The two are told apart here, once:
         // site files with no block to name their first page are files nothing would ever show.
@@ -2587,6 +2652,7 @@ class NativeAppService
             }
             return [$files, $decoded, $manifest, []];
         }
+        if (is_string($manifest['id'] ?? null) && strlen($manifest['id']) > self::MAX_BACKEND_IDENTITY) throw new InvalidArgumentException('manifest.json\'s id is longer than an app with a server block can run under (' . self::MAX_BACKEND_IDENTITY . ' characters): its keys are named after it. Give it a shorter id.');
         // Preserve the JSON distinction between an object and a list, including {} and [].
         try { $server = json_decode($files['manifest.json'], false, 64, JSON_THROW_ON_ERROR)->server; }
         catch (\JsonException $unreadable) { throw new InvalidArgumentException('manifest.json contains a property this host cannot read (' . $unreadable->getMessage() . ').'); }
@@ -3493,6 +3559,9 @@ JS;
             $kept = $old ? self::identity(json_decode($old['files']['manifest.json'], true) ?: [], $appId, $configured) : null;
             // Named, because a manifest with no id does not show the one the app runs under.
             if ($old && $kept !== $identity && !$identityFree) throw new InvalidArgumentException("This app runs as {$kept}, and its data and keys are kept under that identity: give manifest.json that id, or none.");
+            // The manifest's own id was held to this where it was read. An app that took a longer
+            // one while it had no server block, and now declares none, would keep running under it.
+            if (array_key_exists('server', $manifest) && strlen($identity) > self::MAX_BACKEND_IDENTITY) throw new InvalidArgumentException('This app runs as an identity longer than one with a server block can run under (' . self::MAX_BACKEND_IDENTITY . ' characters): its keys are named after it. Give manifest.json a shorter id.');
             // A database whose migrations have run keeps its backend: the runner holds every later
             // version to those migrations, and only a server block can list them.
             if ($old && self::hasBackend($old) && !array_key_exists('server', $manifest) && (json_decode($old['files']['manifest.json'], true)['server']['database']['migrations'] ?? []) !== [] && is_file($database)) {
@@ -4038,12 +4107,14 @@ JS;
         };
         $appSlot = null;
         $slot = null;
+        $workers = filter_var(Environment::nonEmpty('NATIVE_WORKERS'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $workers = min(self::MAX_WORKERS, $workers === false ? self::WORKERS : $workers);
         $perApp = filter_var(Environment::nonEmpty('NATIVE_WORKERS_PER_APP'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        $perApp = min(self::WORKERS, $perApp === false ? self::WORKERS_PER_APP : $perApp);
+        $perApp = min($workers, $perApp === false ? self::WORKERS_PER_APP : $perApp);
         $waitUntil = microtime(true) + 3;
         while (true) {
             $appSlot ??= $take(basename($root) . '-', $perApp);
-            if ($appSlot) $slot = $take('', self::WORKERS);
+            if ($appSlot) $slot = $take('', $workers);
             if ($slot || microtime(true) >= $waitUntil) break;
             usleep(50000);
         }
@@ -4247,16 +4318,13 @@ JS;
                 usleep(20000);
             } while (true);
             $output = is_file($base . '.out') ? file_get_contents($base . '.out', false, null, 0, 8000000) : '';
-            $result = json_decode((string) $output, true);
-            if (!is_array($result) || !is_int($result['status'] ?? null) || !is_array($result['headers'] ?? null) || !is_string($result['bodyBase64'] ?? null)) {
-                throw new RuntimeException('Native container runtime returned no response');
-            }
-            $answered = true;
-            return [
-                'status' => $result['status'],
-                'headers' => $result['headers'],
-                'bodyBase64' => $result['bodyBase64'],
-            ];
+            $result = self::containerAnswer((string) $output);
+            if ($result === null) throw new RuntimeException('Native container runtime returned no response');
+            // A failure the runner itself answered for says why on its error stream: left as
+            // unanswered here, so that is logged below, as it was when this was thrown.
+            $answered = !$result['own'] || $result['status'] < 500;
+            unset($result['own']);
+            return $result;
         } finally {
             if (is_resource($process)) proc_close($process);
             if (is_resource($captureLock)) { flock($captureLock, LOCK_UN); fclose($captureLock); }
@@ -4266,6 +4334,30 @@ JS;
             }
             foreach (['.in', '.out', '.err'] as $suffix) if (is_file($base . $suffix)) unlink($base . $suffix);
         }
+    }
+
+    /**
+     * What the container runner wrote, as the response every caller reads. The backend's own
+     * answer is `{status, headers, bodyBase64}`. The runner's own is `{status, body}`: what
+     * /api/meta says, and every refusal it makes before the backend runs (a busy database, a
+     * backend that could not start, a budget spent). That one is a JSON response too, as SoftN's
+     * PHP host serves it, so the code a client retries on (`database_busy`) and the stage a
+     * failure names reach the app instead of a general error. `own` says which it was.
+     *
+     * @return array{status: int, headers: list<array{0: string, 1: string}>, bodyBase64: string, own: bool}|null
+     */
+    public static function containerAnswer(string $output): ?array
+    {
+        $result = json_decode($output, true);
+        if (!is_array($result) || !is_int($result['status'] ?? null)) return null;
+        if (is_array($result['headers'] ?? null) && is_string($result['bodyBase64'] ?? null)) {
+            return ['status' => $result['status'], 'headers' => $result['headers'], 'bodyBase64' => $result['bodyBase64'], 'own' => false];
+        }
+        if (!array_key_exists('body', $result) || $result['status'] < 200 || $result['status'] > 599) return null;
+        // Read again as objects: read as arrays, a body's `{}` and `[]` are one.
+        $body = json_encode(json_decode($output, false)->body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($body === false) return null;
+        return ['status' => $result['status'], 'headers' => [['content-type', 'application/json; charset=utf-8']], 'bodyBase64' => base64_encode($body), 'own' => true];
     }
 
     /**

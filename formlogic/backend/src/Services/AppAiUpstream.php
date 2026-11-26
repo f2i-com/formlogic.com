@@ -308,7 +308,11 @@ final class AppAiUpstream
         if ($run['stream'] && $status >= 200 && $status < 300) {
             if ($run['kind'] === 'chat' && str_contains($run['type'], 'text/event-stream')) {
                 $this->readEvents($run, true);
-                if ($run['text'] === '') return ['ok' => false, 'code' => 'engine_failed', 'message' => $run['said'] ?? 'The AI answered without a reply.'];
+                // An error sent among the events, on a stream that began as 200: the model stopped
+                // part-way. What came before it is a cut-off reply, not the answer, and is failed as
+                // the same error is when it comes by an owner's computer (AppAiWorker).
+                if ($run['said'] !== null) return ['ok' => false, 'code' => 'engine_failed', 'message' => $run['said'] !== '' ? $run['said'] : 'The AI could not answer.'];
+                if ($run['text'] === '') return ['ok' => false, 'code' => 'engine_failed', 'message' => 'The AI answered without a reply.'];
                 return ['ok' => true, 'text' => mb_substr($run['text'], 0, (int) $run['characters']), 'model' => $run['model']];
             }
             if ($run['kind'] === 'speech' && self::isPcm($run['type'])) {

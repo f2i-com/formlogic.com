@@ -203,8 +203,15 @@ fn first_line(stream: &mut TcpStream) -> Option<String> {
     String::from_utf8_lossy(&bytes).lines().next().map(str::to_string)
 }
 
-/// Waits for the browser to come back with this sign-in's code.
-fn wait_for_code(listener: &TcpListener, state: &str, until: Instant) -> Result<String, String> {
+const CONNECTED: &str = "FormLogic Backups is connected. You can close this tab.";
+const NOT_CONNECTED: &str = "Nothing was connected: FormLogic did not finish connecting. You can close this tab and try again.";
+
+/// Waits for the browser to come back with this sign-in's code, and has `swap` exchange it while
+/// the browser waits for its page. The code arriving is not the link: FormLogic can still refuse
+/// the exchange (a code used or expired, an account with no room for another computer), and the
+/// tab said "connected" beside a window saying it had failed. So the tab is told once `swap` has
+/// answered, and told which.
+fn wait_for_code<T>(listener: &TcpListener, state: &str, until: Instant, swap: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     while Instant::now() < until {
         let mut stream = match listener.accept() {
@@ -218,8 +225,9 @@ fn wait_for_code(listener: &TcpListener, state: &str, until: Instant) -> Result<
         let _ = stream.set_nonblocking(false);
         match first_line(&mut stream).map(|line| read_callback(&line, state)) {
             Some(Callback::Code(code)) => {
-                answer_browser(&mut stream, "200 OK", "FormLogic Backups is connected. You can close this tab.");
-                return Ok(code);
+                let swapped = swap(&code);
+                answer_browser(&mut stream, "200 OK", if swapped.is_ok() { CONNECTED } else { NOT_CONNECTED });
+                return swapped;
             }
             Some(Callback::Refused) => {
                 answer_browser(&mut stream, "200 OK", "Nothing was connected. You can close this tab.");
@@ -231,13 +239,25 @@ fn wait_for_code(listener: &TcpListener, state: &str, until: Instant) -> Result<
     Err("The sign-in timed out. Try again.".to_string())
 }
 
+/// Why FormLogic refused, in its own words. The token exchange answers as OAuth does (RFC 6749
+/// §5.2: `error`, a code, and `error_description`, a sentence), and the swap of a code sent through
+/// a link as the rest of FormLogic does (`error: true` and a `message`). Read for `message` alone,
+/// every refused exchange said only that FormLogic did not finish connecting.
+fn refusal_words(body: &Value) -> Option<String> {
+    let said = |field: &str| body.get(field).and_then(Value::as_str).map(str::trim).filter(|said| !said.is_empty());
+    if let Some(oauth) = said("error_description").or_else(|| said("error")) {
+        return Some(run::short(&format!("FormLogic did not finish connecting: {oauth}")));
+    }
+    said("message").map(run::short)
+}
+
 /// What a FormLogic that knows this plugin answers with: a key, and whose it is.
 fn account_from(server: &str, sent: Result<ureq::Response, ureq::Error>) -> Result<Account, String> {
     const REFUSED: &str = "FormLogic did not finish connecting. Try again.";
     let body: Value = match sent {
         Ok(response) if response.status() == 200 => client::read_json(response).ok_or(REFUSED)?,
         Err(ureq::Error::Status(_, response)) => {
-            let said = client::read_json(response).and_then(|body| body.get("message").and_then(Value::as_str).map(run::short));
+            let said = client::read_json(response).as_ref().and_then(refusal_words);
             return Err(said.unwrap_or_else(|| REFUSED.to_string()));
         }
         _ => return Err(REFUSED.to_string()),
@@ -312,8 +332,7 @@ pub fn sign_in(server: &str, device: Option<&str>) -> Result<Account, String> {
     let verifier = random_text()?;
     let state = random_text()?;
     native::open_url(&authorize_url(server, &redirect, &challenge_of(&verifier), &state, device))?;
-    let code = wait_for_code(&listener, &state, Instant::now() + SIGN_IN)?;
-    exchange(server, &code, &verifier, &redirect)
+    wait_for_code(&listener, &state, Instant::now() + SIGN_IN, |code| exchange(server, code, &verifier, &redirect))
 }
 
 #[cfg(test)]
@@ -391,8 +410,68 @@ mod tests {
                 assert!(answer.contains("Connection: close"), "{answer}");
             }
         });
-        assert_eq!(wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20)).unwrap(), "the-code");
+        assert_eq!(wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20), |code| Ok(code.to_string())).unwrap(), "the-code");
         browser.join().unwrap();
+    }
+
+    /// One browser coming back with a code, and what its tab was shown.
+    fn browser_with_code(port: u16) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            write!(stream, "GET /callback?code=c&state=st HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).unwrap();
+            answer
+        })
+    }
+
+    /// The code arriving is not the link. The tab said "connected" as soon as it had, and
+    /// FormLogic then refused the exchange.
+    #[test]
+    fn the_tab_says_connected_only_once_the_code_was_swapped() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let browser = browser_with_code(listener.local_addr().unwrap().port());
+        let refused = wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20), |_| Err::<Account, _>("FormLogic did not finish connecting: Authorization code expired".to_string()));
+        assert_eq!(refused.err().unwrap(), "FormLogic did not finish connecting: Authorization code expired");
+        let shown = browser.join().unwrap();
+        assert!(shown.contains("Nothing was connected"), "{shown}");
+        assert!(!shown.contains("is connected"), "{shown}");
+
+        // And it waits for the swap: nothing is shown while FormLogic has not answered.
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let browser = browser_with_code(listener.local_addr().unwrap().port());
+        let swapped = wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20), |code| {
+            assert!(!browser.is_finished(), "the tab was answered before the swap");
+            std::thread::sleep(Duration::from_millis(300));
+            assert!(!browser.is_finished(), "the tab was answered before the swap");
+            Ok(code.to_string())
+        });
+        assert_eq!(swapped.unwrap(), "c");
+        assert!(browser.join().unwrap().contains("FormLogic Backups is connected"));
+    }
+
+    /// FormLogic answering an exchange with a refusal.
+    fn refusal(status: u16, body: Value) -> ureq::Error {
+        ureq::Error::Status(status, ureq::Response::new(status, "Refused", &body.to_string()).unwrap())
+    }
+
+    #[test]
+    fn a_refused_exchange_says_why_in_formlogics_words() {
+        let why = |status: u16, body: Value| account_from("https://x.example", Err(refusal(status, body))).err().unwrap();
+        // The token exchange, as OAuth answers (McpOAuthController::oauthError).
+        assert_eq!(
+            why(400, serde_json::json!({"error": "invalid_grant", "error_description": "Authorization code expired"})),
+            "FormLogic did not finish connecting: Authorization code expired"
+        );
+        assert_eq!(why(401, serde_json::json!({"error": "invalid_client"})), "FormLogic did not finish connecting: invalid_client");
+        // A code sent through a link, as the rest of FormLogic answers (BackupLinkController::redeem).
+        assert_eq!(
+            why(400, serde_json::json!({"error": true, "message": "That code is not valid. Start again from FormLogic.", "code": "backup_link_invalid"})),
+            "That code is not valid. Start again from FormLogic."
+        );
+        // Nothing said, or nothing readable.
+        assert_eq!(why(500, serde_json::json!({"error": true})), "FormLogic did not finish connecting. Try again.");
+        assert_eq!(why(400, serde_json::json!({"error_description": "x".repeat(10_000)})).chars().count(), 200);
     }
 
     /// What a browser does: an idle connection first, then a long request. Closing with its
@@ -410,14 +489,14 @@ mod tests {
             stream.read_to_string(&mut answer).unwrap();
             answer
         });
-        assert_eq!(wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20)).unwrap(), "c");
+        assert_eq!(wait_for_code(&listener, "st", Instant::now() + Duration::from_secs(20), |code| Ok(code.to_string())).unwrap(), "c");
         assert!(browser.join().unwrap().contains("FormLogic Backups is connected"));
     }
 
     #[test]
     fn a_sign_in_nobody_finishes_gives_up() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        assert!(wait_for_code(&listener, "st", Instant::now() + Duration::from_millis(200)).unwrap_err().contains("timed out"));
+        assert!(wait_for_code(&listener, "st", Instant::now() + Duration::from_millis(200), |code| Ok(code.to_string())).unwrap_err().contains("timed out"));
     }
 
     #[test]

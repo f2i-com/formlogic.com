@@ -16,10 +16,14 @@ use PDO;
  *  - Every bound column is validated against `NativeRecordStore::hidden()` and table schema.
  *  - Private (E2EE) forms cannot bind to a native table.
  *  - All writes flow through `NativeAppService::manageRecord()` and dispatch committed
- *    `app.record.*` events through `NativeRecordEventRouter`.
+ *    `app.record.*` events through `NativeRecordEventRouter`. The one exception is a bulk clear:
+ *    it goes through `NativeRecordStore::clear()`, under the same guards, and queues no events.
  */
 class NativeTableFormBridge
 {
+    /** The most rows one list gives: what a form's own store gives, and what the routes let a client ask for. */
+    private const LIST_LIMIT = 1000;
+
     /**
      * @param null|\Closure(): ?NativeRecordEventRouter $recordEventsResolver
      */
@@ -205,9 +209,9 @@ class NativeTableFormBridge
      */
     public function listResponses(array $binding, array $options = []): array
     {
-        $limit = max(1, min((int) ($options['limit'] ?? 50), 250));
+        $limit = max(1, min((int) ($options['limit'] ?? 50), self::LIST_LIMIT));
         $offset = max(0, (int) ($options['offset'] ?? 0));
-        $nativeOpts = ['limit' => $limit];
+        $nativeOpts = [];
         if (isset($options['search']) && is_string($options['search']) && trim($options['search']) !== '') {
             $nativeOpts['q'] = trim($options['search']);
         }
@@ -237,24 +241,43 @@ class NativeTableFormBridge
         if ($filters !== []) {
             $nativeOpts['filter'] = $filters;
         }
-        try {
-            $res = $this->native->records($binding['appId'], $binding['table'], $offset, null, $nativeOpts);
-        } catch (\RuntimeException) {
-            return [];
-        }
-        $rows = is_array($res['rows'] ?? null) ? $res['rows'] : [];
-        $pkNames = is_array($res['primaryKey'] ?? null) && $res['primaryKey'] !== []
-            ? $res['primaryKey']
-            : $binding['primaryKey'];
-        $keys = is_array($res['keys'] ?? null) ? $res['keys'] : [];
+        // The record store reads a page of one of its own sizes and no other, so the rows asked for
+        // are read a page at a time: the smallest page that holds what is still wanted, the largest
+        // when none does. One read of at most 250 rows answered every request before, and whoever
+        // asked for 1000 (the Responses page, an API client) took the short answer for the end.
         $out = [];
-        foreach ($rows as $idx => $row) {
-            if (!is_array($row)) continue;
-            if ($requiredSubmitter !== null && $submitterCol !== null && (string) ($row[$submitterCol] ?? '') !== $requiredSubmitter) {
-                continue;
+        while (count($out) < $limit) {
+            $wanted = $limit - count($out);
+            $pageSize = max(NativeRecordStore::PAGE_SIZES);
+            foreach (NativeRecordStore::PAGE_SIZES as $size) {
+                if ($size >= $wanted && $size < $pageSize) $pageSize = $size;
             }
-            $keyMap = is_array($keys[$idx] ?? null) ? $keys[$idx] : $this->extractKeyFromRow($row, $pkNames);
-            $out[] = $this->formatRow($binding, $row, $keyMap, $pkNames, (string) ($idx + $offset + 1));
+            try {
+                $res = $this->native->records($binding['appId'], $binding['table'], $offset, null, ['limit' => $pageSize] + $nativeOpts);
+            } catch (\RuntimeException $e) {
+                // No database to read is no rows. A page that fails after others were read is
+                // not the end of the list, and is not passed off as one.
+                if ($out === []) return [];
+                throw $e;
+            }
+            $rows = is_array($res['rows'] ?? null) ? $res['rows'] : [];
+            $pkNames = is_array($res['primaryKey'] ?? null) && $res['primaryKey'] !== []
+                ? $res['primaryKey']
+                : $binding['primaryKey'];
+            $keys = is_array($res['keys'] ?? null) ? $res['keys'] : [];
+            foreach ($rows as $idx => $row) {
+                if (count($out) >= $limit) break;
+                if (!is_array($row)) continue;
+                if ($requiredSubmitter !== null && $submitterCol !== null && (string) ($row[$submitterCol] ?? '') !== $requiredSubmitter) {
+                    continue;
+                }
+                $keyMap = is_array($keys[$idx] ?? null) ? $keys[$idx] : $this->extractKeyFromRow($row, $pkNames);
+                $out[] = $this->formatRow($binding, $row, $keyMap, $pkNames, (string) ($idx + $offset + 1));
+            }
+            // The store says whether another page follows; a page with rows filtered out of it is
+            // short without being the last.
+            if (($res['hasMore'] ?? false) !== true) break;
+            $offset += $pageSize;
         }
         return $out;
     }
@@ -457,18 +480,19 @@ class NativeTableFormBridge
         return true;
     }
 
-    /** Delete all rows from the bound SQLite table. Returns the number of rows removed. */
+    /**
+     * Delete all rows from the bound SQLite table. Returns the number of rows removed.
+     *
+     * Through the record store, as every other write here is, so the table's foreign keys hold
+     * (NativeRecordStore::clear). It queues no record events, so there are none to dispatch.
+     */
     public function deleteAllResponses(array $binding): int
     {
-        $deleted = (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
-            $quoted = '"' . str_replace('"', '""', $binding['table']) . '"';
-            $count = $db->exec("DELETE FROM {$quoted}");
-            return is_int($count) ? $count : 0;
+        return (int) $this->native->withDatabase($binding['appId'], static function (PDO $db) use ($binding): int {
+            $store = new NativeRecordStore($db);
+            try { return $store->clear($binding['table']); }
+            finally { $store->close(); }
         });
-        if ($deleted > 0) {
-            $this->dispatchEvents($binding['appId']);
-        }
-        return $deleted;
     }
 
     /** Count all rows (or rows owned by $submittedByUserId) in the bound SQLite table. */

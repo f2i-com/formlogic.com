@@ -3962,13 +3962,20 @@ $app->group('/api/v1', function (RouteCollectorProxy $group) use ($container, $g
         return $container->get(\FormLogic\Controllers\ConnectorCommandController::class)->complete($request, $response, $getArgs($request));
     })->add($connectorRelayAuth);
 
-    // Desktop self-unlink (flows:write — always present on desktop keys). The desktop holds only its
-    // scoped flk_ key, so it can't reach the session-auth DELETE /api/desktop-connections/{id}; this
-    // lets "Unlink" cut the install off server-side. The calling key identifies the install, so it
-    // removes only its OWN connection row + self-revokes that key (least-privilege by construction).
+    // Desktop self-unlink. The desktop holds only its scoped flk_ key, so it can't reach the
+    // session-auth DELETE /api/desktop-connections/{id}; this lets "Unlink" cut the install off
+    // server-side. The calling key identifies the install, so it removes only its OWN connection
+    // row + self-revokes that key (least-privilege by construction).
+    //
+    // Whatever the key may do: it asks for nothing but its own end. This was behind flows:write,
+    // which an "AI only" link's key does not hold (DesktopLinkCodeService::SCOPES['ai'] is
+    // connector:relay alone), so such a desktop was answered 403 when it disconnected and its
+    // key went on working here. A key that is no desktop's has no connection row, and is left
+    // as it is.
+    $linkOwnAuth = $desktopLinkAuth([]);
     $group->delete('/desktop-connections/self', function ($request, $response) use ($container) {
         return $container->get(\FormLogic\Controllers\FlowController::class)->deleteOwnDesktopConnection($request, $response);
-    })->add($linkFlowsWriteAuth);
+    })->add($linkOwnAuth);
 
     // Desktop heartbeat (ROUTE-001): the linked runtime registers/refreshes its connection row
     // (stable instance id + device name) every 45s over its flk_ key, BOUND to that key. This is

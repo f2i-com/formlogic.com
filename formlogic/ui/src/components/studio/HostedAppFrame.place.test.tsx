@@ -68,6 +68,23 @@ it('hands a frame that knows its places the place to start on', async () => {
   expect(init.place).toBe('/docs/guide.html#team');
 });
 
+// SoftN's frame refuses a place with a `?` in it and opens the app's main page instead, so a link
+// that arrives with tracking on it (`?fbclid=…`, `?utm_source=…`) is handed over without the query.
+it('hands the place without the address\'s query, which the frame would take for its main page', async () => {
+  const { init } = await open({ initialPlace: '/pricing.html?fbclid=abc&utm_source=news#plans' });
+  expect(init.place).toBe('/pricing.html#plans');
+  await act(async () => root?.unmount());
+  channels.length = 0;
+  expect((await open({ initialPlace: '/?gclid=abc' })).init.place).toBe('/');
+});
+
+it('sends the frame to a place without its query on Back and Forward too', async () => {
+  const client = { 'manifest.json': '{}' };
+  const { channel } = await open({ client });
+  await act(async () => root!.render(<HostedAppFrame slug="notes" client={client} version={1} native={notes} navigateTo={{ place: '/pricing.html?fbclid=abc', seq: 1 }} />));
+  expect(channel.port1.postMessage).toHaveBeenCalledWith({ type: 'formlogic:navigate', to: '/pricing.html' });
+});
+
 it('hands none to a frame from before places, and none when the page names none', async () => {
   expect('place' in (await open({ initialPlace: '/about.html' }, {})).init).toBe(false);
   await act(async () => root?.unmount());

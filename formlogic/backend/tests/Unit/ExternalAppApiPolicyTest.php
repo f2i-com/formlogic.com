@@ -48,6 +48,30 @@ final class ExternalAppApiPolicyTest extends TestCase
         ], $clean['customHeaders']);
     }
 
+    public function testCustomHeadersKeepOnlyNamesThatSpeakForTheOneResponse(): void
+    {
+        $kept = ['Cache-Control' => 'public, max-age=60', 'Expires' => '0', 'Content-Language' => 'en', 'Sunset' => 'Sat, 31 Dec 2027 23:59:59 GMT', 'X-API-Version' => '2.1', 'X-Robots-Tag' => 'noindex'];
+        // Each of these is an instruction for the whole origin, the connection, or the server in
+        // front of PHP — not for the answer it is written on.
+        $refused = [
+            'Clear-Site-Data' => '"*"', 'NEL' => '{"report_to":"t","max_age":86400}', 'Report-To' => '{"group":"t","max_age":86400,"endpoints":[{"url":"https://tenant.example/r"}]}',
+            'Reporting-Endpoints' => 't="https://tenant.example/r"', 'Link' => '</sw.js>; rel="serviceworker"', 'Alt-Svc' => 'h3="tenant.example:443"',
+            'Service-Worker-Allowed' => '/', 'Refresh' => '0;url=https://tenant.example', 'Location' => 'https://tenant.example',
+            'Content-Security-Policy' => 'default-src *', 'Content-Security-Policy-Report-Only' => 'default-src *', 'Strict-Transport-Security' => 'max-age=0',
+            'Permissions-Policy' => 'camera=*', 'Cross-Origin-Opener-Policy' => 'unsafe-none', 'Origin-Agent-Cluster' => '?0', 'Accept-CH' => 'Sec-CH-UA-Model',
+            'Critical-CH' => 'Sec-CH-UA-Model', 'Vary' => 'Accept', 'Retry-After' => '0', 'Keep-Alive' => 'timeout=600', 'Trailer' => 'X-A', 'TE' => 'trailers',
+            'Speculation-Rules' => '"/r.json"', 'SourceMap' => 'https://tenant.example/m', 'Server' => 'x', 'Set-Login' => 'logged-out',
+            'X-Frame-Options' => 'ALLOWALL', 'X-Accel-Redirect' => '/internal/secret', 'X-Sendfile' => '/etc/passwd', 'X-LiteSpeed-Location' => '/internal',
+            'X-Forwarded-Host' => 'tenant.example', 'X-RateLimit-Remaining' => '9999', 'X-Content-Security-Policy' => 'default-src *', 'X-' => 'empty',
+        ];
+        $clean = AppService::sanitizeExternalApi(['enabled' => true, 'authMode' => 'public', 'customHeaders' => $refused + $kept]);
+        $this->assertNotNull($clean);
+        $this->assertSame($kept, $clean['customHeaders']);
+        // A stored policy is cleaned again on every request, so one saved before a name was refused sends nothing.
+        $policy = ExternalAppApiController::externalApiPolicy(['settings' => ['externalApi' => ['authMode' => 'public', 'customHeaders' => ['clear-site-data' => '"cookies"', 'X-API-Version' => '1']]]]);
+        $this->assertSame(['X-API-Version' => '1'], $policy['customHeaders']);
+    }
+
     public function testControllerEnforcesDisabledMethodAllowlistBlockedPathsAndPublicMode(): void
     {
         $app = [
@@ -67,7 +91,7 @@ final class ExternalAppApiPolicyTest extends TestCase
                     'defaultPrefix' => '/api',
                     'corsOrigins' => ['https://frontend.example'],
                     'rateLimitPerMinute' => 60,
-                    'customHeaders' => ['X-API-Version' => '1.0'],
+                    'customHeaders' => ['X-API-Version' => '1.0', 'Clear-Site-Data' => '"*"', 'Reporting-Endpoints' => 't="https://tenant.example/r"'],
                 ],
             ],
         ];
@@ -97,6 +121,8 @@ final class ExternalAppApiPolicyTest extends TestCase
                     'via' => $identity['via'] ?? null,
                     'authenticated' => $identity['authenticated'] ?? null,
                     'forwardedAuth' => ((array) ($req['headers'] ?? []))['authorization'] ?? null,
+                    'host' => $req['host'] ?? null,
+                    'https' => $req['https'] ?? null,
                 ])),
             ];
         });
@@ -120,11 +146,18 @@ final class ExternalAppApiPolicyTest extends TestCase
         $this->assertSame('https://frontend.example', $resOk->getHeaderLine('Access-Control-Allow-Origin'));
         $this->assertSame('', $resOk->getHeaderLine('Access-Control-Allow-Credentials'), 'per-app CORS never sets credentials');
         $this->assertSame('1.0', $resOk->getHeaderLine('X-API-Version'));
+        $this->assertFalse($resOk->hasHeader('Clear-Site-Data'), 'an origin-wide header kept in settings is never sent');
+        $this->assertFalse($resOk->hasHeader('Reporting-Endpoints'));
         $bodyOk = json_decode((string) $resOk->getBody(), true);
         $this->assertSame('/api/products', $bodyOk['path']);
         $this->assertSame('public_api', $bodyOk['via']);
         $this->assertFalse($bodyOk['authenticated']);
         $this->assertSame('Bearer custom-app-token', $bodyOk['forwardedAuth']);
+        // The backend is told the address the site was reached by, never a caller's own Host header.
+        $reqNamed = $rf->createServerRequest('GET', 'https://forms.example.test/api/public/apps/storefront/routes/products')
+            ->withHeader('X-Forwarded-Proto', 'https')->withHeader('X-Forwarded-Host', 'elsewhere.example');
+        $bodyNamed = json_decode((string) $controller->publicRouteApp($reqNamed, new SlimResponse(), ['appId' => 'storefront', 'path' => 'products'])->getBody(), true);
+        $this->assertSame(['forms.example.test', true], [$bodyNamed['host'], $bodyNamed['https']]);
 
         // 2. Method not allowed -> 405 with Allow header
         $reqPost = $rf->createServerRequest('POST', '/api/public/apps/storefront/routes/api/products');
@@ -136,6 +169,8 @@ final class ExternalAppApiPolicyTest extends TestCase
         $reqBlocked = $rf->createServerRequest('GET', '/api/public/apps/storefront/routes/api/products/internal');
         $resBlocked = $controller->publicRouteApp($reqBlocked, new SlimResponse(), ['appId' => 'storefront', 'path' => 'api/products/internal']);
         $this->assertSame(403, $resBlocked->getStatusCode());
+        $this->assertSame('1.0', $resBlocked->getHeaderLine('X-API-Version'));
+        $this->assertFalse($resBlocked->hasHeader('Clear-Site-Data'), 'nor on a refusal');
 
         // 4. Outside allowlist -> 403
         $reqOutside = $rf->createServerRequest('GET', '/api/public/apps/storefront/routes/api/orders');

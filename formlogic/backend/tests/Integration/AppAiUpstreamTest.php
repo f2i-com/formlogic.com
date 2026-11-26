@@ -239,6 +239,30 @@ final class AppAiUpstreamTest extends TestCase
     }
 
     /** With no server named for speech, a line is not said: least of all by the chat provider. */
+    /**
+     * A stream that began as 200 can still fail: the model stops and the server says so in an event
+     * of its own, then ends the stream as usual. The pieces that came first are a reply cut off, so
+     * the answer is the failure, with what the server said, and never those pieces as if whole.
+     */
+    public function testAStreamedChatThatEndsInAnErrorEventIsAFailureNotAShortReply(): void
+    {
+        $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm']);
+        $upstream->start('cut', ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[cut] [unhurried] Say hello.']], 'stream' => true]);
+        $upstream->start('refused', ['kind' => 'chat', 'messages' => [['role' => 'user', 'content' => '[refused] Say hello.']], 'stream' => true]);
+        $seen = [];
+        $done = [];
+        $deadline = microtime(true) + 30;
+        while (count($done) < 2 && microtime(true) < $deadline) {
+            $done += $upstream->poll(0.05);
+            foreach ($upstream->progress() as $id => $so) $seen[$id][] = $so['text'] ?? '';
+        }
+        $this->assertSame(['ok' => false, 'code' => 'engine_failed', 'message' => 'the model stopped'], $done['cut']);
+        $this->assertNotSame([], $seen['cut'] ?? [], 'the pieces before the error were there to read as they came');
+        foreach ($seen['cut'] as $text) $this->assertStringStartsWith($text, 'Hello from');
+        $this->assertSame(['ok' => false, 'code' => 'engine_failed', 'message' => 'the model stopped'], $done['refused']);
+        $this->assertSame(0, $upstream->count());
+    }
+
     public function testASiteWithNoServerThatSpeaksSaysNothing(): void
     {
         $upstream = new AppAiUpstream(['url' => self::$stub->url(), 'key' => '', 'model' => 'm']);

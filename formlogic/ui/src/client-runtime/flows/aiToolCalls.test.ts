@@ -127,11 +127,58 @@ describe('OpenAI-compatible mapping', () => {
       toolCalls: [
         { id: 'call_a', name: 'read_file', arguments: { path: 'x' } },
         { id: 'call_b', name: 'write_file', arguments: '{"path":' },
-        { id: 'formlogic_call_2', name: 'read_file', arguments: {} },
+        { id: expect.stringMatching(/^call-2-[0-9a-f]{8}$/), name: 'read_file', arguments: {} },
       ],
       stopReason: 'tool_calls',
       usage: { inputTokens: 900, outputTokens: 40 },
     });
+  });
+
+  // The editor echoes every call in its next request, and that request is checked again. A call
+  // the check would refuse is refused on every retry, so a reply is never handed on with one.
+  it('hands on no call the next request could not carry back: an invented tool name, a missing id', () => {
+    const invented = ['functions.read_file', 'read file', 'tool<|channel|>commentary', 'x'.repeat(80), 'écrire'];
+    const completion = () => ({
+      choices: [{
+        message: {
+          content: null,
+          tool_calls: [
+            ...invented.map((name, at) => ({ id: `call_${at}`, type: 'function', function: { name, arguments: '{}' } })),
+            { type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } },
+          ],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    });
+    const reply = fromOpenAiChatCompletion(completion())!;
+    expect(reply.toolCalls.map(call => call.name)).toEqual([
+      'invalid_tool_functions_read_file',
+      'invalid_tool_read_file',
+      'invalid_tool_tool_channel_commentary',
+      `invalid_tool_${'x'.repeat(51)}`,
+      'invalid_tool__crire',
+      'read_file',
+    ]);
+    // None is a tool the editor declared, so the editor answers "There is no tool called …".
+    for (const call of reply.toolCalls.slice(0, invented.length)) expect(TOOLS.map(tool => tool.name)).not.toContain(call.name);
+
+    // Echoed as Studio echoes it (arguments as an object, each call answered), the request is taken.
+    const echoed = {
+      aiTools: 1,
+      tools: TOOLS,
+      messages: [
+        { role: 'user', content: 'Hi' },
+        { role: 'assistant', content: reply.text, toolCalls: reply.toolCalls.map(call => ({ id: call.id, name: call.name, arguments: typeof call.arguments === 'string' ? {} : call.arguments })) },
+        ...reply.toolCalls.map(call => ({ role: 'tool', toolCallId: call.id, name: call.name, content: 'There is no tool called that.', isError: true })),
+      ],
+    };
+    expect(validateEditorAiToolRequest(echoed).ok).toBe(true);
+
+    // An id made here is not made again for the next reply: the editor keys its timeline by it.
+    const again = fromOpenAiChatCompletion(completion())!;
+    expect(reply.toolCalls.at(-1)!.id).toMatch(/^call-5-[0-9a-f]{8}$/);
+    expect(again.toolCalls.at(-1)!.id).toMatch(/^call-5-[0-9a-f]{8}$/);
+    expect(again.toolCalls.at(-1)!.id).not.toBe(reply.toolCalls.at(-1)!.id);
   });
 
   it('reads a final text reply without usage, and refuses a body with no message', () => {

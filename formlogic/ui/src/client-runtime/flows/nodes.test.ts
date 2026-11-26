@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
   CODE_NODE_TYPES,
+  DesktopAiUnansweredError,
   executeNode,
   FlowExecError,
   flowLogicLanguages,
@@ -908,6 +909,21 @@ describe('llm_chat endpoint resolution', () => {
       fakeDeps({ invokeDesktopAiChat, resolveAiProvider }),
     ))).rejects.toMatchObject({ code: 'node_failed', message: expect.stringMatching(/provider unavailable/) });
     expect(invokeDesktopAiChat).toHaveBeenCalledTimes(2);
+    expect(resolveAiProvider).not.toHaveBeenCalled();
+  });
+
+  it('does not ask a Desktop provider a second time for a chat that went out and was not answered in time', async () => {
+    // The first request may be answered yet: a second would run, and bill, the chat twice.
+    const invokeDesktopAiChat = vi.fn(async () => {
+      throw new DesktopAiUnansweredError('OAIY Desktop did not answer in time.');
+    });
+    const resolveAiProvider = vi.fn(async () => null);
+
+    await expect(executeNode(ctxFor(
+      llmNode({ provider: 'provider:desktop-openai', prompt: 'hi' }),
+      fakeDeps({ invokeDesktopAiChat, resolveAiProvider }),
+    ))).rejects.toMatchObject({ code: 'node_failed', message: expect.stringMatching(/did not answer in time/) });
+    expect(invokeDesktopAiChat).toHaveBeenCalledTimes(1);
     expect(resolveAiProvider).not.toHaveBeenCalled();
   });
 

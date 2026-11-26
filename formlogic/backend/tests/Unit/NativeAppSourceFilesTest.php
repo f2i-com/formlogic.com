@@ -75,6 +75,47 @@ final class NativeAppSourceFilesTest extends TestCase
         NativeAppService::validateProject(['files' => ['manifest.json' => self::manifest(['server' => ['entry' => 'server/main.js'] + $server]), 'index.html' => '<App/>', 'server/main.js' => 'function a(req) {}', 'server/migrations/001.sql' => 'CREATE TABLE items(id INTEGER PRIMARY KEY);']]);
     }
 
+    public function testAContainerBackendKeptOutsideTheUsualFoldersStaysOutOfThePage(): void
+    {
+        $manifest = [
+            'engine' => 2,
+            'backend' => ['runtime' => 'javascript', 'entry' => 'api/handler.js', 'root' => 'api', 'routes' => ['/api/']],
+            'databases' => [['name' => 'app', 'engine' => 'sqlite', 'file' => 'data/app.db', 'seedSql' => 'data/schema.sql', 'seedJson' => 'data/Starter.json']],
+            'files' => ['logic' => ['main.js', 'api/handler.js', 'data/starter.json']],
+        ];
+        $files = [
+            'manifest.json' => self::manifest($manifest),
+            'index.html' => '<h1>Orders</h1>',
+            'main.js' => 'let a = 1',
+            // Not under the root: a name that only begins the same way is the page's own.
+            'apiClient.js' => 'export const base = "/api/"',
+            'api/handler.js' => 'export default async () => new Response("secret")',
+            'api/lib/keys.js' => 'export const signingKey = "k"',
+            'data/schema.sql' => 'CREATE TABLE items(id INTEGER PRIMARY KEY);',
+            'data/starter.json' => '{"items":[{"id":1}]}',
+            'data/labels.json' => '{"title":"Orders"}',
+            'migrations/notes.json' => '{"applied":[]}',
+            'config/seed.json' => '{"items":[]}',
+        ];
+        NativeAppService::validateProject(['files' => $files]);
+        $client = NativeAppService::clientFiles(['files' => $files]);
+        $this->assertSame(['manifest.json', 'index.html', 'main.js', 'apiClient.js', 'data/labels.json'], array_keys($client));
+        $sent = json_decode($client['manifest.json'], true, 64, JSON_THROW_ON_ERROR);
+        $this->assertSame(['runtime' => 'javascript', 'routes' => ['/api/']], $sent['backend']);
+        $this->assertArrayNotHasKey('databases', $sent);
+        $this->assertSame(['main.js'], $sent['files']['logic']);
+
+        // The entry alone is private where no root is declared, whatever case the manifest names it in.
+        $manifest['backend'] = ['runtime' => 'javascript', 'entry' => 'handler.js'];
+        unset($manifest['databases'], $manifest['files']);
+        $loose = ['manifest.json' => self::manifest($manifest), 'index.html' => '<h1>Orders</h1>', 'handler.js' => 'export default 1', 'main.js' => 'let a = 1'];
+        $this->assertSame(['manifest.json', 'index.html', 'main.js'], array_keys(NativeAppService::clientFiles(['files' => $loose])));
+
+        // With no backend declared, none of this applies: the same names are a page's own files.
+        $plain = ['manifest.json' => self::manifest(), 'index.html' => '<App/>', 'api/handler.js' => 'let a = 1', 'config/seed.json' => '{}', 'migrations/notes.json' => '{}'];
+        $this->assertSame(array_keys($plain), array_keys(NativeAppService::clientFiles(['files' => $plain])));
+    }
+
     /** @dataProvider otherKinds */
     public function testAFileOfAnotherKindIsRefusedWithWhatAnAppIsMadeOf(string $path): void
     {
@@ -106,6 +147,30 @@ final class NativeAppSourceFilesTest extends TestCase
                 if ($said !== null) $this->assertStringContainsString($said, $e->getMessage());
             }
         }
+    }
+
+    public function testAnIdIsKeptUpToTheLengthFormLogicsOwnExportGivesOne(): void
+    {
+        // The editable copy of a form app: `formlogic_` and the hex of its origin, kind and app id.
+        $exported = 'formlogic_' . bin2hex('https://forms.example.com/app/0b5e7c1a-6f0e-4d59-9a53-2f8c1d3e4a6b');
+        $this->assertGreaterThan(120, strlen($exported));
+        foreach ([$exported, str_repeat('a', NativeAppService::MAX_MANIFEST_ID)] as $id) {
+            $this->assertSame($id, NativeAppService::validateProject(['files' => ['manifest.json' => self::manifest(['id' => $id]), 'index.html' => '<App/>']])[2]['id']);
+        }
+        try {
+            NativeAppService::validateProject(['files' => ['manifest.json' => self::manifest(['id' => str_repeat('a', NativeAppService::MAX_MANIFEST_ID + 1)]), 'index.html' => '<App/>']]);
+            $this->fail('kept an id of 257 characters');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('up to 256 of them', $e->getMessage());
+        }
+        // A server block's keys are named after the id, and the runner holds that name to 128 characters.
+        $server = ['entry' => 'server/main.logic', 'requires' => ['apiVersion' => 1, 'capabilities' => ['sql']], 'database' => ['kind' => 'private-sqlite'], 'routes' => []];
+        $files = ['index.html' => '<App/>', 'server/main.logic' => 'function a(req) {}'];
+        $longest = str_repeat('a', NativeAppService::MAX_BACKEND_IDENTITY);
+        $this->assertSame($longest, NativeAppService::validateProject(['files' => ['manifest.json' => self::manifest(['id' => $longest, 'server' => $server])] + $files])[2]['id']);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('longer than an app with a server block can run under (120 characters)');
+        NativeAppService::validateProject(['files' => ['manifest.json' => self::manifest(['id' => $exported, 'server' => $server])] + $files]);
     }
 
     /** @dataProvider manifests */

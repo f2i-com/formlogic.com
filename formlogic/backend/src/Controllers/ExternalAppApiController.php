@@ -674,12 +674,18 @@ class ExternalAppApiController
                     $rawBody = is_string($body) ? $body : json_encode($body, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
                     $bodyBase64 = base64_encode($rawBody);
                 }
+                // The name and scheme this site was reached by (McpOAuthService::publicOrigin),
+                // never a caller's own `host` header (refused above): without them the runner
+                // tells a PHP backend it is http://localhost.
+                $publicOrigin = \FormLogic\Services\McpOAuthService::publicOrigin($request);
                 $result = $this->native->containerRequest($appId, [
                     'method' => $method,
                     'path' => $path,
                     'query' => $queryStr,
                     'headers' => (object) $headers,
                     'bodyBase64' => $bodyBase64,
+                    'host' => (string) substr($publicOrigin, (int) strpos($publicOrigin, '://') + 3),
+                    'https' => str_starts_with($publicOrigin, 'https://'),
                     'client_ip' => $clientIp,
                 ], $identity, (int) ($project['version'] ?? 0), $subscriptions);
 

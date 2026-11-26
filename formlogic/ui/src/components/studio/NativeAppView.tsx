@@ -13,7 +13,7 @@ import { isNativeStorageScope } from '../../lib/nativeAppStorage';
 import { currentSessionGeneration, currentSessionOwner, isSessionGenerationCurrent, subscribeSessionGeneration } from '../../lib/sessionGeneration';
 import { HostedAppFrame } from './HostedAppFrame';
 import { SiteAppFrame, type SiteProblem, type SoftnConsoleEntry } from './SiteAppFrame';
-import { buildAppAddress, isDomainReservedPath, readAppPlace, resolveAppBasePrefix } from '../../lib/nativeRouteAddress';
+import { buildAppAddress, isDomainReservedPath, placeWithoutQuery, readAppPlace, resolveAppBasePrefix } from '../../lib/nativeRouteAddress';
 import { AppSplash } from './AppSplash';
 import { WalletSheet } from '../apps/WalletSheet';
 import { AddAppSheet } from '../apps/AddAppSheet';
@@ -271,6 +271,11 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     onDomain,
   }), [slug, onDomain]);
   const [startAt] = useState(() => fullScreen ? readCurrentPlace() : null);
+  // A place as this app's frame keeps it. SoftN's frame keeps no query (HostedAppFrame hands it
+  // none, and it says none back), so to it `/pricing.html?utm_source=x` is the place
+  // `/pricing.html`. A JavaScript site's router reads its query, and there it is part of the place.
+  const isSite = !!project?.site;
+  const framePlace = useCallback((place: string): string => isSite ? place : placeWithoutQuery(place), [isSite]);
   const lastPlaceRef = useRef<string>(startAt ?? '/');
   const fromPopstateRef = useRef<string | null>(null);
   const initialPlaceSyncedRef = useRef<boolean>(false);
@@ -307,7 +312,12 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
     initialPlaceSyncedRef.current = true;
     lastPlaceRef.current = path;
     if (nextUrl === currentUrl) return;
-    const shouldPush = !project?.site && !wasPopstate && !isInitialSync;
+    // The address already names this place, with a query the frame does not keep (a link that
+    // arrived with `?utm_source=…` on it, or Back to one): it is left as the visitor has it rather
+    // than rewritten without the query.
+    const here = readCurrentPlace();
+    if (here !== null && here !== path && framePlace(here) === path) return;
+    const shouldPush = !isSite && !wasPopstate && !isInitialSync;
     try {
       // Defense-in-depth containment: assert resolved target stays inside the app prefix (or non-reserved domain route).
       const resolved = new URL(nextUrl, window.location.origin);
@@ -328,7 +338,7 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
       const canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
       if (canonical) canonical.href = `${window.location.origin}${resolved.pathname}${resolved.search}`;
     } catch { /* The address stays as it was. */ }
-  }, [slug, onDomain, project?.site]);
+  }, [slug, onDomain, isSite, readCurrentPlace, framePlace]);
   const followRoute = useCallback((path: string) => {
     routing.current.path = path;
     if (routing.current.timer) return;
@@ -341,15 +351,17 @@ export function NativeAppView({ slug, fullScreen = false, onDomain = false, onLo
   useEffect(() => {
     if (!fullScreen || plugin) return;
     const onPopState = () => {
-      const target = readCurrentPlace() ?? '/';
-      if (target === lastPlaceRef.current) return;
+      // Compared as the frame keeps places, so Back to an address that differs from where the app
+      // is only by its query sends the frame nowhere.
+      const target = framePlace(readCurrentPlace() ?? '/');
+      if (target === framePlace(lastPlaceRef.current)) return;
       fromPopstateRef.current = target;
       lastPlaceRef.current = target;
       setNavigateTo({ place: target, seq: ++navSeqRef.current });
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [fullScreen, plugin, readCurrentPlace]);
+  }, [fullScreen, plugin, readCurrentPlace, framePlace]);
   const lostAt = useRef(0);
   const siteLost = () => {
     const now = Date.now();

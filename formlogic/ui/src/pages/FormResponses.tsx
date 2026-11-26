@@ -93,7 +93,7 @@ const PRIVATE_LIST_CAP = 5000;
 async function fetchAllApiResponses(
   formId: string,
   privacy: 'unknown' | 'plain' | 'private' = 'unknown'
-): Promise<{ responses: ResponseWithStatus[]; truncated: boolean; privateCap: { shown: number; total: number } | null }> {
+): Promise<{ responses: ResponseWithStatus[]; truncated: boolean; privateCap: { shown: number } | null }> {
   const PAGE = 1000;
   const MAX_PAGES = 100; // 100k safety cap, mirrors the server-side export cap
   const all: ResponseWithStatus[] = [];
@@ -101,14 +101,12 @@ async function fetchAllApiResponses(
   const seen = new Set<string>();
   let truncated = false;
   let isPrivate = privacy === 'private';
-  let totalCount: number | null = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const result = await api.getResponses(formId, { limit: PAGE, offset: page * PAGE });
     const batch = result.data?.responses;
     if (!batch || !Array.isArray(batch)) {
       throw new Error(result.error || `Failed to load responses (page ${page + 1})`);
     }
-    if (typeof result.data?.count === 'number') totalCount = result.data.count;
     for (const r of batch) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);
@@ -120,11 +118,18 @@ async function fetchAllApiResponses(
       isPrivate = batch.some((r) => isEncryptedEnvelope((r as { answers?: unknown }).answers));
     }
     if (isPrivate && all.length >= PRIVATE_LIST_CAP) {
-      const total = totalCount ?? all.length;
+      // Whether the form holds more than was read is asked: one record past the cap. The
+      // list's `count` is the page's own length, never the form's total, so compared with the
+      // cap it was never over it, and a form with more than the cap was cut short with no word.
+      let more = all.length > PRIVATE_LIST_CAP;
+      if (!more) {
+        const probe = await api.getResponses(formId, { limit: 1, offset: PRIVATE_LIST_CAP });
+        more = Array.isArray(probe.data?.responses) && probe.data.responses.length > 0;
+      }
       return {
         responses: all.slice(0, PRIVATE_LIST_CAP),
         truncated: false,
-        privateCap: total > PRIVATE_LIST_CAP ? { shown: PRIVATE_LIST_CAP, total } : null,
+        privateCap: more ? { shown: PRIVATE_LIST_CAP } : null,
       };
     }
     if (batch.length < PAGE) break;
@@ -195,7 +200,7 @@ function FormResponses() {
     align: 'right',
   });
   // E2EE private-form state: 5000-row list cap info, unlock dialog, decrypted export progress.
-  const [privateCapInfo, setPrivateCapInfo] = useState<{ shown: number; total: number } | null>(null);
+  const [privateCapInfo, setPrivateCapInfo] = useState<{ shown: number } | null>(null);
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
   const [privateExportProgress, setPrivateExportProgress] = useState<{ fetched: number; decrypted: number; total: number | null; confirmCancel: boolean } | null>(null);
   const privateExportCancelRef = useRef(false);
@@ -1006,7 +1011,7 @@ function FormResponses() {
         {/* E2EE: progressive-fetch cap banner (plan SS10) - never a silent partial. */}
         {isPrivateForm && !vaultLocked && privateCapInfo && (
           <div className="mb-6 rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-200">
-            Searched the first {privateCapInfo.shown.toLocaleString()} of {privateCapInfo.total.toLocaleString()} records. Use the decrypted spreadsheet export for the complete set.
+            Showing and searching the first {privateCapInfo.shown.toLocaleString()} records; this form has more. Use the decrypted spreadsheet export for the complete set.
           </div>
         )}
 

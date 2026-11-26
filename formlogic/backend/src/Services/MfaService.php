@@ -31,16 +31,24 @@ class MfaService
     public const CHALLENGE_MAX_ATTEMPTS = 5;
     /** Bounded retries when a recovery-code consume loses a concurrent compare-and-swap. */
     private const RECOVERY_CAS_RETRIES = 3;
+    /**
+     * Answers an account may give to its sign-in code prompts in SECOND_FACTOR_WINDOW seconds,
+     * whichever prompt and whatever address they come from. A right answer ends the count.
+     */
+    public const SECOND_FACTOR_MAX_ATTEMPTS = 10;
+    public const SECOND_FACTOR_WINDOW = 900;
 
     private PDO $mysql;
     private TotpService $totp;
     private ?AuditService $audit;
+    private RateLimiter $limiter;
 
     public function __construct(MySQLConnection $mysql, TotpService $totp, ?AuditService $audit = null)
     {
         $this->mysql = $mysql->getConnection();
         $this->totp = $totp;
         $this->audit = $audit;
+        $this->limiter = new RateLimiter($this->mysql);
     }
 
     public function isEnabled(string $userId): bool
@@ -241,6 +249,50 @@ class MfaService
         );
         $stmt->execute(['hash' => hash('sha256', $jti), 'max' => self::CHALLENGE_MAX_ATTEMPTS]);
         return $stmt->rowCount() > 0;
+    }
+
+    // ── The account's own budget of sign-in code answers ─────────────────────
+    //
+    // A prompt allows five answers and an address fifteen in five minutes, and neither bounds
+    // someone who knows the password: each password sign-in is a new prompt, and addresses are
+    // cheap. Six digits do not last long against that. So the answers are also counted against
+    // the account, and while it is over its budget it is neither asked for a code nor has one
+    // looked at.
+
+    /**
+     * Count one answer against the account before its code is looked at, so answers sent at once
+     * are each counted and none slips by a count read earlier.
+     *
+     * @return bool|null whether the answer is within the budget; null when the count could not be
+     *                   kept, which the caller refuses on (an outage is not a free run at the code)
+     */
+    public function secondFactorAttempt(string $userId): ?bool
+    {
+        $count = $this->limiter->hit(self::secondFactorKey($userId), self::SECOND_FACTOR_WINDOW);
+        return $count === RateLimiter::UNAVAILABLE ? null : $count <= self::SECOND_FACTOR_MAX_ATTEMPTS;
+    }
+
+    /** Whether the account has used its budget up: the next answer would be refused unread. */
+    public function secondFactorLocked(string $userId): bool
+    {
+        return $this->limiter->count(self::secondFactorKey($userId), self::SECOND_FACTOR_WINDOW) >= self::SECOND_FACTOR_MAX_ATTEMPTS;
+    }
+
+    /** A right answer: the account's count ends, as a sign-in ends the count of wrong passwords. */
+    public function secondFactorPassed(string $userId): void
+    {
+        $this->limiter->clear(self::secondFactorKey($userId));
+    }
+
+    /** Minutes until an account over its budget is asked again. */
+    public function secondFactorMinutesLeft(): int
+    {
+        return (int) ceil($this->limiter->secondsUntilReset(self::SECOND_FACTOR_WINDOW) / 60);
+    }
+
+    private static function secondFactorKey(string $userId): string
+    {
+        return 'mfa_fail:' . $userId;
     }
 
     /**

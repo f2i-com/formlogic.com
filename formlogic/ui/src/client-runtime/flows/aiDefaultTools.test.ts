@@ -233,6 +233,71 @@ describe('resolveDefaultLlmTools — Desktop', () => {
     expect(res).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
   });
 
+  it('does not ask again, by the relay or in words, for a chat the OAIY here took and did not answer in time', async () => {
+    // The request went out: the provider may be answering, and billing, still. The relay reaches
+    // the same Desktop, so asking by it would run the chat a second time.
+    const { resolveDefaultLlm } = await import('./aiDefault');
+    const unanswered = { ok: false as const, error: { code: 'connector_uncertain' as const, message: 'OAIY Desktop did not answer in time.' } };
+    const fetchPreferences = async () => ({ ok: true as const, data: prefs({ aiSource: 'desktop', desktopProviderId: 'openai-codex-agent' }) });
+    const tunnelChat = vi.fn();
+    const text = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], editor: true },
+      { fetchPreferences, oaiyAvailable: () => true, oaiyChat: async () => unanswered, tunnelChat },
+    );
+    expect(tunnelChat).not.toHaveBeenCalled();
+    expect(text).toEqual({ ok: false, error: unanswered.error });
+    const tools = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, { fetchPreferences, oaiyAvailable: () => true, oaiyChat: async () => unanswered });
+    expect(tools).toEqual({ ok: false, error: unanswered.error });
+  });
+
+  describe('a provider the OAIY on this computer does not have', () => {
+    // The provider chosen in Settings is on the Desktop the account is linked to, which is another
+    // computer. OAIY here answers as OAIY does (ai/routes.rs), through the real client.
+    const relayed = { ok: true as const, data: { finalText: 'From the linked Desktop.', threadId: 't1' } };
+    function oaiyAnswers(status: number, code: string, message: string) {
+      const fetchFn = vi.fn(async () => jsonResponse({ error: { code, message } }, status));
+      vi.stubGlobal('fetch', fetchFn);
+      return fetchFn;
+    }
+    async function ask(providerId: string) {
+      const { resolveDefaultLlm } = await import('./aiDefault');
+      const fetchPreferences = async () => ({ ok: true as const, data: prefs({ aiSource: 'desktop', desktopProviderId: providerId }) });
+      const tunnelChat = vi.fn(async () => relayed);
+      const text = await resolveDefaultLlm(
+        { messages: [{ role: 'user', content: 'Edit the page' }], editor: true },
+        { fetchPreferences, oaiyAvailable: () => true, tunnelChat: tunnelChat as never },
+      );
+      const tools = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, { fetchPreferences, oaiyAvailable: () => true, listOaiySources: async () => [] });
+      return { text, tools, tunnelChat };
+    }
+
+    it('is asked for by the relay: OAIY\'s 404 no_provider, whose sentence has no "no provider" in it', async () => {
+      const fetchFn = oaiyAnswers(404, 'no_provider', 'No enabled AI chat provider is configured for this source.');
+      const { text, tools, tunnelChat } = await ask('provider:work-openai');
+      expect(String((fetchFn.mock.calls[0] as unknown as [string])[0])).toContain('/api/ai/providers/work-openai/v1/chat/completions');
+      expect(tunnelChat).toHaveBeenCalledTimes(1);
+      expect(text).toEqual({ ok: true, data: { source: 'desktop', content: 'From the linked Desktop.', threadId: 't1' } });
+      // With tools: the editor is told to ask in words, and the words go by the relay as above.
+      expect(tools).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+    });
+
+    it('is asked for by the relay when it is OAIY\'s own engine and the engines here are not running', async () => {
+      oaiyAnswers(503, 'engine_unavailable', 'The engines are not running.');
+      const { text, tools, tunnelChat } = await ask('oaiy-engine');
+      expect(tunnelChat).toHaveBeenCalledTimes(1);
+      expect(text).toMatchObject({ ok: true, data: { content: 'From the linked Desktop.' } });
+      expect(tools).toMatchObject({ ok: false, error: { code: TOOLS_UNSUPPORTED } });
+    });
+
+    it('is not what a provider that is here and failed is taken for', async () => {
+      oaiyAnswers(502, 'upstream_error', 'upstream 401 Unauthorized');
+      const { text, tools, tunnelChat } = await ask('provider:work-openai');
+      expect(tunnelChat).not.toHaveBeenCalled();
+      expect(text).toEqual({ ok: false, error: { code: 'command_failed', message: 'upstream 401 Unauthorized' } });
+      expect(tools).toEqual({ ok: false, error: { code: 'command_failed', message: 'upstream 401 Unauthorized' } });
+    });
+  });
+
   it('keeps custom-named Anthropic providers in OAIY on the text protocol instead of dropping tools', async () => {
     const oaiyChat = vi.fn();
     const res = await resolveDefaultLlmTools({ messages: MESSAGES, tools: TOOLS }, {
@@ -303,5 +368,58 @@ describe('resolveDefaultLlmTools — Desktop', () => {
     if (customRes.ok) expect(customRes.data.content).toContain('<tool_call name="read_file">');
     const [, init] = customFetch.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).max_tokens).toBe(16384);
+  });
+});
+
+describe('the editor\'s output cap and a custom AI service that refuses it', () => {
+  // The cap goes first. A service that holds it to its model's limits answers 400 to a request it
+  // answered before the editor sent one, so that one is asked once more without it.
+  const REPLY = { choices: [{ message: { content: 'Done.' }, finish_reason: 'stop' }] };
+  async function ask(p: ResolvedAiProvider, answers: Array<() => Response>, editor = true) {
+    const { resolveDefaultLlm } = await import('./aiDefault');
+    const fetchFn = vi.fn(async () => (answers.shift() ?? (() => jsonResponse(REPLY)))());
+    const result = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], ...(editor ? { editor: true } : {}) },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'custom', customProviderId: 'svc' }) }),
+        resolveCustomProvider: async () => p,
+        fetchFn: fetchFn as unknown as typeof fetch,
+      },
+    );
+    const bodies = fetchFn.mock.calls.map(call => JSON.parse(String((call as unknown as [string, RequestInit])[1].body)) as Record<string, unknown>);
+    return { result, bodies };
+  }
+  const refusal = (message: string) => () => jsonResponse({ error: { message, type: 'invalid_request_error' } }, 400);
+
+  it('asks again without the cap when the service says the cap is over its model\'s limit', async () => {
+    const { result, bodies } = await ask(provider(), [refusal('max_tokens is too large: 16384. This model supports at most 4096 completion tokens, whereas you provided 16384.')]);
+    expect(result).toEqual({ ok: true, data: { source: 'custom', content: 'Done.' } });
+    expect(bodies).toEqual([
+      { messages: [{ role: 'user', content: 'Edit the page' }], model: 'configured-model', max_completion_tokens: 16384 },
+      { messages: [{ role: 'user', content: 'Edit the page' }], model: 'configured-model' },
+    ]);
+  });
+
+  it('asks again without it when the cap does not fit in the model\'s context', async () => {
+    const { result, bodies } = await ask(provider({ kind: 'ollama' }), [refusal('This model\'s maximum context length is 8192 tokens. However, you requested 16500 tokens (116 in the messages, 16384 in the completion).')]);
+    expect(result).toMatchObject({ ok: true, data: { content: 'Done.' } });
+    expect(bodies.map(body => body.max_tokens)).toEqual([16384, undefined]);
+  });
+
+  it('asks once more only: a second refusal is the answer', async () => {
+    const tooLarge = refusal('max_tokens is too large');
+    const { result, bodies } = await ask(provider(), [tooLarge, tooLarge]);
+    expect(bodies).toHaveLength(2);
+    expect(result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
+  });
+
+  it('does not ask again for a 400 about anything else, or for a request that carried no cap', async () => {
+    const other = await ask(provider(), [refusal('The model `configured-model` does not exist.')]);
+    expect(other.bodies).toHaveLength(1);
+    expect(other.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
+
+    const chat = await ask(provider(), [refusal('This model\'s maximum context length is 8192 tokens.')], false);
+    expect(chat.bodies).toEqual([{ messages: [{ role: 'user', content: 'Edit the page' }], model: 'configured-model' }]);
+    expect(chat.result).toMatchObject({ ok: false, error: { code: 'request_failed', status: 400 } });
   });
 });

@@ -709,6 +709,44 @@ final class NativeRecordStore
         return ['saved' => true, 'deleted' => count($targets)];
     }
 
+    /**
+     * Every row of a table deleted at once, all or none: what a form's "clear all records" does
+     * to the table it is bound to. Under the guards one delete has: only a table the owner is
+     * shown (never SQLite's own or the host's), in one immediate transaction, and with foreign
+     * keys on. A connection that never turned them on (SQLite's default) emptied the table and
+     * left every row that referenced it behind, pointing at nothing; now those rows go with it,
+     * or the whole delete is refused, as the schema says.
+     *
+     * No app.record.deleted events are queued. A bulk clear does not run an automation per row,
+     * as a form's own bulk clear sends no webhook per row, and the event queue's bound would
+     * refuse to clear any larger table that has one.
+     *
+     * Not an action of operate(): that takes its input from requests, where every delete names
+     * its records and shows it has read them (a revision, a stamp).
+     *
+     * @return int the rows of this table that went (not those a cascade took elsewhere)
+     */
+    public function clear(string $table): int
+    {
+        $this->schema($table);
+        $this->db->exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=1500');
+        $began = false;
+        try {
+            $this->db->exec('BEGIN IMMEDIATE');
+            $began = true;
+            $deleted = (int) $this->db->exec('DELETE FROM ' . self::quote($table));
+            $this->db->exec('COMMIT');
+            return $deleted;
+        } catch (\Throwable $error) {
+            if ($began) $this->db->exec('ROLLBACK');
+            if ($error instanceof \PDOException) {
+                if (($error->errorInfo[1] ?? 0) === 19) throw new RuntimeException('The database rejected this change. Other records still refer to these, or a table rule forbids deleting them.', 422);
+                if (in_array($error->errorInfo[1] ?? 0, [5, 6], true)) throw new RuntimeException('The database is busy. Please try again.', 409);
+            }
+            throw $error;
+        }
+    }
+
     /** Deliver committed events in order. Leave unacknowledged events for a retry if delivery fails. */
     public function dispatchEvents(callable $deliver, int $limit): int
     {

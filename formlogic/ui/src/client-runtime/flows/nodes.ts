@@ -227,6 +227,18 @@ export class FlowExecError extends Error {
 }
 
 /**
+ * Thrown by `invokeDesktopAiChat` when the request went out and no answer came back in time.
+ * The provider may be answering still, so llm_chat does not send it a second time: a provider
+ * that bills by the request would bill for both.
+ */
+export class DesktopAiUnansweredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DesktopAiUnansweredError';
+  }
+}
+
+/**
  * Capabilities injected into a run. The browser wiring (flowDispatcher) binds these to the
  * ZIPP sandbox engine, the app runtime store and the connector client; tests inject fakes.
  */
@@ -288,7 +300,8 @@ export interface FlowExecutorDeps {
    * attaches the credential; the browser sends only the provider id and request
    * body. `null` means no matching paired provider, so legacy browser/local
    * resolution may continue. A thrown error means a matched provider failed and
-   * must not silently fall through to a different model.
+   * must not silently fall through to a different model. It is asked once more,
+   * unless the error is a DesktopAiUnansweredError.
    */
   invokeDesktopAiChat?(
     providerId: string,
@@ -975,6 +988,8 @@ async function runLlmChat(ctx: FlowNodeContext): Promise<unknown> {
           `Node '${node.id}' Desktop AI provider '${providerId}' failed: ${err instanceof Error ? err.message : String(err)}`,
           node.id
         );
+        // Sent and not answered in time: the first request may be answered yet, so there is no second.
+        if (err instanceof DesktopAiUnansweredError) break;
         continue;
       }
       if (payload === null) {

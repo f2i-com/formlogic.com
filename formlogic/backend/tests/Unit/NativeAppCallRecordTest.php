@@ -137,7 +137,9 @@ final class NativeAppCallRecordTest extends TestCase
         $at = $this->recorded[0]['at'];
         $this->assertInstanceOf(\DateTimeImmutable::class, $at);
         $this->assertLessThan(0.1, abs((float) $at->format('U.u') - (float) $before->format('U.u')), 'its arrival, not its answer a moment later');
-        $this->assertGreaterThanOrEqual(120, $this->recorded[0]['ms']);
+        // About the 120 ms it took. Not held to the millisecond: on Windows a sleep ends a few
+        // milliseconds early by the clock the call is timed with (117 was measured on a busy machine).
+        $this->assertGreaterThanOrEqual(100, $this->recorded[0]['ms']);
     }
 
     public function testACallPhpStoppedBeforeItWasAnsweredIsWrittenDownAsOneWithNoAnswer(): void

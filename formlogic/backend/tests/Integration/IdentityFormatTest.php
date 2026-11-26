@@ -135,6 +135,25 @@ class IdentityFormatTest extends TestCase
         }
     }
 
+    public function testANewIdDoesNotTakeAnOlderFormsUploadFolder(): void
+    {
+        // Older versions let the API choose ids such as survey.2026, and such a form still comes
+        // back from the bin with its id. Its folder is the id without the dot, which is an id a
+        // new form may have: the guard compared ids without their underscores only.
+        $tail = bin2hex(random_bytes(4));
+        self::$forms->createForm(['id' => 'survey.2026-' . $tail, 'title' => 'Theirs', 'userId' => $this->userId], true);
+        foreach (['survey2026-' . $tail, 'survey_2026-' . $tail, 'sur_vey2026-' . $tail] as $id) {
+            try {
+                self::$forms->createForm(['id' => $id, 'title' => 'Mine', 'userId' => 'someone-else']);
+                self::fail('Shares a folder: ' . $id);
+            } catch (\RuntimeException $refused) {
+                self::assertSame('A form with this ID already exists', $refused->getMessage());
+            }
+        }
+        // An id with a folder of its own is as free as it was.
+        self::assertSame('survey2027-' . $tail, self::$forms->createForm(['id' => 'survey2027-' . $tail, 'title' => 'Other', 'userId' => $this->userId])['id']);
+    }
+
     public function testAClientsOrdinaryFormIdIsKept(): void
     {
         $uuid = substr(bin2hex(random_bytes(4)), 0, 8) . '-7a44-4d21-9f0e-1c2d3e4f5a6b';

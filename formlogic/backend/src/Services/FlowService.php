@@ -1943,7 +1943,12 @@ class FlowService
 
         $resultJson = null;
         if (array_key_exists('result', $data) && $data['result'] !== null) {
-            $json = json_encode($data['result']);
+            // Measured as the runtime that sends it measures it: the JSON as UTF-8 text. PHP's own
+            // escapes write each non-ASCII character as \uXXXX and each `/` as `\/`, up to three
+            // times the bytes, so a result in any language but English that the sender had held
+            // to its own limit was refused here and its run left running. Kept as measured: the
+            // column is JSON, which holds the same value either way.
+            $json = json_encode($data['result'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_FLOW_JSON_BYTES) {
                 throw new \InvalidArgumentException('result exceeds the 256KB limit');
             }

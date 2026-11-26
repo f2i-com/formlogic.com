@@ -54,6 +54,7 @@ import { resolveExecutableGraph } from './compiledGraph';
 import { invokeChildFlowWith, type ChildFlowBackend } from './childFlowInvoker';
 import {
   capabilitiesEngineDown,
+  DesktopAiUnansweredError,
   flowLogicLanguages,
   logicLanguageCapability,
   LOGIC_LANGUAGES,
@@ -98,11 +99,17 @@ async function invokeDesktopNamedAiChat(
   if (!selected) return null;
   // When OAIY is the paired runtime, the advertised providers ARE OAIY's, so the
   // chat runs through OAIY's credential-hidden gateway; otherwise FormLogic
-  // Desktop. Either way the key never reaches the browser.
+  // Desktop. Either way the key never reaches the browser. On both routes the
+  // run's signal is the deadline: neither cuts the chat off sooner on its own.
   const result = oaiyRouteAvailable()
     ? await oaiyAiChat(id, body, { signal })
     : await desktopClient.ai.chat(body as DesktopAiChatRequest, id, { signal });
-  if (!result.ok) throw new Error(result.error.message || `Desktop AI provider '${id}' failed`);
+  if (!result.ok) {
+    const message = result.error.message || `Desktop AI provider '${id}' failed`;
+    // Sent and not answered in time is said as such, so that llm_chat does not ask again.
+    if (result.error.code === 'connector_uncertain') throw new DesktopAiUnansweredError(message);
+    throw new Error(message);
+  }
   return result.data;
 }
 
@@ -832,7 +839,19 @@ async function deferToDesktop(eventName: string, languages: readonly string[] = 
   return shouldDeferEventToDesktop(eventName, languages);
 }
 
+/**
+ * The source OAIY gives the events that say how its own flows' runs ended: `flow.succeeded`,
+ * `flow.failed`, `flow.timed_out` and `flow.cancelled`, the names FormLogic's outcome bindings
+ * listen for (components/flows/bindings/outcomeTrigger.ts).
+ */
+const OAIY_FLOW_OUTCOME_SOURCE = 'flows';
+
 function onDesktopEvent(envelope: DesktopEventEnvelope): void {
+  // An outcome binding is for the end of one of FormLogic's own runs, and the server hands that
+  // on as a queued handler run: it never comes by this hub. What does come by it under those
+  // names is the end of a run OAIY made on this computer, of a flow that may be nothing of this
+  // app's. Matched by name, it started every outcome binding that names no source flow.
+  if (envelope.source === OAIY_FLOW_OUTCOME_SOURCE) return;
   void enqueueBrowserConnectorEvent(envelope, async () => {
     // A binding reserves first, which puts the event in the app's run log. What arrives here is
     // the viewer's own (a call, a text), so someone else's app is asked about before that.

@@ -129,4 +129,54 @@ class PackCapabilitiesTest extends TestCase
         $this->assertContains('connector.aokie.*', $d['connectorGrants']);
         $this->assertContains('connector.*', $d['connectorGrants']);
     }
+
+    /**
+     * Speaking into a call is listed as the grant the runner checks before it does: an
+     * aokie_speak node and a call.speak action are the aokie connector's call.operatorSpeak. A
+     * name of the review's own would be one that declining does not stop and approving does not grant.
+     */
+    public function testSpeakingIntoACallIsListedAsTheGrantTheRunnerChecks(): void
+    {
+        $d = PackCapabilities::describe([
+            'flows' => [['slug' => 'reply', 'flowJson' => ['nodes' => [
+                ['id' => 'say', 'type' => 'aokie_speak', 'data' => ['text' => 'One moment.']],
+                ['id' => 'text', 'type' => 'connector_request', 'data' => ['connector' => 'aokie', 'command' => 'sms.send']],
+                ['id' => 'any', 'type' => 'connector_request', 'data' => ['connectorId' => 'printer']],
+                ['id' => 'ask', 'type' => 'llm_chat', 'data' => []],
+            ]]]],
+            'flowBindings' => [['flow' => 'reply', 'outputActions' => [['type' => 'call.speak', 'message' => 'Thanks.']]]],
+        ]);
+        $this->assertSame(['connector.aokie.call.operatorSpeak', 'connector.aokie.sms.send', 'connector.printer.*'], $d['connectorGrants']);
+        $this->assertNotContains('connector.aokie.speak', $d['permissions']);
+        $this->assertSame(['aokie', 'printer'], $d['connectors']);
+
+        $this->assertSame('connector.aokie.call.operatorSpeak', PackCapabilities::AOKIE_SPEAK_GRANT);
+        $this->assertSame([], PackCapabilities::flowNodeGrants(null));
+        $this->assertSame([], PackCapabilities::flowNodeGrants(['nodes' => 'none']));
+        // A speak action alone names the same grant.
+        $action = PackCapabilities::describe(['flowBindings' => [['flow' => 'reply', 'outputActions' => [['type' => 'call.speak', 'message' => 'Thanks.']]]]]);
+        $this->assertSame(['connector.aokie.call.operatorSpeak'], $action['connectorGrants']);
+    }
+
+    /** The receptionist that ships with FormLogic: every grant its review lists is one its flows declare or a role holds. */
+    public function testTheBundledReceptionistsReviewListsNoGrantOfItsOwnInvention(): void
+    {
+        $path = dirname(__DIR__, 2) . '/resources/packs/aokie-receptionist/install.json';
+        if (!is_file($path)) {
+            $this->markTestSkipped('The bundled receptionist pack is not in this checkout.');
+        }
+        $install = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+        $pack = is_array($install['pack'] ?? null) ? $install['pack'] : $install;
+        $d = PackCapabilities::describe($pack, is_array($install['customLogic'] ?? null) ? $install['customLogic'] : null);
+        $this->assertContains('connector.aokie.call.operatorSpeak', $d['connectorGrants']);
+        $this->assertNotContains('connector.aokie.speak', $d['connectorGrants']);
+        // Each speak node sits in a flow that declares what it asks for, so approving the list lets it run.
+        foreach ($pack['flows'] ?? [] as $flow) {
+            $declared = is_array($flow['nodeCapabilities'] ?? null) ? $flow['nodeCapabilities'] : [];
+            foreach (PackCapabilities::flowNodeGrants($flow['flowJson'] ?? null) as $grant) {
+                $connector = implode('.', array_slice(explode('.', $grant), 0, 2));
+                $this->assertTrue(in_array($grant, $declared, true) || in_array($connector . '.*', $declared, true), ($flow['slug'] ?? '?') . ' asks for ' . $grant);
+            }
+        }
+    }
 }

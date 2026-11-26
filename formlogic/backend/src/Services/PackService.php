@@ -586,6 +586,28 @@ class PackService
                 }
                 $nodeCaps = $caps !== [] ? array_slice($caps, 0, 64) : null;
             }
+            // The review also lists what each node asks for by being there (a connector_request's
+            // command, an aokie_speak's call.operatorSpeak). The node stays in the graph, so one
+            // declined is withheld by taking from the flow every capability that would let it
+            // run: the grant itself and any wildcard over it, an approved one included, since a
+            // wildcard left in place grants again exactly what was declined.
+            if ($approvedSet !== null) {
+                foreach (PackCapabilities::flowNodeGrants($flowJson) as $grant) {
+                    if (isset($approvedSet[$grant])) {
+                        continue;
+                    }
+                    $withheldGrants[$grant] = true;
+                    $kept = [];
+                    foreach ($nodeCaps ?? [] as $cap) {
+                        if (is_string($cap) && self::capabilityCoversGrant($cap, $grant)) {
+                            $withheldGrants[$cap] = true;
+                        } else {
+                            $kept[] = $cap;
+                        }
+                    }
+                    $nodeCaps = $kept !== [] ? $kept : null;
+                }
+            }
             $flowId = $this->generateUuid();
             $stmt = $this->mysql->prepare("
                 INSERT INTO flow_definitions
@@ -644,7 +666,7 @@ class PackService
                                 continue;
                             }
                         } elseif ($aType === 'call.speak') {
-                            $grant = 'connector.aokie.speak';
+                            $grant = PackCapabilities::AOKIE_SPEAK_GRANT;
                             if (!isset($approvedSet[$grant]) && !isset($approvedSet['connector.aokie.*']) && !isset($approvedSet['connector.*'])) {
                                 $withheldGrants[$grant] = true;
                                 continue;
@@ -2912,6 +2934,25 @@ class PackService
             }
         }
         return array_values($out);
+    }
+
+    /**
+     * Whether holding $capability lets a node that asks for $grant run: the grant itself, the
+     * wildcard over its connector (`connector.<id>.*`, or the bare `connector.<id>`), or the
+     * wildcard over every connector.
+     */
+    private static function capabilityCoversGrant(string $capability, string $grant): bool
+    {
+        if ($capability === $grant || $capability === 'connector.*' || $capability === 'connector') {
+            return true;
+        }
+        if (strncmp($grant, 'connector.', 10) !== 0) {
+            return false;
+        }
+        $rest = substr($grant, 10);
+        $dot = strpos($rest, '.');
+        $connector = 'connector.' . ($dot !== false ? substr($rest, 0, $dot) : $rest);
+        return $capability === $connector . '.*' || $capability === $connector;
     }
 
     /**

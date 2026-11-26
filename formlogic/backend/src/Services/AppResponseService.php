@@ -95,9 +95,15 @@ class AppResponseService
         $deleted = $this->responseService->deleteResponse($formId, $responseId);
 
         if ($deleted && !NativeAppService::hasSandboxRootOverrides()) {
-            // Clean up response links (both as source and target)
-            $stmt = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id OR target_response_id = :id2");
-            $stmt->execute(['id' => $responseId, 'id2' => $responseId]);
+            // Clean up response links (both as source and target). This form's record only: a
+            // form bound to an app's table names its records by the table's key ("5"), and by id
+            // alone this took the links of every other account's record "5" with it.
+            $stmt = $this->mysql->prepare(
+                "DELETE FROM response_links
+                 WHERE (source_form_id = :form AND source_response_id = :id)
+                    OR (target_form_id = :form2 AND target_response_id = :id2)"
+            );
+            $stmt->execute(['form' => $formId, 'id' => $responseId, 'form2' => $formId, 'id2' => $responseId]);
         }
 
         return $deleted;

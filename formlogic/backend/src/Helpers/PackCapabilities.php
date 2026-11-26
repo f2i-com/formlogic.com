@@ -14,6 +14,47 @@ namespace FormLogic\Helpers;
 class PackCapabilities
 {
     /**
+     * What speaking into a live call asks for: an `aokie_speak` node and a `call.speak` output
+     * action are both the aokie connector's `call.operatorSpeak` command, and that is the grant
+     * the runner checks before it sends one (client-runtime/flows/nodes.ts). The review lists it
+     * by this name, so declining it is declining what the runner would ask for.
+     */
+    public const AOKIE_SPEAK_GRANT = 'connector.aokie.call.operatorSpeak';
+
+    /**
+     * The connector grants a flow's own nodes ask for by being there, each as the runner checks
+     * it: `connector.<id>.<command>` for a connector_request node (`connector.<id>.*` where it
+     * names no command), and AOKIE_SPEAK_GRANT for an aokie_speak node. One list for the review
+     * (describe) and for the import that enforces what the review declined (PackService).
+     *
+     * @param mixed $flowJson a flow's graph: {nodes: [...]}
+     * @return list<string>
+     */
+    public static function flowNodeGrants(mixed $flowJson): array
+    {
+        $grants = [];
+        foreach ((is_array($flowJson) && is_array($flowJson['nodes'] ?? null) ? $flowJson['nodes'] : []) as $node) {
+            if (!is_array($node)) {
+                continue;
+            }
+            $nodeType = (string) ($node['type'] ?? '');
+            $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
+            if ($nodeType === 'connector_request') {
+                $cid = is_string($nodeData['connectorId'] ?? null) && trim($nodeData['connectorId']) !== ''
+                    ? trim($nodeData['connectorId'])
+                    : (is_string($nodeData['connector'] ?? null) ? trim($nodeData['connector']) : '');
+                $cmd = is_string($nodeData['command'] ?? null) && trim($nodeData['command']) !== '' ? trim($nodeData['command']) : '*';
+                if ($cid !== '') {
+                    $grants['connector.' . $cid . '.' . $cmd] = true;
+                }
+            } elseif ($nodeType === 'aokie_speak') {
+                $grants[self::AOKIE_SPEAK_GRANT] = true;
+            }
+        }
+        return array_map('strval', array_keys($grants));
+    }
+
+    /**
      * @param array<string,mixed>      $packData
      * @param array<string,mixed>|null $envelopeCustomLogic An ApplicationPackage's envelope-level
      *   customLogic (quickjs/customLogic.json or the JSON envelope's `customLogic` key) — applied to
@@ -152,30 +193,10 @@ class PackCapabilities
                     }
                 }
             }
-            $flowNodes = is_array($fl['flowJson']['nodes'] ?? null) ? $fl['flowJson']['nodes'] : [];
-            foreach ($flowNodes as $node) {
-                if (!is_array($node)) {
-                    continue;
-                }
-                $nodeType = (string) ($node['type'] ?? '');
-                $nodeData = is_array($node['data'] ?? null) ? $node['data'] : [];
-                if ($nodeType === 'connector_request') {
-                    $cid = is_string($nodeData['connectorId'] ?? null) && trim($nodeData['connectorId']) !== ''
-                        ? trim($nodeData['connectorId'])
-                        : (is_string($nodeData['connector'] ?? null) ? trim($nodeData['connector']) : '');
-                    $cmd = is_string($nodeData['command'] ?? null) && trim($nodeData['command']) !== '' ? trim($nodeData['command']) : '*';
-                    if ($cid !== '') {
-                        $grant = 'connector.' . $cid . '.' . $cmd;
-                        $permissions[$grant] = true;
-                        $connectorGrants[$grant] = true;
-                        $noteConnector($grant);
-                    }
-                } elseif ($nodeType === 'aokie_speak') {
-                    $grant = 'connector.aokie.speak';
-                    $permissions[$grant] = true;
-                    $connectorGrants[$grant] = true;
-                    $noteConnector($grant);
-                }
+            foreach (self::flowNodeGrants($fl['flowJson'] ?? null) as $grant) {
+                $permissions[$grant] = true;
+                $connectorGrants[$grant] = true;
+                $noteConnector($grant);
             }
         }
         foreach ($flowBindings as $b) {
@@ -200,7 +221,7 @@ class PackCapabilities
                         $connectorGrants[$grant] = true;
                     }
                 } elseif ($aType === 'call.speak') {
-                    $grant = 'connector.aokie.speak';
+                    $grant = self::AOKIE_SPEAK_GRANT;
                     $connectors['aokie'] = true;
                     $permissions[$grant] = true;
                     $connectorGrants[$grant] = true;

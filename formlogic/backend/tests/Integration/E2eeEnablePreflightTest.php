@@ -220,6 +220,14 @@ class E2eeEnablePreflightTest extends E2eeTestCase
         $this->assertEnableBlocked((string) $form['id'], ['has_custom_screen']);
     }
 
+    public function testLogicScriptBlocks(): void
+    {
+        // A private form's script can be neither opened nor changed, so it has to go first.
+        $form = $this->makeDraftForm();
+        self::$forms->updateForm((string) $form['id'], ['logicScript' => 'function onSubmit(ctx) { ctx.db.addTag("seen"); }']);
+        $this->assertEnableBlocked((string) $form['id'], ['has_logic_script']);
+    }
+
     public function testResponseLinksBlock(): void
     {
         $form = $this->makeDraftForm();

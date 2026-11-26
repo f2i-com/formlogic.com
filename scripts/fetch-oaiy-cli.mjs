@@ -5,7 +5,7 @@
  *
  * An OAIY release built with the standalone CLI carries `oaiy-cli-<v>.tar.gz`:
  * `oaiy.mjs`, its two worker shells, the ZIPP engine OAIY installed, and the
- * one dependency the CLI needs, packed by oaiy.com/scripts/pack-cli-asset.mjs.
+ * one dependency the CLI needs, packed by oaiy.com's platform/scripts/pack-cli-asset.mjs.
  * The asset is OS-neutral (JavaScript and wasm), so one asset serves every
  * runner. This script resolves the latest release (or the one
  * OAIY_CLI_RELEASE names), proves the bytes are the ones the release page
@@ -691,6 +691,17 @@ async function recordInstall(paths, { source, tag, tagCommit, asset, assetSha256
 }
 
 /**
+ * Where an oaiy.com checkout keeps its packer and the CLI its desktop build
+ * stages: under `platform/` (platform/scripts/pack-cli-asset.mjs,
+ * platform/desktop/…), or at its root in a checkout from before that move.
+ * Whichever holds the packer is where the staged CLI is looked for too, so a
+ * packer is never run over the other layout's files.
+ */
+const CHECKOUT_BASES = ['platform', ''];
+const PACKER = 'scripts/pack-cli-asset.mjs';
+const STAGED_CLI = 'desktop/src-tauri/resources/cli';
+
+/**
  * A developer's shortcut: pack the CLI staged in a local oaiy.com checkout
  * and install that, so a change can be tried against FormLogic before it is
  * released. The asset is built by oaiy.com's own packer — imported, not
@@ -705,8 +716,9 @@ async function recordInstall(paths, { source, tag, tagCommit, asset, assetSha256
 async function packFromSource({ root, paths, oaiyRepo, inCi, log }) {
   if (inCi) throw new ReleaseError('OAIY_REPO packs the CLI from a local checkout; CI installs published releases only. Unset OAIY_REPO.');
   const repo = resolve(root, oaiyRepo);
-  const packer = resolve(repo, 'scripts/pack-cli-asset.mjs');
-  if (!existsSync(packer)) throw new ReleaseError(`OAIY_REPO=${oaiyRepo} has no scripts/pack-cli-asset.mjs; it is not an oaiy.com checkout.`);
+  const base = CHECKOUT_BASES.find((under) => existsSync(resolve(repo, under, PACKER)));
+  if (base === undefined) throw new ReleaseError(`OAIY_REPO=${oaiyRepo} has no platform/${PACKER} (nor ${PACKER}, where an older checkout keeps it); it is not an oaiy.com checkout.`);
+  const packer = resolve(repo, base, PACKER);
   const { packCliAsset, CAPABILITIES_FILE: packedCapabilities, SUMS_FILE: packedSums } = await import(pathToFileURL(packer).href);
   // The packer names the two files it writes into the asset, and this fetcher
   // names the two it reads back out. They are the same two files, so a
@@ -715,8 +727,8 @@ async function packFromSource({ root, paths, oaiyRepo, inCi, log }) {
   if (packedCapabilities !== CAPABILITIES_FILE || packedSums !== SUMS_FILE) {
     throw new ReleaseError(`${relative(root, packer) || packer} packs ${packedCapabilities} and ${packedSums}; this fetcher reads ${CAPABILITIES_FILE} and ${SUMS_FILE}. The checkout and this tree disagree about the asset's layout.`);
   }
-  const staged = resolve(repo, 'desktop/src-tauri/resources/cli');
-  if (!existsSync(resolve(staged, 'oaiy.mjs'))) throw new ReleaseError(`${relative(root, staged) || staged} holds no staged CLI; run OAIY's desktop/scripts/sync-cli.mjs in that checkout first.`);
+  const staged = resolve(repo, base, STAGED_CLI);
+  if (!existsSync(resolve(staged, 'oaiy.mjs'))) throw new ReleaseError(`${relative(root, staged) || staged} holds no staged CLI; run OAIY's ${base ? `${base}/` : ''}desktop/scripts/sync-cli.mjs in that checkout first.`);
   const out = resolve(paths.cache, 'local', 'oaiy-cli-local.tar.gz');
   await mkdir(dirname(out), { recursive: true });
   const packed = packCliAsset(staged, out);

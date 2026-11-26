@@ -3,6 +3,7 @@ import {
   buildAppAddress,
   extractPlatformAppSubpath,
   isFormAppSubroute,
+  placeWithoutQuery,
   readAppPlace,
 } from './nativeRouteAddress';
 
@@ -42,6 +43,36 @@ describe('nativeRouteAddress', () => {
       expect(buildAppAddress('/api/items', { pathname: '/', slug: 'mysite', onDomain: true }))
         .toBe('/#/api/items');
     });
+
+    it('reads back a named page inside the main page, as it wrote it', () => {
+      // SoftN says `/#settings`; the address it becomes must read back to the same place.
+      const address = buildAppAddress('/#settings', { pathname: '/', slug: 'mysite', onDomain: true });
+      expect(address).toBe('/#settings');
+      expect(readAppPlace({ pathname: '/', hash: '#settings', slug: 'mysite', onDomain: true })).toBe('/#settings');
+      expect(readAppPlace({ pathname: '/', search: '?tab=2', hash: '#settings', slug: 'mysite', onDomain: true }))
+        .toBe('/?tab=2#settings');
+      // A bare `#`, and a hash on one of FormLogic's own pages, name no page of the app.
+      expect(readAppPlace({ pathname: '/', hash: '#', slug: 'mysite', onDomain: true })).toBeNull();
+      expect(readAppPlace({ pathname: '/login', hash: '#settings', slug: 'mysite', onDomain: true })).toBeNull();
+    });
+  });
+
+  describe('the place SoftN\'s frame is handed', () => {
+    it('has no query, so a link with tracking on it opens the page it names', () => {
+      const landed = readAppPlace({ pathname: '/pricing.html', search: '?fbclid=abc&utm_source=news', slug: 'mysite', onDomain: true });
+      expect(landed).toBe('/pricing.html?fbclid=abc&utm_source=news');
+      expect(placeWithoutQuery(landed!)).toBe('/pricing.html');
+      expect(placeWithoutQuery('/docs/guide.html?tab=2#team')).toBe('/docs/guide.html#team');
+      expect(placeWithoutQuery('/?gclid=abc')).toBe('/');
+      expect(placeWithoutQuery('/?gclid=abc#settings')).toBe('/#settings');
+    });
+
+    it('leaves a place without one as it is, and keeps a ? inside a page name as an address writes it', () => {
+      for (const place of ['/', '/about.html', '/#settings', '/docs/guide.html#team']) expect(placeWithoutQuery(place)).toBe(place);
+      // SoftN refuses a `?` anywhere in a place: after the `#` it is part of the name, not a query.
+      expect(placeWithoutQuery('/docs/guide.html#team?x=1')).toBe('/docs/guide.html#team%3Fx=1');
+      expect(placeWithoutQuery('/a.html?x=1#team?y')).toBe('/a.html#team%3Fy');
+    });
   });
 
   describe('platform /app/:slug URLs', () => {
@@ -65,6 +96,18 @@ describe('nativeRouteAddress', () => {
         .toBe('/app/mysite/native/about.html');
       expect(buildAppAddress('/', { pathname: '/app/mysite/native/about.html', slug: 'mysite', onDomain: false }))
         .toBe('/app/mysite/native');
+    });
+
+    it('reads back a named page inside the main page under /app/:slug and /app/:slug/native', () => {
+      for (const root of ['/app/mysite', '/app/mysite/native']) {
+        const address = buildAppAddress('/#settings', { pathname: root, slug: 'mysite', onDomain: false });
+        expect(address).toBe(`${root}#settings`);
+        expect(readAppPlace({ pathname: root, hash: '#settings', slug: 'mysite', onDomain: false })).toBe('/#settings');
+        expect(readAppPlace({ pathname: `${root}/`, hash: '#settings', slug: 'mysite', onDomain: false })).toBe('/#settings');
+      }
+      // The legacy form of another page still reads as that page, not as a name.
+      expect(readAppPlace({ pathname: '/app/mysite', hash: '#/about.html', slug: 'mysite', onDomain: false })).toBe('/about.html');
+      expect(readAppPlace({ pathname: '/app/mysite', hash: '#//evil.example/x', slug: 'mysite', onDomain: false })).toBeNull();
     });
 
     it('falls back to hash on /app/:slug if an app route collides with a Form App route', () => {

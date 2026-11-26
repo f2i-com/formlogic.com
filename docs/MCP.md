@@ -211,7 +211,7 @@ PKCE machinery above; only the client and the token-exchange output differ.
   - **From the web** — revoke in **Settings → API keys**, or delete the connection
     (`DELETE /api/desktop-connections/{id}`, session-auth) which revokes the tied key as a cascade.
   - **From the desktop** — clicking **Unlink** calls `DELETE /api/v1/desktop-connections/self` with its
-    own `flk_` key (scope `flows:write`). The key identifies the install, so the server removes that
+    own `flk_` key (whatever its scopes: an AI-only link's key ends its link too). The key identifies the install, so the server removes that
     install's own connection row and revokes the calling key — no id, and a key can only ever unlink
     itself. A hand-entered key (Advanced setup, no connection row) is left untouched.
 

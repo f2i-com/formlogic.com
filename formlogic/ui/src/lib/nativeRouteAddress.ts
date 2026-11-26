@@ -144,6 +144,34 @@ function hashPlace(hash: string): string | null {
 }
 
 /**
+ * The place at the app's root, from what follows the path there: a query, a named page inside the
+ * main page (`#settings`, which SoftN says as the place `/#settings` and buildAppAddress writes
+ * back as `/app/mysite#settings`), or both. `#/…` is the legacy form of another page and is read
+ * by hashPlace before this is asked. Null when neither is there.
+ */
+function rootPlace(appSearch: string, hash: string): string | null {
+  const section = hash.length > 1 && hash[1] !== '/' ? hash : '';
+  if (!appSearch && !section) return null;
+  const candidate = `/${appSearch}${section}`;
+  return isValidAppPlace(candidate) ? candidate : null;
+}
+
+/**
+ * A place as SoftN's hosted frame takes one: the page and the named page inside it, and no query.
+ * SoftN's places have no `?` in them, and its frame opens the app's main page for one that does,
+ * so a link that arrives as `/pricing.html?utm_source=…` (or `?fbclid=…`, `?gclid=…`) is handed
+ * over as `/pricing.html`. A `?` after the `#` is part of the name there, and is written as an
+ * address encodes it. A JavaScript site keeps its query: its own router reads it.
+ */
+export function placeWithoutQuery(place: string): string {
+  const hashAt = place.indexOf('#');
+  const path = hashAt >= 0 ? place.slice(0, hashAt) : place;
+  const section = hashAt >= 0 ? place.slice(hashAt).replace(/\?/g, '%3F') : '';
+  const queryAt = path.indexOf('?');
+  return `${queryAt >= 0 ? path.slice(0, queryAt) : path}${section}`;
+}
+
+/**
  * Determines the platform URL base prefix for the current address:
  *   - `""` on a custom domain
  *   - `"/app/<slug>/native"` when mounted under `/app/<slug>/native...`
@@ -162,8 +190,10 @@ export function resolveAppBasePrefix(pathname: string, slug: string, onDomain: b
 }
 
 /**
- * Reads the SoftN app place (e.g. `"/about.html"`, `"/docs/guide.html#team"`) from the browser's
- * current address. Returns `null` when the browser is at the app's root with no subpage or hash.
+ * Reads the SoftN app place (e.g. `"/about.html"`, `"/docs/guide.html#team"`, `"/#settings"`) from
+ * the browser's current address. Returns `null` when the browser is at the app's root with no
+ * subpage, query or hash. The query is part of what is read: a JavaScript site's router goes by
+ * it, and SoftN's frame is handed the place without it (placeWithoutQuery).
  */
 export function readAppPlace(opts: {
   pathname: string;
@@ -181,11 +211,7 @@ export function readAppPlace(opts: {
     const normalized = pathname || '/';
     if (normalized === '/' || isDomainReservedPath(normalized)) {
       if (fromHash) return fromHash;
-      if (normalized === '/' && appSearch) {
-        const rootCandidate = `/${appSearch}`;
-        return isValidAppPlace(rootCandidate) ? rootCandidate : null;
-      }
-      return null;
+      return normalized === '/' ? rootPlace(appSearch, hash) : null;
     }
     const candidate = `${normalized}${appSearch}${hash}`;
     return isValidAppPlace(candidate) ? candidate : fromHash;
@@ -195,12 +221,7 @@ export function readAppPlace(opts: {
   if (base === null) return fromHash;
   const rest = pathname.slice(base.length);
   if (!rest || rest === '/') {
-    if (fromHash) return fromHash;
-    if (appSearch) {
-      const rootCandidate = `/${appSearch}`;
-      return isValidAppPlace(rootCandidate) ? rootCandidate : null;
-    }
-    return null;
+    return fromHash ?? rootPlace(appSearch, hash);
   }
   // Never misinterpret a reserved Form App subroute as a SoftN page when at `/app/<slug>`.
   if (!base.toLowerCase().endsWith('/native') && isFormAppSubroute(rest)) {

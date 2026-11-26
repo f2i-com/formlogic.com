@@ -451,7 +451,7 @@ final class FormEncryptionService
     {
         $reasons = [];
 
-        $stmt = $this->mysql->prepare('SELECT ever_published_at, settings FROM forms WHERE id = :f');
+        $stmt = $this->mysql->prepare('SELECT ever_published_at, settings, logic_script FROM forms WHERE id = :f');
         $stmt->execute(['f' => $formId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row)) {
@@ -459,6 +459,12 @@ final class FormEncryptionService
         } else {
             if ($row['ever_published_at'] !== null) {
                 $reasons[] = 'ever_published';
+            }
+            // An onSubmit script reads the answers, which a private form's server never has. It
+            // has to go first: private mode is for good, and a private form's script can be
+            // neither opened nor changed afterwards.
+            if (trim((string) ($row['logic_script'] ?? '')) !== '') {
+                $reasons[] = 'has_logic_script';
             }
             $settings = is_string($row['settings'] ?? null)
                 ? json_decode($row['settings'], true)
@@ -731,16 +737,19 @@ final class FormEncryptionService
     }
 
     /**
-     * PHP-canonical fields hash of the latest non-superseded manifest's schema snapshot,
-     * derived by decoding the stored schema_json and re-encoding it with the SAME flags
-     * FormService::canonicalFieldsHash() uses. The manifest's stored schema_hash is the
-     * CLIENT's sha256 over JSON.stringify(fields) — JS serializes empty objects as {}
-     * where PHP json_encode() emits [], so comparing the client hash against a PHP
-     * re-encoding would call every unchanged save "changed" (spurious 409
-     * manifest_required). Both sides of the fields-changed comparison must use
-     * PHP-canonical bytes; the client hash stays authoritative only for signatures/AAD.
+     * The fields the latest non-superseded manifest was signed over, decoded from its
+     * stored schema_json. The manifest's stored schema_hash is the CLIENT's sha256 over
+     * JSON.stringify(fields) — JS serializes empty objects as {} where PHP json_encode()
+     * emits [], and the editor orders a field's keys its own way and leaves out the ones
+     * it has no value for — so comparing the client hash against a PHP encoding of the
+     * fields would call every unchanged save "changed" (spurious 409 manifest_required).
+     * FormService decides "fields changed" from these decoded fields, putting both sides
+     * into the shape it stores; the client hash stays authoritative only for signatures/AAD.
+     * Null when the form has no manifest or its snapshot is not a list of fields.
+     *
+     * @return array<mixed>|null
      */
-    public function latestManifestSchemaHash(string $formId): ?string
+    public function latestManifestSchemaFields(string $formId): ?array
     {
         $stmt = $this->mysql->prepare("
             SELECT sv.schema_json FROM form_manifests m
@@ -755,10 +764,7 @@ final class FormEncryptionService
             return null;
         }
         $fields = json_decode((string) $json, true);
-        if (!is_array($fields)) {
-            return null;
-        }
-        return hash('sha256', (string) json_encode($fields, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        return is_array($fields) ? $fields : null;
     }
 
     /**

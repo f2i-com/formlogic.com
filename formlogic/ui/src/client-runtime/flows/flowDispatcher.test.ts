@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __appActionDepsForTests,
   __onDesktopEventForTests,
@@ -7,6 +7,7 @@ import {
   __setRuntimeFlowsForTests,
   BROWSER_LOGIC_LANGUAGES,
   buildDefaultExecutorDeps,
+  buildWorkspaceExecutorDeps,
   defaultDesktopRuntimeFresh,
   defaultDesktopRuntimeStatus,
   desktopTakesLanguages,
@@ -20,7 +21,8 @@ import {
 } from './flowDispatcher';
 import { api } from '../../lib/api';
 import { __resetAppLocalAccessForTests, NOT_ALLOWED_MESSAGE, setOnScreenApp } from '../appLocalAccess';
-import type { FlowExecutorDeps } from './nodes';
+import { DesktopAiUnansweredError, type FlowExecutorDeps } from './nodes';
+import { __resetOaiyBaseUrlForTests, __resetOaiyDetectionForTests, __setOaiyBaseUrlForTests, probeOaiy, setOaiyToken } from '../oaiy/oaiyRuntime';
 import type { RuntimeFlows } from '../../types/flows';
 import type { AiSourceListing } from './desktopService';
 
@@ -151,6 +153,56 @@ describe('Desktop named-provider flow routing', () => {
       refId: 'openai-codex-agent-luna-low',
       useCases: ['live-call', 'try-assistant'],
     }), 'openai-codex-agent-luna-low')).toBe(false);
+  });
+
+  describe('a chat through the paired OAIY', () => {
+    const BASE = 'http://127.0.0.1:19996';
+    const SOURCES = { sources: [{ id: 'provider:openai', kind: 'provider', providerId: 'openai', name: 'OpenAI', status: 'provider', capabilities: ['chat'], enabled: true, useCases: ['flows'] }] };
+    let chats = 0;
+
+    // An OAIY that has taken the chat and is still working on it: a local engine loading.
+    beforeEach(async () => {
+      chats = 0;
+      __setOaiyBaseUrlForTests(BASE);
+      __resetOaiyDetectionForTests();
+      vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        const url = String(input);
+        if (url.includes('/v1/chat/completions')) {
+          chats += 1;
+          return new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+          });
+        }
+        const body = url.includes('/api/health') ? { status: 'ok', product: 'oaiy-desktop', protocol: 'oaiy-bridge/1', version: '0.1.0' } : SOURCES;
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+      }));
+      await probeOaiy(true);
+      setOaiyToken('tok');
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      setOaiyToken(null);
+      __resetOaiyBaseUrlForTests();
+      __resetOaiyDetectionForTests();
+      vi.unstubAllGlobals();
+    });
+
+    it('waits for as long as the run does, and says a chat the run stopped waiting for was not answered', async () => {
+      // The run's signal is its deadline (three minutes with an AI step). OAIY's client cut the
+      // chat off at 30 s of its own, and llm_chat then sent it a second time.
+      vi.useFakeTimers();
+      const run = new AbortController();
+      const asked = buildWorkspaceExecutorDeps().invokeDesktopAiChat!('provider:openai', { messages: [] }, run.signal);
+      let settled = false;
+      void asked.catch(() => undefined).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(170_000);
+      expect(settled).toBe(false);
+      expect(chats).toBe(1);
+
+      run.abort();
+      await expect(asked).rejects.toBeInstanceOf(DesktopAiUnansweredError);
+      expect(chats).toBe(1);
+    });
   });
 });
 
@@ -292,6 +344,33 @@ describe('desktop-first routing for connector events', () => {
       vi.useRealTimers();
       spy.mockRestore();
     }
+  });
+});
+
+// OAIY says how its own flows' runs ended as events from "flows", under the names FormLogic's
+// outcome bindings listen for (host.rs outcome_event). FormLogic's own outcomes never come by the
+// hub: the server hands them on as queued handler runs.
+describe('the end of a run OAIY made of its own flow', () => {
+  afterEach(() => __resetAppLocalAccessForTests());
+  type Envelope = Parameters<typeof __onDesktopEventForTests>[0];
+  const ended = { schemaVersion: 1, name: 'flow.succeeded', source: 'flows', correlationId: 'run-9', idempotencyKey: 'flow:run-9:succeeded', occurredAt: '2026-11-01T00:00:00Z', data: { runId: 'run-9', status: 'succeeded' } } as unknown as Envelope;
+
+  it('starts no outcome binding of this app, while a plugin\'s event starts the binding for it', async () => {
+    __resetAppLocalAccessForTests();
+    const harness = installDeps({ desktopRuntimeFresh: async () => false });
+    __setRuntimeFlowsForTests({
+      flows: [passthroughGraph()],
+      bindings: [binding({ id: 'after-any-flow', event: 'flow.succeeded', mode: 'async' }), binding({ id: 'on-text', event: 'aokie.sms.received', mode: 'async' })],
+    }, 'my-app');
+    setOnScreenApp({ id: 'app-1', slug: 'my-app', name: 'Mine', manages: true });
+
+    __onDesktopEventForTests(ended);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.reserveCalls).toHaveLength(0);
+
+    __onDesktopEventForTests({ ...ended, name: 'aokie.sms.received', source: 'aokie', connectorId: 'aokie', idempotencyKey: 'sms-1', data: { text: 'hi' } } as unknown as Envelope);
+    await vi.waitFor(() => expect(harness.reserveCalls).toHaveLength(1));
+    expect(harness.reserveCalls[0]).toMatchObject({ bindingId: 'on-text', triggerEvent: 'aokie.sms.received' });
   });
 });
 

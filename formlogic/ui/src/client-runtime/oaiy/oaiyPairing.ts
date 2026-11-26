@@ -13,9 +13,12 @@ import { getOaiyBaseUrl, setOaiyToken } from './oaiyRuntime';
 import { currentSessionGeneration, isSessionGenerationCurrent } from '../../lib/sessionGeneration';
 
 const POLL_INTERVAL_MS = 1500;
-/** A user who is going to approve does so within a couple of minutes; past this
- *  the OAIY-side request has expired anyway (5 min TTL), so stop polling. */
-const DEFAULT_TIMEOUT_MS = 3 * 60 * 1000;
+/** For as long as OAIY keeps the request approvable (5 minutes, bridge/pairing.rs
+ *  REQUEST_TTL_MS), and a little over so the last poll falls after it. Stopping
+ *  sooner left a request the person could still approve with nobody polling for
+ *  it: OAIY granted and listed a token no page collected, and this page said the
+ *  pairing had failed. OAIY's own "expired" (or a 404) ends the wait before this. */
+const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000 + 15_000;
 
 export type PairingState = 'pending' | 'approved' | 'denied' | 'expired';
 

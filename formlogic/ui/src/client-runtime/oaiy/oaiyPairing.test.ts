@@ -104,4 +104,44 @@ describe('pairWithOaiy — the whole flow', () => {
     const res = await pairWithOaiy('formlogic', undefined, { signal: ac.signal });
     expect(res.state).toBe('expired');
   });
+
+  describe('how long it waits for the person', () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+    /** OAIY, answering each poll with what `poll` says the request's state is then. */
+    function oaiy(poll: () => { status: number; body: unknown }) {
+      vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const { status, body } = init?.method === 'POST' ? { status: 201, body: { pairingId: 'pair_1', code: 'CCCC22' } } : poll();
+        return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+      }));
+    }
+
+    it('collects an approval given in the fifth minute, while OAIY still keeps the request', async () => {
+      // OAIY keeps a request approvable for five minutes. The page stopped polling after three,
+      // so OAIY granted a token nobody collected and the page said the pairing had failed.
+      const approvedAt = Date.now() + 4.5 * 60_000;
+      oaiy(() => ({ status: 200, body: Date.now() >= approvedAt ? { status: 'approved', token: 'oaiypat_late' } : { status: 'pending' } }));
+      const pairing = pairWithOaiy('formlogic', undefined);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(await pairing).toEqual({ state: 'approved', token: 'oaiypat_late' });
+      expect(getOaiyToken()).toBe('oaiypat_late');
+    });
+
+    it('stops when OAIY no longer has the request, and a little after five minutes whatever OAIY says', async () => {
+      const goneAt = Date.now() + 5 * 60_000;
+      oaiy(() => (Date.now() >= goneAt ? { status: 404, body: { error: {} } } : { status: 200, body: { status: 'pending' } }));
+      const forgotten = pairWithOaiy('formlogic', undefined);
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 2_000);
+      expect(await forgotten).toEqual({ state: 'expired' });
+
+      oaiy(() => ({ status: 200, body: { status: 'pending' } }));
+      let settled = false;
+      const pending = pairWithOaiy('formlogic', undefined);
+      void pending.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await pending).toEqual({ state: 'expired' });
+    });
+  });
 });

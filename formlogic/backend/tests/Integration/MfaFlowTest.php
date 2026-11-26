@@ -211,6 +211,113 @@ class MfaFlowTest extends TestCase
         $this->assertTrue(self::$mfa->claimChallenge('jti-burn-' . $this->userId), 'burning attempts does not consume the row for a correct late answer within its window');
     }
 
+    // ── The account's own budget of code answers, across prompts and addresses ──
+
+    private function forgetSecondFactorCount(string $userId): void
+    {
+        self::$pdo->prepare('DELETE FROM rate_limits WHERE bucket = ?')->execute([hash('sha256', 'mfa_fail:' . $userId)]);
+    }
+
+    public function testAnAccountsCodeAnswersAreCountedWhicheverPromptTheyAnswer(): void
+    {
+        $other = 'someone-else-' . $this->userId;
+        try {
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId));
+            for ($i = 1; $i <= MfaService::SECOND_FACTOR_MAX_ATTEMPTS; $i++) {
+                $this->assertTrue(self::$mfa->secondFactorAttempt($this->userId), "answer {$i} is within the budget");
+            }
+            $this->assertTrue(self::$mfa->secondFactorLocked($this->userId), 'the next answer would be refused, so no prompt is given');
+            $this->assertFalse(self::$mfa->secondFactorAttempt($this->userId), 'one more than the budget');
+            $this->assertTrue(self::$mfa->secondFactorAttempt($other), 'the count is the account\'s own');
+
+            self::$mfa->secondFactorPassed($this->userId);
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId), 'a right answer ends the count');
+            $this->assertTrue(self::$mfa->secondFactorAttempt($this->userId));
+        } finally {
+            $this->forgetSecondFactorCount($this->userId);
+            $this->forgetSecondFactorCount($other);
+        }
+    }
+
+    public function testWrongCodesOverFreshPromptsStopTheAccountBeingAsked(): void
+    {
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        self::$mfa->enable($this->userId, $this->currentCode($setup['secret']));
+        // The enabling code's time step is spent; a sign-in code has to come from a later one.
+        $nextCode = self::$totp->code($setup['secret'], intdiv(time(), TotpService::PERIOD) + 1);
+        $controller = new \FormLogic\Controllers\AuthController(self::$auth, mfaService: self::$mfa);
+        $post = static fn (string $path, array $body) => (new \Slim\Psr7\Factory\ServerRequestFactory())
+            ->createServerRequest('POST', 'http://formlogic.local' . $path)->withParsedBody($body);
+        $json = static fn (\Psr\Http\Message\ResponseInterface $r): array => json_decode((string) $r->getBody(), true) ?: [];
+        $newResponse = static fn () => (new \Slim\Psr7\Factory\ResponseFactory())->createResponse();
+        $signIn = fn () => $controller->login($post('/api/auth/login', ['email' => $this->userId . '@test.local', 'password' => 'correct-horse']), $newResponse());
+        $answer = fn (string $token, string $code) => $controller->mfaVerify($post('/api/auth/mfa/verify', ['mfaToken' => $token, 'code' => $code]), $newResponse());
+
+        try {
+            // Whoever knows the password gets a new prompt for the asking: three of them.
+            $prompts = [];
+            for ($i = 0; $i < 3; $i++) {
+                $asked = $json($signIn());
+                $this->assertTrue($asked['mfaRequired'] ?? false);
+                $prompts[] = (string) $asked['mfaToken'];
+            }
+            // Two prompts' worth of wrong answers is the account's whole budget.
+            foreach ([$prompts[0], $prompts[1]] as $prompt) {
+                for ($i = 0; $i < MfaService::CHALLENGE_MAX_ATTEMPTS; $i++) {
+                    $wrong = $answer($prompt, '000000');
+                    $this->assertSame(401, $wrong->getStatusCode());
+                    $this->assertStringContainsString('didn\'t match', $json($wrong)['message']);
+                }
+            }
+
+            // The third prompt was untouched, and the right code no longer opens it…
+            $refused = $answer($prompts[2], $nextCode);
+            $this->assertSame(429, $refused->getStatusCode());
+            $this->assertStringStartsWith('Too many incorrect verification codes', $json($refused)['message']);
+            $this->assertSame([], $refused->getHeader('Set-Cookie'), 'no session');
+            // …nor does the password get a fourth.
+            $unasked = $signIn();
+            $this->assertSame(429, $unasked->getStatusCode());
+            $this->assertArrayNotHasKey('mfaToken', $json($unasked));
+
+            // Once the window has passed the same prompt and code sign in, and the count ends.
+            $this->forgetSecondFactorCount($this->userId);
+            $signedIn = $answer($prompts[2], $nextCode);
+            $this->assertSame(200, $signedIn->getStatusCode(), (string) $signedIn->getBody());
+            $this->assertSame($this->userId, $json($signedIn)['user']['id'] ?? null);
+            $this->assertFalse(self::$mfa->secondFactorLocked($this->userId));
+        } finally {
+            $this->forgetSecondFactorCount($this->userId);
+        }
+    }
+
+    public function testThePasswordAloneDoesNotEndTheAccountsSignInCount(): void
+    {
+        $email = $this->userId . '@test.local';
+        // Without two-factor a right password is the whole sign-in: the count ends each time.
+        for ($i = 0; $i < 12; $i++) {
+            $this->assertSame($email, self::$auth->login($email, 'correct-horse', '198.51.100.' . $i)['user']['email']);
+        }
+
+        $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');
+        self::$mfa->enable($this->userId, $this->currentCode($setup['secret']));
+        // With it on, each right password only asks for a code, and all of them count.
+        for ($i = 0; $i < 10; $i++) {
+            self::$auth->login($email, 'correct-horse', '203.0.113.' . $i);
+        }
+        try {
+            self::$auth->login($email, 'correct-horse', '203.0.113.99');
+            $this->fail('an eleventh code prompt was given for the password alone');
+        } catch (\RuntimeException $refused) {
+            $this->assertStringStartsWith('Too many login attempts for this account', $refused->getMessage());
+        }
+
+        // The code (or a remembered browser) completes the sign-in, and that ends the count.
+        self::$auth->signInCompleted(self::$auth->getUserById($this->userId));
+        $this->assertSame($email, self::$auth->login($email, 'correct-horse', '203.0.113.100')['user']['email']);
+        self::$auth->signInCompleted(self::$auth->getUserById($this->userId));
+    }
+
     public function testDisableRevokesSessionsChallengesAndTrust(): void
     {
         $setup = self::$mfa->beginSetup($this->userId, 'x@test.local');

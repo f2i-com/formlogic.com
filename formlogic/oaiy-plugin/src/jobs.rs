@@ -2,8 +2,10 @@
 //! yet, a backup, a restore. A command starts a job and answers with its id at once; the page asks
 //! after it with `jobs.get`.
 //!
-//! OAIY sends a journalled command again if an answer is lost, under the same request id. That
-//! finds the job the first one started, so nothing runs twice and no second window opens.
+//! OAIY sends a command once, and never again by itself. A journalled command comes with a request
+//! id, made from its caller's idempotency key: a caller whose answer was lost asks again under the
+//! same key, and that finds the job the first one started, so nothing runs twice and no second
+//! window opens.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;

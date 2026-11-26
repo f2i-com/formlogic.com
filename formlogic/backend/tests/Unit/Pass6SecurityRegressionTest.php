@@ -113,7 +113,8 @@ final class Pass6SecurityRegressionTest extends TestCase
         $this->assertSame(1, $caps['logicScripts']);
         $this->assertTrue($caps['hasCustomLogic']);
         $this->assertContains('connector.aokie.sms.send', $caps['connectorGrants']);
-        $this->assertContains('connector.aokie.speak', $caps['connectorGrants']);
+        // Listed by the grant the runner checks for a speak node and a speak action.
+        $this->assertContains('connector.aokie.call.operatorSpeak', $caps['connectorGrants']);
         $this->assertContains('aokie', $caps['connectors']);
     }
 
@@ -283,13 +284,18 @@ final class Pass6SecurityRegressionTest extends TestCase
     public function testSandboxEvaluateBatchHandlesLoneUtf16SurrogateWithoutFailingBatch(): void
     {
         $service = new FormLogicService();
+        // Whether the runtime is on this host is asked of a batch the fix has nothing to do with.
+        // An empty answer to the batch under test says nothing about that: the bug failed the
+        // whole batch, a failed batch comes back empty, and skipping on it skipped the regression.
+        $probe = $service->evaluateBatch([['id' => 'probe', 'expression' => '1 + 1']], []);
+        if (($probe['probe']['ok'] ?? false) !== true) {
+            $this->markTestSkipped('ZIPP sandbox runtime not available on this host');
+        }
         $results = $service->evaluateBatch([
             ['id' => 'safe', 'expression' => '1 + 1'],
             ['id' => 'sliced', 'expression' => '"\uD83D\uDE00".slice(0, 1)'],
         ], []);
-        if ($results === []) {
-            $this->markTestSkipped('ZIPP sandbox runtime not available on this host');
-        }
+        $this->assertSame(['safe', 'sliced'], array_keys($results), 'the batch came back whole');
         $this->assertTrue($results['safe']['ok'] ?? false);
         $this->assertSame(2, $results['safe']['value'] ?? null);
         $this->assertTrue($results['sliced']['ok'] ?? false);

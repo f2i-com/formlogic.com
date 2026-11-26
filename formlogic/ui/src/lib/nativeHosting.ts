@@ -377,7 +377,12 @@ export async function importNativeProject(file: File): Promise<NativeProjectByte
   if (total > NATIVE_LIMITS.projectBytes) throw new Error(`This app is ${(total / 1024 / 1024).toFixed(1)} MB; this host keeps apps up to ${NATIVE_LIMITS.projectBytes / 1024 / 1024} MB.`);
   let manifest: Record<string, unknown> = {};
   try { manifest = record(JSON.parse(source['manifest.json'] ?? '{}')) ?? {}; } catch { /* the review above read it */ }
-  if (manifest.id != null && (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9._-]{1,120}$/.test(manifest.id))) throw new Error('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 120 of them).');
+  // The lengths are the server's (NativeAppService::MAX_MANIFEST_ID, MAX_BACKEND_IDENTITY). An
+  // editable copy FormLogic exports of its own app is named `formlogic_` and the hex of where it
+  // came from (lib/softn/project.ts), 134 characters and more: at 120 it could not be imported
+  // back. An app with a server block runs under its id, and its keys are named after it.
+  if (manifest.id != null && (typeof manifest.id !== 'string' || !/^[a-zA-Z0-9._-]{1,256}$/.test(manifest.id))) throw new Error('manifest.json\'s id can only be letters, digits, \'.\', \'_\' and \'-\' (up to 256 of them).');
+  if ('server' in manifest && typeof manifest.id === 'string' && manifest.id.length > 120) throw new Error('manifest.json\'s id is longer than an app with a server block can run under (120 characters): its keys are named after it. Give it a shorter id.');
   const backendRecord = record(manifest.backend);
   const backendRuntime = backendRecord ? String(backendRecord.runtime ?? backendRecord.engine ?? '').trim().toLowerCase() : '';
   const hasContainerBackend = CONTAINER_BACKEND_RUNTIMES.includes(backendRuntime as typeof CONTAINER_BACKEND_RUNTIMES[number]);

@@ -820,6 +820,33 @@ final class NativeAppServiceTest extends TestCase
     }
 
     /**
+     * The editable copy FormLogic exports of its own app carries an id of well over 120 characters
+     * and no backend: it installs under that id. A backend's keys are named after the identity and
+     * the runner holds such a name to 128 characters, so a later version with a server block is
+     * told to take a shorter id, whether it names the long one or none; and it may, as nothing was
+     * kept under the old one.
+     */
+    public function testAnExportedCopysLongIdInstallsAndABackendThenTakesAShorterOne(): void
+    {
+        $id = 'formlogic_' . bin2hex('https://forms.example.com/app/0b5e7c1a-6f0e-4d59-9a53-2f8c1d3e4a6b');
+        $copy = $this->clientProject();
+        $copy['files']['manifest.json'] = json_encode(['id' => $id] + json_decode($copy['files']['manifest.json'], true));
+        $this->assertSame(1, $this->service->install('copy', $copy, 0)['version']);
+        $config = $this->storage . '/' . hash('sha256', 'copy') . '/private/config.json';
+        $this->assertSame($id, json_decode((string) file_get_contents($config), true)['appId']);
+        $this->assertSame($id, json_decode($this->service->get('copy')['files']['manifest.json'], true)['id']);
+
+        $backend = $this->project();
+        $nameless = $backend;
+        $nameless['files']['manifest.json'] = json_encode(array_diff_key(json_decode($backend['files']['manifest.json'], true), ['id' => true]));
+        try { $this->service->install('copy', $nameless, 1); $this->fail('A backend was installed under an identity its keys cannot be named after'); }
+        catch (\InvalidArgumentException $refused) { $this->assertStringContainsString('longer than one with a server block can run under (120 characters)', $refused->getMessage()); }
+        $this->assertSame(2, $this->service->install('copy', $backend, 1)['version']);
+        $this->assertSame('test.notes', json_decode((string) file_get_contents($config), true)['appId']);
+        $this->assertSame(201, $this->service->request('copy', ['method' => 'POST', 'path' => '/api/notes', 'body' => ['title' => 'Under a shorter id'], 'client_ip' => '127.0.0.1'])['status']);
+    }
+
+    /**
      * An app installed with an id may drop it in a later version: it keeps running under that id
      * (its configuration names it). A key-preserving restore of it, under a new app id, takes the
      * identity its captured keys name, and its backend runs on the restored records.
@@ -906,6 +933,13 @@ final class NativeAppServiceTest extends TestCase
         $this->assertSame('{"sent":{"tags":{}},"isList":false,"key":"invite-7","none":{}}', json_encode($page['body']));
         // Read for this server's own use, the body is arrays, as it always was.
         $this->assertSame([], $this->service->request('echo', $request)['body']['none']);
+        // The other headers an app's request carries reach its handler too (NativeAppController passes them on).
+        $echo['files']['server/main.logic'] .= "\nfunction echoHeaders(req) { return {status:200,body:{device:req.headers['x-device-id'],language:req.headers['accept-language'],key:req.headers['idempotency-key']}}; }";
+        $manifest['server']['routes'][] = ['path' => '/api/echo-headers', 'method' => 'POST', 'handler' => 'echoHeaders', 'transaction' => 'read', 'authorization' => 'anonymous'];
+        $echo['files']['manifest.json'] = json_encode($manifest);
+        $this->service->install('echo', $echo, 1);
+        $carried = ['method' => 'POST', 'path' => '/api/echo-headers', 'body' => (object) [], 'headers' => (object) ['authorization' => '', 'idempotency-key' => 'invite-8', 'x-device-id' => 'tablet-7', 'accept-language' => 'fr-CA'], 'client_ip' => '127.0.0.1'];
+        $this->assertSame(['device' => 'tablet-7', 'language' => 'fr-CA', 'key' => 'invite-8'], $this->service->request('echo', $carried)['body']);
     }
 
     private function createNoteIn(string $app, string $title): int

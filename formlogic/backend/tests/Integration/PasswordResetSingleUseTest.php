@@ -162,6 +162,68 @@ class PasswordResetSingleUseTest extends TestCase
         $this->assertTrue(password_verify('ChangedPass!42', $this->userRow()['password_hash']));
     }
 
+    /** One of each credential an account can make that outlives its sessions. */
+    private function makeCredentials(string $uid): void
+    {
+        $key = bin2hex(random_bytes(16));
+        self::$pdo->prepare("INSERT INTO api_keys (id, user_id, name, key_prefix, key_hash, scopes) VALUES (UUID(), ?, 'k', 'flk_x', ?, '[]')")->execute([$uid, hash('sha256', $key)]);
+        self::$pdo->prepare("INSERT INTO mcp_sessions (id, user_id, token_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([$uid, hash('sha256', 'session' . $key)]);
+        self::$pdo->prepare("INSERT INTO mcp_oauth_refresh_tokens (id, token_hash, family_id, client_id, user_id, scopes, expires_at) VALUES (UUID(), ?, UUID(), 'c', ?, '[]', DATE_ADD(NOW(), INTERVAL 1 DAY))")->execute([hash('sha256', 'refresh' . $key), $uid]);
+        self::$pdo->prepare("INSERT INTO backup_link_codes (id, owner_user_id, code_hash, expires_at) VALUES (UUID(), ?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))")->execute([$uid, hash('sha256', 'link' . $key)]);
+    }
+
+    /** @return list<int> how many of each are still good: API keys, AI sessions, refresh tokens, link codes */
+    private function liveCredentials(string $uid): array
+    {
+        return [
+            (int) self::$pdo->query("SELECT COUNT(*) FROM api_keys WHERE is_active = 1 AND user_id = '$uid'")->fetchColumn(),
+            (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_sessions WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
+            (int) self::$pdo->query("SELECT COUNT(*) FROM mcp_oauth_refresh_tokens WHERE revoked_at IS NULL AND user_id = '$uid'")->fetchColumn(),
+            (int) self::$pdo->query("SELECT COUNT(*) FROM backup_link_codes WHERE expires_at > NOW() AND owner_user_id = '$uid'")->fetchColumn(),
+        ];
+    }
+
+    public function testChangingThePasswordEndsWhatTheOldOneCouldHaveMade(): void
+    {
+        // Changed in Settings by someone who still knows it: because they fear someone else does.
+        // The sessions ended with it; the keys and connections that someone made did not.
+        self::$pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash('OldPass!42abc', PASSWORD_DEFAULT), $this->userId]);
+        $other = 'u-' . bin2hex(random_bytes(12));
+        self::$pdo->prepare("INSERT INTO users (id, email, password_hash, name) VALUES (?, ?, 'x', 'T')")->execute([$other, $other . '@test.local']);
+        try {
+            $this->makeCredentials($this->userId);
+            $this->makeCredentials($other);
+
+            // A wrong current password changes nothing and ends nothing.
+            try {
+                self::$auth->updateUser($this->userId, ['password' => 'ChangedPass!42', 'currentPassword' => 'not-it']);
+                $this->fail('the current password was not checked');
+            } catch (\RuntimeException) {
+                $this->assertSame([1, 1, 1, 1], $this->liveCredentials($this->userId));
+            }
+            // Nor does a change that is not of the password: a name, or the address signed in with.
+            self::$auth->updateUser($this->userId, ['name' => 'Renamed']);
+            self::$auth->updateUser($this->userId, ['email' => 'moved-' . $this->userId . '@test.local', 'currentPassword' => 'OldPass!42abc']);
+            $this->assertSame([1, 1, 1, 1], $this->liveCredentials($this->userId));
+
+            $before = (int) $this->userRow()['token_version'];
+            $user = self::$auth->updateUser($this->userId, ['password' => 'ChangedPass!42', 'currentPassword' => 'OldPass!42abc']);
+
+            $this->assertSame([0, 0, 0, 0], $this->liveCredentials($this->userId));
+            $this->assertSame([1, 1, 1, 1], $this->liveCredentials($other), 'another account is untouched');
+            $this->assertSame($before + 1, (int) $this->userRow()['token_version'], 'and the sessions end as they did');
+            // The one who changed it stays signed in: the route issues them a session made after.
+            $this->assertSame($this->userId, $user?->id);
+            $this->assertTrue(password_verify('ChangedPass!42', $this->userRow()['password_hash']));
+        } finally {
+            self::$pdo->prepare('DELETE FROM backup_link_codes WHERE owner_user_id IN (?, ?)')->execute([$this->userId, $other]);
+            foreach (['api_keys', 'mcp_sessions', 'mcp_oauth_refresh_tokens'] as $table) {
+                self::$pdo->prepare("DELETE FROM $table WHERE user_id = ?")->execute([$other]);
+            }
+            self::$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([$other]);
+        }
+    }
+
     public function testExpiredTokenIsRejectedWithoutBurningIt(): void
     {
         self::$pdo->prepare('UPDATE password_resets SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE user_id = ?')

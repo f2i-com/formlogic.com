@@ -1508,9 +1508,10 @@ class ChatToolsService
      * graph (including transitively invoked `flow_call` targets) so an app-scoped or write-only
      * token cannot smuggle cross-app or out-of-scope access inside an automation definition.
      *
-     * @param array<string,bool> $visited
+     * @param array<string,mixed> $walk  what the walk has gone into and looked up so far (entersCalledFlow)
+     * @param int                 $depth how many calls down this flow is, the first flow being 1
      */
-    private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx, array $visited = []): void
+    private function assertFlowGraphPermitted(array $flowInput, string $appId, ChatToolsContext $ctx, array &$walk = [], int $depth = 1): void
     {
         foreach ((is_array($flowInput['nodeCapabilities'] ?? null) ? $flowInput['nodeCapabilities'] : []) as $capability) {
             if (!is_string($capability)) continue;
@@ -1569,12 +1570,11 @@ class ChatToolsService
                     $ctx->requireScope('responses:read');
                     $ctx->requireScope('responses:write');
                     $ctx->requireScope('connector:command');
-                } elseif (!isset($visited[$targetRef])) {
-                    $visited[$targetRef] = true;
-                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $ctx->userId);
+                } elseif (self::entersCalledFlow($walk, $targetRef, $depth)) {
+                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $ctx->userId, $walk);
                     if ($targetFlow !== null) {
                         $this->requireConnectorScopeIf($ctx, self::flowSendsConnectorCommands($targetFlow));
-                        $this->assertFlowGraphPermitted($targetFlow, $appId, $ctx, $visited);
+                        $this->assertFlowGraphPermitted($targetFlow, $appId, $ctx, $walk, $depth + 1);
                     }
                 }
             }
@@ -1678,25 +1678,70 @@ class ChatToolsService
         return isset($this->flowService);
     }
 
-    /** Resolve a `flow_call` target by flow id or slug within the app (or owner workspace). */
-    private function resolveCalledFlow(string $appId, string $targetRef, string $userId): ?array
+    /**
+     * As deep as a chain of flow_calls runs, the first flow counted: the runners' own limit
+     * (CloudFlowRunner::FLOW_CALL_MAX_DEPTH; the page's and the desktop's childFlowInvoker).
+     */
+    private const FLOW_CALL_MAX_DEPTH = 8;
+
+    /**
+     * Whether a walk over a flow and the flows it calls goes into the one a flow_call names, met
+     * in a flow $depth calls down (the first flow is 1). $walk is the one record every branch of
+     * the walk shares, so a flow is gone into once however many flows call it, not once for each
+     * chain of calls that reaches it: among flows that call each other that was a walk for every
+     * ordering of them, each step several queries. It is gone into again only when a shorter
+     * chain reaches it than before, since the flows it calls are then within the runners' depth
+     * where they may not have been; and a call is never followed from the depth at which a runner
+     * refuses to make one. Two flows that call the same third are not a loop: the third is
+     * simply walked already.
+     *
+     * @param array<string,mixed> $walk
+     */
+    private static function entersCalledFlow(array &$walk, string $targetRef, int $depth): bool
+    {
+        if ($depth >= self::FLOW_CALL_MAX_DEPTH || ($walk['depth'][$targetRef] ?? PHP_INT_MAX) <= $depth + 1) {
+            return false;
+        }
+        $walk['depth'][$targetRef] = $depth + 1;
+        return true;
+    }
+
+    /**
+     * Resolve a `flow_call` target by flow id or slug within the app (or owner workspace). Within
+     * one walk ($walk) a target is looked up once, and the app's and the workspace's flows are
+     * listed once: a graph may name a target in every node.
+     *
+     * @param array<string,mixed> $walk
+     */
+    private function resolveCalledFlow(string $appId, string $targetRef, string $userId, array &$walk = []): ?array
     {
         if (!$this->hasFlowStore() || $targetRef === '') {
             return null;
         }
+        if (array_key_exists($targetRef, $walk['resolved'] ?? [])) {
+            return $walk['resolved'][$targetRef];
+        }
+        return $walk['resolved'][$targetRef] = $this->lookUpCalledFlow($appId, $targetRef, $userId, $walk);
+    }
+
+    /** @param array<string,mixed> $walk */
+    private function lookUpCalledFlow(string $appId, string $targetRef, string $userId, array &$walk): ?array
+    {
         if ($appId !== '') {
             $byId = $this->flows()->getFlow($appId, $targetRef);
             if (is_array($byId)) {
                 return $byId;
             }
-            foreach ($this->flows()->listFlows($appId) as $candidate) {
+            $walk['appFlows'][$appId] ??= $this->flows()->listFlows($appId);
+            foreach ($walk['appFlows'][$appId] as $candidate) {
                 if (($candidate['slug'] ?? null) === $targetRef || ($candidate['id'] ?? null) === $targetRef) {
                     return $candidate;
                 }
             }
         }
         if ($userId !== '') {
-            foreach ($this->flows()->listWorkspaceFlows($userId) as $candidate) {
+            $walk['workspaceFlows'][$userId] ??= $this->flows()->listWorkspaceFlows($userId);
+            foreach ($walk['workspaceFlows'][$userId] as $candidate) {
                 if (($candidate['id'] ?? null) === $targetRef || ($candidate['slug'] ?? null) === $targetRef) {
                     return $candidate;
                 }
@@ -1708,9 +1753,10 @@ class ChatToolsService
     /**
      * Site-chat prompt-injection guard over a flow graph and any transitively called flows.
      *
-     * @param array<string,bool> $visited
+     * @param array<string,mixed> $walk  what the walk has gone into and looked up so far (entersCalledFlow)
+     * @param int                 $depth how many calls down this flow is, the first flow being 1
      */
-    private function assertChatFlowSafe(array $flow, string $appId, string $userId, array $visited = []): void
+    private function assertChatFlowSafe(array $flow, string $appId, string $userId, array &$walk = [], int $depth = 1): void
     {
         if (self::flowSendsConnectorCommands($flow)) {
             throw new ChatToolDeniedException(
@@ -1758,11 +1804,10 @@ class ChatToolsService
                         'delete_refused'
                     );
                 }
-                if (!isset($visited[$targetRef])) {
-                    $visited[$targetRef] = true;
-                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId);
+                if (self::entersCalledFlow($walk, $targetRef, $depth)) {
+                    $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId, $walk);
                     if ($targetFlow !== null) {
-                        $this->assertChatFlowSafe($targetFlow, $appId, $userId, $visited);
+                        $this->assertChatFlowSafe($targetFlow, $appId, $userId, $walk, $depth + 1);
                     }
                 }
             }
@@ -1772,9 +1817,10 @@ class ChatToolsService
     /**
      * Check whether a flow (or any flow it calls via `flow_call`) sends connector commands.
      *
-     * @param array<string,bool> $visited
+     * @param array<string,mixed> $walk  what the walk has gone into and looked up so far (entersCalledFlow)
+     * @param int                 $depth how many calls down this flow is, the first flow being 1
      */
-    private function flowTreeSendsConnectorCommands(array $flow, string $appId, string $userId = '', array $visited = []): bool
+    private function flowTreeSendsConnectorCommands(array $flow, string $appId, string $userId = '', array &$walk = [], int $depth = 1): bool
     {
         if (self::flowSendsConnectorCommands($flow)) {
             return true;
@@ -1790,10 +1836,9 @@ class ChatToolsService
             if ($targetRef === '' || str_contains($targetRef, '{{') || str_starts_with($targetRef, '$')) {
                 return true;
             }
-            if (!isset($visited[$targetRef])) {
-                $visited[$targetRef] = true;
-                $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId);
-                if ($targetFlow !== null && $this->flowTreeSendsConnectorCommands($targetFlow, $appId, $userId, $visited)) {
+            if (self::entersCalledFlow($walk, $targetRef, $depth)) {
+                $targetFlow = $this->resolveCalledFlow($appId, $targetRef, $userId, $walk);
+                if ($targetFlow !== null && $this->flowTreeSendsConnectorCommands($targetFlow, $appId, $userId, $walk, $depth + 1)) {
                     return true;
                 }
             }

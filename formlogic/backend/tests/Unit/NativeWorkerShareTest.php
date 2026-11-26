@@ -24,7 +24,7 @@ final class NativeWorkerShareTest extends TestCase
 
     protected function tearDown(): void
     {
-        unset($_ENV['NATIVE_WORKERS_PER_APP']);
+        unset($_ENV['NATIVE_WORKERS_PER_APP'], $_ENV['NATIVE_WORKERS']);
         $this->remove($this->storage);
     }
 
@@ -91,6 +91,35 @@ final class NativeWorkerShareTest extends TestCase
         $held = $this->hold('app-a-0', 'app-a-1', 'app-a-2', 'app-a-3');
         self::assertTrue($this->refusedAsBusy('app-a'), 'Four is the most an app can hold, whatever the setting says');
         unset($held);
+    }
+
+    /**
+     * Four workers was a constant, and the share is each app's: two apps of one account hold all
+     * four, and every other app on the site was answered busy. A site that hosts apps for many
+     * accounts says how many its server runs at once.
+     */
+    public function testASiteCanRunMoreWorkersThanFour(): void
+    {
+        $held = $this->hold('app-a-0', 'app-a-1', 'app-b-0', 'app-b-1', '0', '1', '2', '3');
+        self::assertTrue($this->refusedAsBusy('app-c'), 'With four workers, two busy apps leave none');
+
+        $_ENV['NATIVE_WORKERS'] = '6';
+        self::assertFalse($this->refusedAsBusy('app-c'), 'With six, a third app is served');
+        // And an app's share can then be more than four, up to the workers there are.
+        $_ENV['NATIVE_WORKERS_PER_APP'] = '50';
+        $more = $this->hold('app-d-0', 'app-d-1', 'app-d-2', 'app-d-3', '4');
+        self::assertFalse($this->refusedAsBusy('app-d'), 'A fifth request of one app gets the sixth worker');
+        unset($held, $more);
+    }
+
+    public function testAnUnusableNumberOfWorkersLeavesFour(): void
+    {
+        foreach (['0', '-3', 'many'] as $value) {
+            $_ENV['NATIVE_WORKERS'] = $value;
+            $held = $this->hold('0', '1', '2', '3');
+            self::assertTrue($this->refusedAsBusy('app-a'), "NATIVE_WORKERS=$value: four, as if it were not set");
+            unset($held);
+        }
     }
 
     /** @dataProvider unusableShares */

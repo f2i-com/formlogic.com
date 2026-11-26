@@ -112,6 +112,27 @@ final class DesktopLinkRateLimitWiringTest extends TestCase
         $this->assertSame(1, substr_count($link, 'new ApiKeyMiddleware('), 'every link route authenticates through $desktopLinkAuth');
     }
 
+    /**
+     * A desktop that disconnects ends its own link here (DELETE /desktop-connections/self), and
+     * the route asks for no scope: it was behind flows:write, which the key of an "AI only" link
+     * does not hold, so that desktop was answered 403 and its key went on working.
+     */
+    public function testADesktopEndsItsOwnLinkWhateverItsKeyMayDo(): void
+    {
+        $link = self::group(self::source(), 'desktopLinkRateLimiter');
+        $this->assertMatchesRegularExpression('/\$linkOwnAuth\s*=\s*\$desktopLinkAuth\(\[\]\);/', $link, 'no scope is asked for');
+        $this->assertMatchesRegularExpression(
+            '/\$group->delete\(\'\/desktop-connections\/self\'(?:(?!\$group->).)*\}\)->add\(\$linkOwnAuth\);/s',
+            $link,
+            'the self-unlink route is the one that asks for none'
+        );
+        $this->assertSame(1, substr_count($link, '->add($linkOwnAuth)'), 'and no other route does');
+
+        // The key of an "AI only" link, which the route used to refuse.
+        $this->assertSame(['connector:relay'], \FormLogic\Services\DesktopLinkCodeService::SCOPES['ai']);
+        $this->assertNotContains('flows:write', \FormLogic\Services\DesktopLinkCodeService::SCOPES['ai']);
+    }
+
     public function testEveryLaneRouteIsOnTheLinkBudgetAndNothingElseIs(): void
     {
         $source = self::source();

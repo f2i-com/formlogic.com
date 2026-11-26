@@ -32,6 +32,8 @@ class DesktopCommandService
     public const MAX_RESULT_BYTES = 65536;     // 64 KiB result / error blob
     public const MAX_CONNECTOR_ID = 64;
     public const MAX_COMMAND = 96;
+    private const CONNECTOR_ID_PATTERN = '/^[a-z0-9][a-z0-9_-]*$/D';
+    private const COMMAND_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9_.-]*$/D';
     public const MAX_IDEMPOTENCY_KEY = 255;
 
     /**
@@ -98,9 +100,12 @@ class DesktopCommandService
             return false;
         }
 
-        $command = trim($command);
+        // Whatever its case. A member's grant is matched without regard to case (the permission
+        // column's collation), so `call.takeover` passed that check while missing this one, and
+        // was queued for the owner's computer to make of what it would.
+        $command = strtolower(trim($command));
         return str_starts_with($command, 'remote.')
-            || in_array($command, self::PRIVATE_AOKIE_RELAY_COMMANDS, true);
+            || in_array($command, array_map('strtolower', self::PRIVATE_AOKIE_RELAY_COMMANDS), true);
     }
 
     /**
@@ -182,6 +187,17 @@ class DesktopCommandService
         // processing, idempotency reservation, targeting, or persistence.
         if ($public) {
             self::assertPublicRelayCommand($connectorId, $command);
+        }
+        // Then held to the names a grant can be written for (AppPermissions::isConnectorGrant): a
+        // connector's id is a lowercase slug with no dot, a command its dotted name
+        // (call.operatorSpeak). Anything else (a space around it, a control character, an id in
+        // capitals) is a name the checks above were not written for, and is not handed to the
+        // owner's computer. After them, so a private or reserved name is refused as that.
+        if (preg_match(self::CONNECTOR_ID_PATTERN, $connectorId) !== 1) {
+            throw new \InvalidArgumentException('connectorId must be lowercase letters, digits, "_" or "-", starting with a letter or digit');
+        }
+        if (preg_match(self::COMMAND_PATTERN, $command) !== 1) {
+            throw new \InvalidArgumentException('command must be letters, digits, ".", "_" or "-", starting with a letter or digit');
         }
 
         $payloadJson = null;
@@ -458,9 +474,13 @@ class DesktopCommandService
             $instanceId = $data['instanceId'];
         }
 
+        // Both measured as the computer that sends them measures them: the JSON as UTF-8 text.
+        // PHP's own escapes write each non-ASCII character as \uXXXX and each `/` as `\/`, up to
+        // three times the bytes, which refused a result in any language but English well under
+        // the limit. Kept as measured: the columns are JSON, which hold the same value either way.
         $resultJson = null;
         if (isset($data['result']) && $data['result'] !== null) {
-            $json = json_encode($data['result']);
+            $json = json_encode($data['result'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_RESULT_BYTES) {
                 throw new \InvalidArgumentException('result exceeds the ' . self::MAX_RESULT_BYTES . '-byte limit');
             }
@@ -468,7 +488,7 @@ class DesktopCommandService
         }
         $errorJson = null;
         if (isset($data['error']) && $data['error'] !== null) {
-            $json = json_encode($data['error']);
+            $json = json_encode($data['error'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             if ($json === false || strlen($json) > self::MAX_RESULT_BYTES) {
                 throw new \InvalidArgumentException('error exceeds the ' . self::MAX_RESULT_BYTES . '-byte limit');
             }

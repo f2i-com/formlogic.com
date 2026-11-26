@@ -16,7 +16,9 @@ declare(strict_types=1);
  * - a chat asked for with `stream: true` is answered as server-sent events, a few characters at a
  *   time, and a line asked for as `response_format: "pcm"` as raw sound, a tone for each sentence and
  *   a fifth of a second of silence after it (`[unhurried]`: with a wait between the pieces;
- *   `[whole]`: answered whole all the same, as a server that does not stream answers);
+ *   `[whole]`: answered whole all the same, as a server that does not stream answers;
+ *   `[cut]`: a chat's stream stops after two pieces with an `error` event and then `[DONE]`, still
+ *   200, as OAIY's server ends one whose model failed part-way; `[refused]`: the error comes first);
  * - a line to say (`POST /v1/audio/speech`, as OAIY Voice takes one) is answered with a WAV of a tone;
  *   `[words]` answers JSON where a sound was asked for, `[long]` half a minute of sound;
  * - a recording to put into words (`POST /v1/audio/transcriptions` {audio: a WAV in base64,
@@ -92,7 +94,12 @@ if ($path === '/v1/chat/completions' && ($body['stream'] ?? false) === true && !
     header('Content-Type: text/event-stream');
     header('Cache-Control: no-cache');
     while (ob_get_level() > 0) ob_end_flush();
-    foreach (str_split($text, 5) as $piece) {
+    $cut = str_contains($said, '[refused]') ? 0 : (str_contains($said, '[cut]') ? 2 : null);
+    foreach (str_split($text, 5) as $sent => $piece) {
+        if ($sent === $cut) {
+            echo 'data: ' . json_encode(['error' => ['message' => 'the model stopped', 'type' => 'server_error']]) . "\n\n";
+            break;
+        }
         echo 'data: ' . json_encode(['id' => 'chat-1', 'model' => $model, 'choices' => [['index' => 0, 'delta' => ['content' => $piece]]]]) . "\n\n";
         flush();
         if ($unhurried) usleep(150000);

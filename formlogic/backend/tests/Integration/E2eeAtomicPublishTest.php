@@ -174,6 +174,123 @@ class E2eeAtomicPublishTest extends E2eeTestCase
         FormEncryptionService::invalidateCache();
     }
 
+    /**
+     * A private form published the way the editor does it: the manifest is signed over
+     * JSON.stringify(form.fields) — the editor's key order, no key for a value it does not
+     * have, {} for no properties — and the publish sends those same fields with the status.
+     * The store keeps them in its own shape (all ten keys, its own order).
+     *
+     * @return array{0: string, 1: list<array<string,mixed>>} [formId, the fields as the editor sends them]
+     */
+    private function makeFormPublishedByTheEditor(): array
+    {
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $vault = $this->makeVault($this->userId);
+        $signedFields = [
+            ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false, 'properties' => new \stdClass(), 'order' => 0],
+        ];
+        $body = $this->makeEnableBody($formId, $this->userId, $vault, ['fields' => $signedFields]);
+        $this->assertStringContainsString('"required":false,"properties":{},"order":0', $body['schema']['schemaJson']);
+        self::$encryption->enable($formId, $this->userId, $body);
+        FormEncryptionService::invalidateCache();
+
+        $sentFields = json_decode($body['schema']['schemaJson'], true);
+        $updated = self::$forms->updateForm($formId, ['fields' => $sentFields, 'status' => 'published'], $this->userId);
+        $this->assertSame('published', $updated['status']);
+        $this->assertNotSame(array_keys($sentFields[0]), array_keys($updated['fields'][0]), 'the store spells a field its own way');
+        return [$formId, $sentFields];
+    }
+
+    public function testTitleAndSettingsSavesOnALiveFormSignedByTheEditorNeedNoManifest(): void
+    {
+        [$formId] = $this->makeFormPublishedByTheEditor();
+
+        // The editor's title/settings/theme save: no fields, and always the status the form has.
+        // It was compared as a publish, the stored fields against the signed ones, and the two
+        // spellings never matched: every such save was refused with manifest_required.
+        $updated = self::$forms->updateForm($formId, [
+            'title' => 'Retitled',
+            'description' => 'Now with a description',
+            'status' => 'published',
+            'settings' => ['submitButtonText' => 'Send'],
+            'theme' => ['primaryColor' => '#112233'],
+        ], $this->userId);
+        $this->assertSame('Retitled', $updated['title']);
+        $this->assertSame('Send', $updated['settings']['submitButtonText']);
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_schema_versions WHERE form_id = ? AND version = 2', [$formId]));
+    }
+
+    public function testRepublishingUnchangedFieldsSignedByTheEditorNeedsNoManifest(): void
+    {
+        [$formId, $sentFields] = $this->makeFormPublishedByTheEditor();
+
+        // Unpublish, then publish again with the status alone (the forms list, the API, a
+        // chat tool). The fields are the signed ones; only their spelling in the store differs.
+        self::$forms->updateForm($formId, ['status' => 'draft'], $this->userId);
+        $updated = self::$forms->updateForm($formId, ['status' => 'published'], $this->userId);
+        $this->assertSame('published', $updated['status']);
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_schema_versions WHERE form_id = ? AND version = 2', [$formId]));
+
+        // The same fields sent back in the store's spelling are not a change either…
+        $stored = self::$forms->getForm($formId)['fields'];
+        self::$forms->updateForm($formId, ['fields' => $stored], $this->userId);
+        $this->assertNull($this->row('SELECT 1 AS x FROM form_schema_versions WHERE form_id = ? AND version = 2', [$formId]));
+
+        // …while a field changed in the draft still has to be signed before it goes live.
+        self::$forms->updateForm($formId, ['status' => 'draft'], $this->userId);
+        $relabelled = $sentFields;
+        $relabelled[0]['label'] = 'Full name';
+        self::$forms->updateForm($formId, ['fields' => $relabelled], $this->userId);
+        try {
+            self::$forms->updateForm($formId, ['status' => 'published'], $this->userId);
+            $this->fail('publishing changed fields must require encryptionSchema');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('manifest_required', $e->errorCode);
+        }
+        $this->assertSame('draft', self::$forms->getForm($formId)['status']);
+    }
+
+    public function testAPrivateFormStillHoldingAScriptCanBeSavedAndPublished(): void
+    {
+        // A form made private when enabling did not yet look for a script: its row still has one.
+        $form = $this->makeDraftForm();
+        $formId = (string) $form['id'];
+        $this->enablePrivateForm($formId);
+        $script = 'function onSubmit(ctx) { ctx.db.addTag("seen"); }';
+        self::$pdo->prepare('UPDATE forms SET logic_script = ? WHERE id = ?')->execute([$script, $formId]);
+
+        // The editor sends the form's script back with every title save, and with the publish.
+        // Refused as a new script, the form could never be saved or published again.
+        $updated = self::$forms->updateForm($formId, ['title' => 'Retitled', 'status' => 'draft', 'logicScript' => $script], $this->userId);
+        $this->assertSame('Retitled', $updated['title']);
+        $updated = self::$forms->updateForm($formId, ['status' => 'published', 'fields' => $form['fields'], 'logicScript' => $script], $this->userId);
+        $this->assertSame('published', $updated['status']);
+        $this->assertSame($script, $updated['logicScript']);
+
+        // Any other script is still refused, and nothing of that save lands.
+        try {
+            self::$forms->updateForm($formId, ['title' => 'Again', 'logicScript' => $script . "\n// more"], $this->userId);
+            $this->fail('a changed script on a private form must be refused');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('private_form_unsupported_feature', $e->errorCode);
+            $this->assertSame(409, $e->status);
+        }
+        $kept = self::$forms->getForm($formId);
+        $this->assertSame('Retitled', $kept['title']);
+        $this->assertSame($script, $kept['logicScript']);
+
+        // An empty one clears it; after that the old script is a new one like any other.
+        self::$forms->updateForm($formId, ['logicScript' => ''], $this->userId);
+        $this->assertSame('', (string) self::$forms->getForm($formId)['logicScript']);
+        try {
+            self::$forms->updateForm($formId, ['logicScript' => $script], $this->userId);
+            $this->fail('a private form must not be given a script');
+        } catch (EncryptionRequestException $e) {
+            $this->assertSame('private_form_unsupported_feature', $e->errorCode);
+        }
+    }
+
     public function testJsStyleEmptyObjectsDoNotCountAsFieldChanges(): void
     {
         // The client's schema snapshot is sha256 over JSON.stringify(fields), where an
@@ -181,7 +298,7 @@ class E2eeAtomicPublishTest extends E2eeTestCase
         // emits [] instead. A fields-changed check comparing a PHP re-encoding against
         // the CLIENT hash would call every unchanged save "changed" (spurious 409).
         // The comparison must therefore derive BOTH sides PHP-canonically from the
-        // stored schema_json (FormEncryptionService::latestManifestSchemaHash).
+        // stored schema_json (FormEncryptionService::latestManifestSchemaFields).
         $fields = [
             ['id' => 'name', 'type' => 'short_text', 'label' => 'Name', 'required' => false, 'order' => 0, 'properties' => []],
         ];

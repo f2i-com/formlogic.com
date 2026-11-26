@@ -106,6 +106,24 @@ final class SiteDesktopAiLaneTest extends TestCase
         }
     }
 
+    /**
+     * A turn's text is sealed as UTF-8. Written as \uXXXX, the 64,000 characters an administrator
+     * may allow a prompt take 384 KB in a script outside ASCII, past the lane's 256 KiB request, and
+     * were refused as a picture too large. room() measures a turn exactly as it is sealed.
+     */
+    public function testATurnInAnyScriptIsSealedAsUtf8AndFitsTheLane(): void
+    {
+        $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey(sodium_crypto_box_secretkey(sodium_crypto_box_keypair()), sodium_crypto_box_publickey(sodium_crypto_box_keypair()));
+        $body = ['messages' => [['role' => 'user', 'content' => str_repeat('语', 64000)]], 'model' => 'm', 'source' => 'https://example.com/a/b'];
+        $turn = ['v' => 1, 'kind' => 'chat', 'providerId' => 'oaiy-local', 'threadId' => 'site-' . str_repeat('0', 24), 'clientSeq' => 1] + $body;
+        $envelope = SiteDesktopAi::seal($turn, 0, 0, $pair);
+        $sealed = strlen((string) base64_decode($envelope, true));
+        $this->assertLessThan(DesktopAiRelayService::MAX_ENVELOPE_BYTES, $sealed);
+        $this->assertGreaterThan(DesktopAiRelayService::MAX_ENVELOPE_BYTES, strlen((string) json_encode($turn)), 'the same turn, as PHP escapes it unasked');
+        $this->assertSame($turn, SiteDesktopAi::open($envelope, 0, 0, $pair));
+        $this->assertSame(DesktopAiRelayService::MAX_ENVELOPE_BYTES - $sealed, SiteDesktopAi::room(['providerId' => 'oaiy-local'], ['kind' => 'chat'] + $body));
+    }
+
     public function testAnAnswerOfMoreThanAPageIsReadWholeOnceItIsDone(): void
     {
         $answer = $this->site(function (string $id, array $turn, string $pair): void {

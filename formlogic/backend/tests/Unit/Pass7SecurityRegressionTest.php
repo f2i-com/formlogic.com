@@ -105,7 +105,7 @@ final class Pass7SecurityRegressionTest extends TestCase
     {
         $pdo = new PDO('sqlite::memory:');
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec('CREATE TABLE forms (id TEXT PRIMARY KEY, user_id TEXT, ever_published_at TEXT, settings TEXT, custom_screen TEXT)');
+        $pdo->exec('CREATE TABLE forms (id TEXT PRIMARY KEY, user_id TEXT, ever_published_at TEXT, settings TEXT, custom_screen TEXT, logic_script TEXT)');
         $pdo->exec('CREATE TABLE form_encryption (form_id TEXT PRIMARY KEY, state TEXT)');
         $pdo->exec('CREATE TABLE response_metadata (id TEXT PRIMARY KEY, form_id TEXT)');
         $pdo->exec('CREATE TABLE webhooks (id TEXT PRIMARY KEY, form_id TEXT)');

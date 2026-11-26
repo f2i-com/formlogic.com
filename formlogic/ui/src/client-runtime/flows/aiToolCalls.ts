@@ -220,10 +220,33 @@ function count(value: unknown): number {
 }
 
 /**
+ * A tool name a later request can carry back. A model sometimes invents one outside
+ * TOOL_NAME_RE (`functions.read_file`, `read file`, one too long). The editor must echo the call
+ * in its next request, and validateEditorAiToolRequest refuses such a name there, on every retry:
+ * the run was stuck for good. So the name is rewritten to one that passes, and marked, so that
+ * what it becomes is not taken for a tool the editor has: the editor answers that there is no
+ * such tool, and the model asks again.
+ */
+function carriedToolName(name: string): string {
+  if (TOOL_NAME_RE.test(name)) return name;
+  return `invalid_tool_${name.replace(/[^A-Za-z0-9_-]+/g, '_')}`.slice(0, 64);
+}
+
+/**
+ * An id for a call whose provider gave none a later request could carry back. Unique for each
+ * reply, as AIService's own (`call-<index>-<8 hex>`): the editor keys its timeline by call id, and
+ * one made from the index alone came again in the next reply.
+ */
+function mintedToolCallId(index: number): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  return `call-${index}-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
  * A provider's tool call → the bridge's. Arguments that parse to an object go as the
  * object; anything else goes as the raw string so Studio can tell the model its JSON was
- * bad. An id no later request could carry back (missing, or outside TOOL_CALL_ID_RE) is
- * replaced by a stable one, so the conversation can continue.
+ * bad. An id or a name no later request could carry back (missing, or outside
+ * TOOL_CALL_ID_RE / TOOL_NAME_RE) is replaced by one that can, so the conversation can continue.
  */
 export function editorToolCall(index: number, id: unknown, name: string, rawArguments: unknown): EditorAiReply['toolCalls'][number] {
   let args: Record<string, unknown> | string;
@@ -236,7 +259,7 @@ export function editorToolCall(index: number, id: unknown, name: string, rawArgu
       args = rawArguments;
     }
   } else args = {};
-  return { id: typeof id === 'string' && TOOL_CALL_ID_RE.test(id) ? id : `formlogic_call_${index}`, name, arguments: args };
+  return { id: typeof id === 'string' && TOOL_CALL_ID_RE.test(id) ? id : mintedToolCallId(index), name: carriedToolName(name), arguments: args };
 }
 
 /** OpenAI usage → the bridge's counts; undefined when the provider reported none. */

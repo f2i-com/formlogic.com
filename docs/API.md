@@ -157,7 +157,7 @@ All paths are owner-scoped: a key only ever sees flows/bindings/runs of flows it
 | `DELETE` | `/flow-kv` (`?scope=&k=&appId=`) | `flows:write` |
 | `GET` | `/app-logic` (`?app=<id\|slug>&languages=javascript,python`) — the owner's app-logic bundles, for running `onConnectorEvent` scripts headless; only scripts in `languages` are listed (absent = JavaScript only, so Python scripts are left out); a malformed `languages` is `400` | `flows:read` |
 | `GET` | `/script-profile` — the **leaf-script profile**: what FormLogic's logic *means*, as data (see below). `ETag` + `Cache-Control: private, max-age=300`; `If-None-Match` with the current tag → `304` | `flows:read` |
-| `DELETE` | `/desktop-connections/self` — self-unlink: removes the calling install's own connection row and revokes the calling key. No id (the key identifies the install); a hand-entered key with no connection is left untouched | `flows:write` |
+| `DELETE` | `/desktop-connections/self` — self-unlink: removes the calling install's own connection row and revokes the calling key. No id (the key identifies the install); a hand-entered key with no connection is left untouched | any (the key of an AI-only link holds `connector:relay` alone) |
 
 #### `GET /api/v1/script-profile` — the leaf-script profile
 
@@ -354,6 +354,8 @@ What happens server-side, in order — identical to a browser submission:
    An answer nested more than 16 levels deep, or holding more than 10,000 values, is then refused
    at once → `422` with `code` `answer_too_deep` or `answer_too_many_values` and `errors` naming the
    field (in a batch, that item fails the same way; on `PUT`, only the answers sent are checked).
+   So is a submission whose answers hold more than 50,000 values between them
+   (`answers_too_many_values`, naming the answers from the one that passes the limit).
 2. **Calculated / hidden fields** are computed on the server (you can't set them from the client).
 3. **Validation** — required fields, types, and your validation rules run. Failures → `400`.
 4. **`onSubmit(ctx)` script** runs — BEFORE anything is stored. It can refuse the submission by
@@ -430,7 +432,7 @@ Each item runs the full pipeline independently; the response reports per-item su
 | `404` | Form / response not found, or not accessible to this key |
 | `409` | `scriptRan: true`: the `onSubmit` script made an HTTP request, then stopped or the record couldn't be stored. Nothing was stored, and sending it again would run the script again |
 | `413` | Submission too large |
-| `422` | Submission rejected by the `onSubmit` script (`rejected: true`), or an answer nested too deeply / holding too many values (`code: "answer_too_deep"` / `"answer_too_many_values"`, `errors` names the field) |
+| `422` | Submission rejected by the `onSubmit` script (`rejected: true`), or an answer nested too deeply / holding too many values (`code: "answer_too_deep"` / `"answer_too_many_values"` / `"answers_too_many_values"`, `errors` names the field) |
 | `429` | Rate limit exceeded |
 | `503` | The `onSubmit` script did not run to a verdict (`code: "script_unavailable"`; `detail` says why); nothing was stored |
 

@@ -188,6 +188,38 @@ PHP;
         $this->assertCount(2, $after['rows']);
     }
 
+    /**
+     * The runner answers for itself in another shape than a backend does: /api/meta, and every
+     * refusal made before the backend ran. Each is the JSON response it says it is.
+     */
+    public function testTheRunnersOwnAnswerIsServedAsAJsonResponse(): void
+    {
+        $backend = NativeAppService::containerAnswer('{"status":201,"headers":[["Content-Type","text/plain"]],"bodyBase64":"b2s="}');
+        $this->assertSame(['status' => 201, 'headers' => [['Content-Type', 'text/plain']], 'bodyBase64' => 'b2s=', 'own' => false], $backend);
+
+        $busy = NativeAppService::containerAnswer('{"status":503,"body":{"error":"The server is busy. Please retry.","code":"database_busy"}}');
+        $this->assertSame(503, $busy['status']);
+        $this->assertTrue($busy['own']);
+        $this->assertSame([['content-type', 'application/json; charset=utf-8']], $busy['headers']);
+        $this->assertSame('{"error":"The server is busy. Please retry.","code":"database_busy"}', base64_decode($busy['bodyBase64'], true));
+        // An empty object stays one, and text is sent as it was written.
+        $this->assertSame('{"unservedRoutes":{},"note":"café /api"}', base64_decode(NativeAppService::containerAnswer('{"status":200,"body":{"unservedRoutes":{},"note":"café /api"}}')['bodyBase64'], true));
+
+        foreach (['', 'not json', '[]', '{"status":"200","body":{}}', '{"status":200}', '{"status":99,"body":{}}', '{"status":200,"headers":[]}'] as $nothing) {
+            $this->assertNull(NativeAppService::containerAnswer($nothing), $nothing);
+        }
+
+        // Through the real runner: /api/meta was "returned no response" before.
+        $this->service->install('orders', $this->phpContainerProject(), 0);
+        $meta = $this->service->containerRequest('orders', ['method' => 'GET', 'path' => '/api/meta', 'query' => '', 'headers' => [], 'bodyBase64' => ''], ['userId' => 'user-1', 'userRole' => 'member'], 1);
+        $this->assertSame(200, $meta['status']);
+        $this->assertSame(['status', 'headers', 'bodyBase64'], array_keys($meta));
+        $said = json_decode(base64_decode($meta['bodyBase64'], true) ?: '', true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('zipp-wasm-container', $said['runtime']);
+        $this->assertSame('php', $said['backendRuntime']);
+        $this->assertSame('test.php-orders', $said['appId']);
+    }
+
     public function testValidationRefusesUnsupportedContainerBackendOrBothServerAndBackend(): void
     {
         $badRuntime = $this->phpContainerProject();

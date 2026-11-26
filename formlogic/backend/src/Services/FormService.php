@@ -251,14 +251,84 @@ class FormService
     /**
      * The canonical sha256 over a fields array, matching how the client's
      * schemaJson is produced (JSON.stringify semantics: no slash/unicode
-     * escaping) — the atomic-publish rule compares this against the latest
-     * signed manifest's schema_hash to decide whether the fields are changing.
+     * escaping) — the atomic-publish rule compares two of these to decide
+     * whether the fields are changing (fieldsDifferFromSigned).
      *
      * @param array<mixed> $fields
      */
     private function canonicalFieldsHash(array $fields): string
     {
         return hash('sha256', (string) json_encode($fields, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    }
+
+    /**
+     * A fields list in the shape this service keeps it: what getFormFields() hands back once
+     * saveFormFields() has written it — the same ten keys in the same order, a missing text as
+     * null, a missing order as the field's place in the list, and the list itself by that order.
+     *
+     * @param array<mixed> $fields
+     * @return array<mixed>
+     */
+    private function fieldsAsStored(array $fields): array
+    {
+        $text = static fn (mixed $value): ?string => is_scalar($value) ? (string) $value : null;
+        $stored = [];
+        foreach ($fields as $index => $field) {
+            if (!is_array($field)) {
+                $stored[] = $field;
+                continue;
+            }
+            $type = is_scalar($field['type'] ?? null) ? (string) $field['type'] : '';
+            $keptType = self::normalizeFieldType($type);
+            $stored[] = [
+                'id' => $text($field['id'] ?? null),
+                'type' => $keptType,
+                'label' => $text($field['label'] ?? null),
+                'description' => $text($field['description'] ?? null),
+                'placeholder' => $text($field['placeholder'] ?? null),
+                'required' => (bool) (int) ($field['required'] ?? false),
+                'order' => (int) ($field['order'] ?? $index),
+                'properties' => self::checkboxProperties($keptType, self::checkboxProperties($type, $field['properties'] ?? [])),
+                'validation' => $field['validation'] ?? [],
+                'conditionalLogic' => $field['conditionalLogic'] ?? null,
+            ];
+        }
+        // Two fields of one order stay as they were written, as the store reads them back.
+        usort($stored, static fn (mixed $a, mixed $b): int => (is_array($a) ? $a['order'] : PHP_INT_MAX) <=> (is_array($b) ? $b['order'] : PHP_INT_MAX));
+        return $stored;
+    }
+
+    /**
+     * Whether these fields are other than the ones the form's latest manifest was signed over.
+     * Both lists are put in the stored shape first. The signed snapshot is the editor's own
+     * JSON (its key order, no key for a value it does not have) and the fields of a save that
+     * sends none are read back from the store, so comparing them as they come called the same
+     * fields changed and refused the save with manifest_required.
+     *
+     * @param array<mixed> $fields
+     */
+    private function fieldsDifferFromSigned(string $formId, array $fields): bool
+    {
+        $this->formEncryption ??= new FormEncryptionService($this->mysql);
+        $signed = $this->formEncryption->latestManifestSchemaFields($formId);
+        return $signed === null
+            || $this->canonicalFieldsHash($this->fieldsAsStored($fields)) !== $this->canonicalFieldsHash($this->fieldsAsStored($signed));
+    }
+
+    /**
+     * Whether an update would give a form a script it does not have now: the question a private
+     * form's save is refused on. The script the form already holds is not one. A form made private
+     * while it had a script kept it (enabling did not look for one), and the editor sends the
+     * form's script back with every title, settings and publish save, so refusing any script at
+     * all refused every one of those for good. A script is never run on a private form; sending
+     * the kept one back changes nothing, and sending an empty one clears it.
+     *
+     * @param array<string,mixed> $data
+     */
+    private static function givesAScript(array $data, mixed $kept): bool
+    {
+        $script = $data['logicScript'] ?? null;
+        return is_string($script) && trim($script) !== '' && $script !== $kept;
     }
 
     public function __construct(MySQLConnection $mysql, SQLiteConnection $sqlite, ?WebhookService $webhookService = null, ?FileStorageService $fileStorageService = null)
@@ -514,10 +584,13 @@ class FormService
             if ($binned->fetchColumn() !== false) {
                 throw new \RuntimeException('A form with this ID already exists');
             }
-            // Upload folders are named by the id without its underscores (FileStorageService),
-            // so `team_intake` and `teamintake` would share one, exports and deletion included.
-            $sameFolder = $this->mysql->prepare("SELECT 1 FROM forms WHERE REPLACE(id, '_', '') = :folder LIMIT 1");
-            $sameFolder->execute(['folder' => str_replace('_', '', $id)]);
+            // Upload folders are named by the id's letters, digits and hyphens alone
+            // (FileStorageService::folderName), so `team_intake` and `teamintake` would share one,
+            // exports and deletion included. Compared by that rule itself, not by underscores only:
+            // a new id has nothing else to lose, but older versions let the API choose ids such as
+            // `survey.2026`, and `survey2026` would have taken that form's folder.
+            $sameFolder = $this->mysql->prepare("SELECT 1 FROM forms WHERE REGEXP_REPLACE(id, '[^a-zA-Z0-9-]', '') = :folder LIMIT 1");
+            $sameFolder->execute(['folder' => FileStorageService::folderName($id)]);
             if ($sameFolder->fetchColumn() !== false) {
                 throw new \RuntimeException('A form with this ID already exists');
             }
@@ -681,7 +754,7 @@ class FormService
             throw new EncryptionRequestException('private_form_not_encrypted', 'This form is not a private form.', 404);
         }
         if ($encState === 'active' || $encState === 'enabling') {
-            if (array_key_exists('logicScript', $data) && is_string($data['logicScript']) && trim($data['logicScript']) !== '') {
+            if (self::givesAScript($data, $existing['logicScript'] ?? null)) {
                 throw new EncryptionRequestException(
                     'private_form_unsupported_feature',
                     'End-to-end encrypted private forms cannot use server-side onSubmit scripts.',
@@ -700,10 +773,14 @@ class FormService
             }
         }
         if (($fieldsProvided || ($statusProvided && ($data['status'] ?? null) === 'published')) && $encState === 'active') {
-            $resultingStatus = $statusProvided ? (string) ($data['status'] ?? 'draft') : (string) ($existing['status'] ?? 'draft');
-            if ($resultingStatus === 'published') {
+            $currentStatus = (string) ($existing['status'] ?? 'draft');
+            $resultingStatus = $statusProvided ? (string) ($data['status'] ?? 'draft') : $currentStatus;
+            // A save that sends no fields to a form already live has nothing new to sign: the
+            // editor's title, settings and theme saves all carry the status the form has, and
+            // each was refused here. The same rule as the check under the lock below.
+            if ($resultingStatus === 'published' && ($fieldsProvided || $currentStatus !== 'published')) {
                 $effectiveFields = $fieldsProvided ? $data['fields'] : ($existing['fields'] ?? $this->getFormFields($formId));
-                $fieldsChanged = $this->canonicalFieldsHash($effectiveFields) !== $this->formEncryption->latestManifestSchemaHash($formId);
+                $fieldsChanged = $this->fieldsDifferFromSigned($formId, $effectiveFields);
                 if ($fieldsChanged && $encryptionSchema === null) {
                     throw new EncryptionRequestException(
                         'manifest_required',
@@ -836,9 +913,10 @@ class FormService
             // Serialize against a concurrent enable: FormEncryptionService::enable
             // holds the same forms-row lock from preflight to commit, so a publish/
             // field save can never interleave between its check and its writes.
-            $lockStmt = $this->mysql->prepare('SELECT status FROM forms WHERE id = :id FOR UPDATE');
+            $lockStmt = $this->mysql->prepare('SELECT status, logic_script FROM forms WHERE id = :id FOR UPDATE');
             $lockStmt->execute(['id' => $formId]);
-            $lockedStatus = (string) ($lockStmt->fetchColumn() ?: ($existing['status'] ?? 'draft'));
+            $lockedRow = $lockStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+            $lockedStatus = (string) (($lockedRow['status'] ?? null) ?: ($existing['status'] ?? 'draft'));
 
             // Re-read authoritative encryption state inside the lock (bypassing process cache)
             // so a concurrent enable() commit cannot race past pre-lock E2EE invariant checks.
@@ -848,7 +926,7 @@ class FormService
                 throw new EncryptionEnablingException();
             }
             if ($lockedEncState === 'active' || $lockedEncState === 'enabling') {
-                if (array_key_exists('logicScript', $data) && is_string($data['logicScript']) && trim($data['logicScript']) !== '') {
+                if (self::givesAScript($data, $lockedRow['logic_script'] ?? null)) {
                     throw new EncryptionRequestException(
                         'private_form_unsupported_feature',
                         'End-to-end encrypted private forms cannot use server-side onSubmit scripts.',
@@ -873,7 +951,7 @@ class FormService
                 $resultingStatus = $statusProvided ? (string) ($data['status'] ?? 'draft') : $lockedStatus;
                 if ($resultingStatus === 'published' && ($fieldsProvided || $lockedStatus !== 'published')) {
                     $effectiveFields = $fieldsProvided ? $data['fields'] : $this->getFormFields($formId);
-                    $fieldsChanged = $this->canonicalFieldsHash($effectiveFields) !== $this->formEncryption->latestManifestSchemaHash($formId);
+                    $fieldsChanged = $this->fieldsDifferFromSigned($formId, $effectiveFields);
                     if ($fieldsChanged && $encryptionSchema === null) {
                         throw new EncryptionRequestException(
                             'manifest_required',

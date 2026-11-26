@@ -222,7 +222,7 @@ final class SiteDesktopAi
      */
     public static function room(array $target, array $body): int
     {
-        $plain = strlen(json_encode(self::turn($target, $body), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $plain = strlen(json_encode(self::turn($target, $body), self::PLAIN_JSON));
         return DesktopAiRelayService::MAX_ENVELOPE_BYTES - self::NONCE_BYTES - SODIUM_CRYPTO_BOX_MACBYTES - $plain;
     }
 
@@ -727,11 +727,20 @@ final class SiteDesktopAi
         }
     }
 
+    /**
+     * How a turn is written before it is sealed, and so how room() measures one. Text is left as
+     * UTF-8: written as \uXXXX, each character of a script outside ASCII takes six bytes, and a
+     * prompt well within what an administrator allows no longer fits the lane's request limit.
+     * The computer parses the JSON it opens and nothing is computed over its text, so either
+     * spelling reads the same there.
+     */
+    private const PLAIN_JSON = JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+
     /** base64(nonce || box): byte 0 of the nonce is the direction, its last 8 bytes the counter. */
     public static function seal(array $body, int $direction, int $counter, string $pair): string
     {
         $nonce = self::nonce($direction, $counter);
-        return base64_encode($nonce . sodium_crypto_box(json_encode($body, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES), $nonce, $pair));
+        return base64_encode($nonce . sodium_crypto_box(json_encode($body, self::PLAIN_JSON), $nonce, $pair));
     }
 
     /** One frame opened; refused unless its nonce is exactly $direction and $counter (a turn's own request is counter 0). */

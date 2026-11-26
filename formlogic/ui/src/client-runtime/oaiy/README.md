@@ -28,10 +28,13 @@ it drops into the connector layer with a minimal, guarded change:
 ## Where it plugs in
 
 `connectors/desktopConnector.ts` — `createDesktopBackedConnector()` now prefers
-OAIY: when `oaiyRouteAvailable()`, the command routes through OAIY; a **transport
-failure** falls back to FormLogic Desktop; a real **per-command refusal** does
-NOT fall back (a command that reached a runtime and was refused must not be
-silently retried elsewhere, which could double a side effect). When OAIY is
+OAIY: when `oaiyRouteAvailable()`, the command routes through OAIY and nowhere
+else. One runtime is chosen for each command, and nothing falls back to FormLogic
+Desktop: a lost response cannot say whether a physical action ran, and the other
+runtime keeps a journal of its own, so it could not tell a repeat from a new
+command. A **transport failure** is reported as `connector_uncertain` (the
+command may have run), or as `connector_unavailable` for a command that only
+reads; a real **per-command refusal** is reported as OAIY gave it. When OAIY is
 absent, behaviour is identical to before — the whole change is additive and
 guarded.
 

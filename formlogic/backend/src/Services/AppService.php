@@ -309,15 +309,29 @@ class AppService
             $rateLimit = max(1, min(600, (int) $value['rateLimitPerMinute']));
         }
 
-        $forbiddenHeaders = [
-            'set-cookie', 'cookie', 'host', 'location', 'refresh', 'transfer-encoding', 'content-length',
-            'content-type', 'content-disposition', 'content-encoding',
-            'content-security-policy', 'content-security-policy-report-only',
-            'strict-transport-security', 'x-frame-options', 'x-content-type-options',
-            'referrer-policy', 'permissions-policy',
-            'cross-origin-opener-policy', 'cross-origin-embedder-policy', 'cross-origin-resource-policy',
-            'www-authenticate', 'proxy-authenticate', 'connection', 'upgrade',
+        // These go out on every answer of a route anyone can be sent a link to, refusals included,
+        // from this installation's own origin. Most response headers are an instruction a browser
+        // keeps for that whole origin (Clear-Site-Data signs every visitor out, NEL and Report-To
+        // have it report later requests elsewhere, Link, Alt-Svc and Service-Worker-Allowed reach
+        // past the one response), so a name is kept only when it is known to speak for the one
+        // answer it is on: the caching and versioning headers an API states about itself, and
+        // the app's own X- names.
+        $responseHeaders = ['cache-control', 'expires', 'pragma', 'content-language', 'deprecation', 'sunset'];
+        // X- names that are not the app's own: ones a browser acts on, ones the server in front of
+        // PHP acts on (an internal redirect, a file to send), and the ones this host writes.
+        $actedOnHeaders = [
+            'x-frame-options', 'x-content-type-options', 'x-xss-protection', 'x-dns-prefetch-control',
+            'x-permitted-cross-domain-policies', 'x-ua-compatible', 'x-download-options',
+            'x-content-security-policy', 'x-webkit-csp', 'x-real-ip', 'x-original-url', 'x-rewrite-url',
+            'x-http-method-override', 'x-method-override',
         ];
+        $actedOnPrefixes = ['x-formlogic-', 'x-forwarded-', 'x-ratelimit-', 'x-accel-', 'x-sendfile', 'x-lighttpd-', 'x-litespeed-', 'x-reproxy-'];
+        $isResponseHeader = static function (string $name) use ($responseHeaders, $actedOnHeaders, $actedOnPrefixes): bool {
+            if (in_array($name, $responseHeaders, true)) return true;
+            if (!str_starts_with($name, 'x-') || $name === 'x-' || in_array($name, $actedOnHeaders, true)) return false;
+            foreach ($actedOnPrefixes as $prefix) if (str_starts_with($name, $prefix)) return false;
+            return true;
+        };
         $customHeaders = [];
         if (is_array($value['customHeaders'] ?? null)) {
             foreach ($value['customHeaders'] as $k => $v) {
@@ -325,7 +339,7 @@ class AppService
                 $hk = trim($k);
                 $lk = strtolower($hk);
                 if ($hk === '' || strlen($hk) > 64 || preg_match('/^[A-Za-z0-9-]+$/D', $hk) !== 1) continue;
-                if (in_array($lk, $forbiddenHeaders, true) || str_starts_with($lk, 'access-control-') || str_starts_with($lk, 'x-formlogic-')) continue;
+                if (!$isResponseHeader($lk)) continue;
                 $hv = trim((string) $v);
                 if ($hv === '' || strlen($hv) > 256 || preg_match('/[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/', $hv) === 1) continue;
                 $customHeaders[$hk] = $hv;

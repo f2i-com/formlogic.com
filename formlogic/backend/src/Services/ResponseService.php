@@ -561,17 +561,21 @@ class ResponseService
             return $answers;
         }
 
-        // Up to N passes (N = number of calculated fields) — enough to resolve any
-        // acyclic dependency chain regardless of document order; stops early once
-        // nothing changes. Each pass is ONE sandbox round-trip for all calculated
-        // fields (was one process spawn per field per pass). Best-effort — a
+        // Up to N passes (N = number of calculated fields, held to MAX_CALCULATION_PASSES and to
+        // CALCULATION_SECONDS) — enough to resolve a dependency chain regardless of document
+        // order; stops early once nothing changes. Each pass is ONE sandbox round-trip for
+        // all calculated fields (was one process spawn per field per pass). Best-effort — a
         // broken expression is skipped.
-        $passes = count($jobs);
+        $passes = min(count($jobs), self::MAX_CALCULATION_PASSES);
+        $until = microtime(true) + self::CALCULATION_SECONDS;
         // An answer past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES is withheld, as in
         // computeFieldVisibility. Which ones is settled once: the passes add calculated values,
         // never a submitted one.
         $withheld = array_keys(self::answerShapeProblems($answers));
         for ($pass = 0; $pass < $passes; $pass++) {
+            if ($pass > 0 && microtime(true) >= $until) {
+                break;
+            }
             try {
                 $results = $this->getFormLogic()->evaluateBatch($jobs, self::answersForEvaluation($answers, $withheld));
             } catch (\Throwable $e) {
@@ -598,6 +602,20 @@ class ResponseService
     }
 
     /**
+     * How many times a submission's calculated fields are worked out, at most, and for how long.
+     * Each pass is a sandbox process, and a pass is repeated while any value changed. Nothing
+     * makes the values settle: a field that reads the clock, or adds one to its own last value,
+     * changes on every pass. The bound was the number of calculated fields alone, which the
+     * form's owner chooses, so one anonymous submission to a form of five hundred such fields
+     * held a web worker through five hundred sandbox runs. A chain of fields that each read the
+     * one before settles in as many passes as it is long when the form lists it backwards, and
+     * in two when it lists it forwards; one longer than this, listed backwards, keeps the
+     * values of its last pass.
+     */
+    public const MAX_CALCULATION_PASSES = 12;
+    public const CALCULATION_SECONDS = 4.0;
+
+    /**
      * How many levels of lists and objects an answer may have. No field type stores more than
      * two (a file upload is a list of objects of plain values; a location is one object), so
      * this is several times what a form produces and far below what the sandbox will parse:
@@ -617,9 +635,29 @@ class ResponseService
      */
     public const MAX_ANSWER_VALUES = 10000;
 
-    /** The codes of the refusals for an answer past MAX_ANSWER_DEPTH / MAX_ANSWER_VALUES. */
+    /**
+     * How many values the answers of one submission may hold together. The bound on one answer
+     * is not a bound on the submission: fifty answers of 10,000 empty lists each are every one
+     * within MAX_ANSWER_VALUES, and together they exhaust the sandbox's memory as one answer of
+     * 500,000 does (the batch is refused whole, and the rules read as "none could be
+     * evaluated"). A form's answers hold a few thousand values between them.
+     */
+    public const MAX_SUBMISSION_VALUES = 50000;
+
+    /** The codes of the refusals for an answer past MAX_ANSWER_DEPTH / MAX_ANSWER_VALUES / MAX_SUBMISSION_VALUES. */
     public const ANSWER_TOO_DEEP = 'answer_too_deep';
     public const ANSWER_TOO_MANY_VALUES = 'answer_too_many_values';
+    public const ANSWERS_TOO_MANY_VALUES = 'answers_too_many_values';
+
+    /** What is wrong with an answer, to follow the field's name: "is nested too deeply (…)". */
+    private static function shapeProblemSentence(string $code): string
+    {
+        return match ($code) {
+            self::ANSWER_TOO_DEEP => 'is nested too deeply (more than ' . self::MAX_ANSWER_DEPTH . ' levels)',
+            self::ANSWERS_TOO_MANY_VALUES => 'takes the answers past the number of values one submission may hold (' . self::MAX_SUBMISSION_VALUES . ')',
+            default => 'holds too many values (more than ' . self::MAX_ANSWER_VALUES . ')',
+        };
+    }
 
     /**
      * The answers past MAX_ANSWER_DEPTH or MAX_ANSWER_VALUES, as fieldId → a message naming the
@@ -642,9 +680,7 @@ class ResponseService
                     break;
                 }
             }
-            $errors[(string) $fieldId] = $code === self::ANSWER_TOO_DEEP
-                ? "$label: this answer is nested too deeply (more than " . self::MAX_ANSWER_DEPTH . ' levels)'
-                : "$label: this answer holds too many values (more than " . self::MAX_ANSWER_VALUES . ')';
+            $errors[(string) $fieldId] = "$label: this answer " . self::shapeProblemSentence($code);
         }
         return $errors;
     }
@@ -676,8 +712,10 @@ class ResponseService
     }
 
     /**
-     * Which answers are past a limit, and which limit: fieldId → ANSWER_TOO_DEEP or
-     * ANSWER_TOO_MANY_VALUES.
+     * Which answers are past a limit, and which limit: fieldId → ANSWER_TOO_DEEP,
+     * ANSWER_TOO_MANY_VALUES, or ANSWERS_TOO_MANY_VALUES for each answer from the one that takes
+     * the answers together past MAX_SUBMISSION_VALUES (an answer already past a limit of its own
+     * is not counted: it is withheld from every evaluation, so it adds nothing to one).
      *
      * @param array<string, mixed> $answers
      * @return array<int|string, string>
@@ -685,6 +723,7 @@ class ResponseService
     public static function answerShapeProblems(array $answers): array
     {
         $problems = [];
+        $together = self::MAX_SUBMISSION_VALUES;
         foreach ($answers as $fieldId => $value) {
             if (!is_array($value)) {
                 continue;
@@ -693,6 +732,12 @@ class ResponseService
             $problem = self::shapeProblem($value, self::MAX_ANSWER_DEPTH, $budget);
             if ($problem !== null) {
                 $problems[$fieldId] = $problem;
+                continue;
+            }
+            $held = self::MAX_ANSWER_VALUES - $budget;
+            $together -= $held;
+            if ($held > 0 && $together < 0) {
+                $problems[$fieldId] = self::ANSWERS_TOO_MANY_VALUES;
             }
         }
         return $problems;
@@ -2275,9 +2320,7 @@ class ResponseService
             if ($problems !== []) {
                 $fieldId = array_key_first($problems);
                 return new ScriptRejection(
-                    $problems[$fieldId] === self::ANSWER_TOO_DEEP
-                        ? 'The answer to "' . $fieldId . '" is nested too deeply to be stored (more than ' . self::MAX_ANSWER_DEPTH . ' levels).'
-                        : 'The answer to "' . $fieldId . '" holds too many values to be stored (more than ' . self::MAX_ANSWER_VALUES . ').',
+                    'The answer to "' . $fieldId . '" ' . self::shapeProblemSentence($problems[$fieldId]) . ' and was not stored.',
                     $problems[$fieldId],
                     422
                 );
@@ -2732,8 +2775,10 @@ class ResponseService
         try {
             $this->mysql->beginTransaction();
 
-            $del = $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id = :id");
-            $del->execute(['id' => $responseId]);
+            // This form's record, not every record of that id: a form bound to an app's table
+            // names its records by the table's key ("5"), which any other account's table has too.
+            $del = $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = :form AND source_response_id = :id");
+            $del->execute(['form' => $formId, 'id' => $responseId]);
 
             $ins = $this->mysql->prepare("
                 INSERT INTO response_links (id, source_form_id, source_response_id, target_form_id, target_response_id, field_id)
@@ -3159,8 +3204,11 @@ class ResponseService
         }
         $stmt = $db->prepare($sql);
         $stmt->execute($params);
-        if ($expected !== null && $stmt->rowCount() === 0) {
-            $now = $this->getResponse($formId, $responseId);
+        if ($stmt->rowCount() === 0) {
+            // Nothing was written: this form has no such record, or (with an etag) it is no longer
+            // that version. Stopping here matters for more than the answer. The id came from the
+            // caller, and the status mirror below used to run for an id this form does not have.
+            $now = $expected !== null ? $this->getResponse($formId, $responseId) : null;
             if ($now === null) {
                 return null;
             }
@@ -3202,10 +3250,12 @@ class ResponseService
             // so a metadata-index failure must not 500 the caller. Status updates
             // are idempotent, so a retry/reconciliation is safe.
             try {
+                // By form as well as id: the index holds every form's records, and an id is only
+                // this form's to change.
                 $mysqlStmt = $this->mysql->prepare("
-                    UPDATE response_metadata SET status = :status WHERE id = :id
+                    UPDATE response_metadata SET status = :status WHERE id = :id AND form_id = :form_id
                 ");
-                $mysqlStmt->execute(['status' => self::metadataStatus((string) $data['status']), 'id' => $responseId]);
+                $mysqlStmt->execute(['status' => self::metadataStatus((string) $data['status']), 'id' => $responseId, 'form_id' => $formId]);
             } catch (\Throwable $mirrorErr) {
                 $this->logger->error('Failed to mirror response status to response_metadata', [
                     'responseId' => $responseId,
@@ -3497,13 +3547,17 @@ class ResponseService
             // gone, so a MySQL hiccup must not abort the method (it would only leave
             // a reconcilable orphan metadata/link row, not corrupt data).
             try {
-                $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id");
-                $mysqlStmt->execute(['id' => $responseId]);
+                // Each by form as well as id: these tables hold every account's records, and an
+                // id is not one record across them (see syncResponseLinks).
+                $mysqlStmt = $this->mysql->prepare("DELETE FROM response_metadata WHERE id = :id AND form_id = :form");
+                $mysqlStmt->execute(['id' => $responseId, 'form' => $formId]);
 
                 $linkStmt = $this->mysql->prepare(
-                    "DELETE FROM response_links WHERE source_response_id = :id1 OR target_response_id = :id2"
+                    "DELETE FROM response_links
+                     WHERE (source_form_id = :form1 AND source_response_id = :id1)
+                        OR (target_form_id = :form2 AND target_response_id = :id2)"
                 );
-                $linkStmt->execute(['id1' => $responseId, 'id2' => $responseId]);
+                $linkStmt->execute(['form1' => $formId, 'id1' => $responseId, 'form2' => $formId, 'id2' => $responseId]);
             } catch (\Throwable $metaErr) {
                 $this->logger->error('Cross-store cleanup failed after response delete', [
                     'formId' => $formId, 'responseId' => $responseId, 'error' => $metaErr->getMessage(),
@@ -3611,9 +3665,11 @@ class ResponseService
         try {
             foreach (array_chunk($ids, 500) as $chunk) {
                 $ph = implode(',', array_fill(0, count($chunk), '?'));
-                $this->mysql->prepare("DELETE FROM response_metadata WHERE id IN ($ph)")->execute($chunk);
-                $this->mysql->prepare("DELETE FROM response_links WHERE source_response_id IN ($ph)")->execute($chunk);
-                $this->mysql->prepare("DELETE FROM response_links WHERE target_response_id IN ($ph)")->execute($chunk);
+                // By form as well as id, as deleteResponse does.
+                $ofForm = [$formId, ...$chunk];
+                $this->mysql->prepare("DELETE FROM response_metadata WHERE form_id = ? AND id IN ($ph)")->execute($ofForm);
+                $this->mysql->prepare("DELETE FROM response_links WHERE source_form_id = ? AND source_response_id IN ($ph)")->execute($ofForm);
+                $this->mysql->prepare("DELETE FROM response_links WHERE target_form_id = ? AND target_response_id IN ($ph)")->execute($ofForm);
             }
         } catch (\Throwable $metaErr) {
             $this->logger->error('Cross-store cleanup failed after bulk response delete', [

@@ -74,7 +74,9 @@ pub fn refusal_of(status: u16, body: &Value) -> Refusal {
     let code = body.get("code").and_then(Value::as_str).unwrap_or("");
     match (status, code) {
         (401, _) => Refusal::Relink,
-        (403, "data_nodes_disabled") | (404, "") => Refusal::NotOffered,
+        // A FormLogic with no such address answers 404: with no code once, and as
+        // `route_not_found` now. A 404 with any other code is about the app or form asked for.
+        (403, "data_nodes_disabled") | (404, "" | "route_not_found") => Refusal::NotOffered,
         (403, "data_node_unauthorized") => Refusal::NotApproved,
         (429, _) => Refusal::Busy,
         _ => Refusal::Failed(body.get("message").and_then(Value::as_str).map(|message| message.chars().take(MAX_MESSAGE).collect()).unwrap_or_else(|| format!("FormLogic answered {status}."))),
@@ -265,6 +267,10 @@ mod tests {
     fn a_formlogic_without_it_is_not_an_error_of_this_computers() {
         assert_eq!(refusal_of(403, &json!({"code": "data_nodes_disabled"})), Refusal::NotOffered);
         assert_eq!(refusal_of(404, &Value::Null), Refusal::NotOffered);
+        // As FormLogic answers an address nothing is at (public/index.php).
+        let nothing_there = refusal_of(404, &json!({"error": true, "message": "There is nothing at this address.", "code": "route_not_found"}));
+        assert_eq!(nothing_there, Refusal::NotOffered);
+        assert!(nothing_there.stops_a_run());
     }
 
     #[test]
