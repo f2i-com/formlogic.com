@@ -377,7 +377,7 @@ scripts install the latest release and the check stays compatibility-only.
 The CI workflow also accepts `oaiy-cli-release`. The script parity job
 installs that CLI and runs the JavaScript and Python test cases against it.
 Choose a SoftN release and an OAIY CLI built with the same ZIPP release.
-For example, SoftN `v0.0.53` and OAIY `v0.1.21` both use ZIPP `v0.0.42`.
+For example, SoftN `v0.0.54` and OAIY `v0.1.22` both use ZIPP `v0.0.42`.
 Leaving either input blank selects that project's latest published release.
 When the projects adopt a new engine at different times, the job reports
 the two engine versions so you can choose a matching pair.
