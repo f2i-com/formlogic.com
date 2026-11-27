@@ -12,7 +12,7 @@ browser engine does too from Softn v0.0.15, and none of the four is in git.
 The engine follows releases, ZIPP to Softn to FormLogic: Softn takes it from a
 ZIPP release (its JavaScript and Python engine without torch: the `web-python-base`
 bundle from Softn v0.0.16 and ZIPP v0.0.21, the `javascript-python-base` module
-from Softn v0.0.23 and ZIPP v0.0.26; 7.41 MB at ZIPP v0.0.41, 6.28 MB at v0.0.35, 6.58 MB at v0.0.33, 7.34 MB at v0.0.32, 6.57 MB at v0.0.29,
+from Softn v0.0.23 and ZIPP v0.0.26; 7.38 MB at ZIPP v0.0.42, 7.41 MB at v0.0.41, 6.28 MB at v0.0.35, 6.58 MB at v0.0.33, 7.34 MB at v0.0.32, 6.57 MB at v0.0.29,
 6.41 MB at v0.0.27, 6.52 MB at v0.0.22, 7.46 MB at v0.0.21; `web-python` before — checked against ZIPP's top-level
 `SHA256SUMS`, and a bundle against its own as well) and ships it in the
 archive as `zipp/`, with the ZIPP
@@ -377,7 +377,7 @@ scripts install the latest release and the check stays compatibility-only.
 The CI workflow also accepts `oaiy-cli-release`. The script parity job
 installs that CLI and runs the JavaScript and Python test cases against it.
 Choose a SoftN release and an OAIY CLI built with the same ZIPP release.
-For example, SoftN `v0.0.52` and OAIY `v0.1.20` both use ZIPP `v0.0.41`.
+For example, SoftN `v0.0.53` and OAIY `v0.1.21` both use ZIPP `v0.0.42`.
 Leaving either input blank selects that project's latest published release.
 When the projects adopt a new engine at different times, the job reports
 the two engine versions so you can choose a matching pair.
