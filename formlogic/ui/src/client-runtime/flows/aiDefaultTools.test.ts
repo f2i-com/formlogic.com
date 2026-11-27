@@ -389,6 +389,16 @@ describe('resolveDefaultLlmTools — Desktop', () => {
     expect(cappedRes.ok).toBe(true);
     expect((cappedOaiyChat.mock.calls[0] as unknown as [string, Record<string, unknown>])[1].max_tokens).toBe(32_768);
 
+    // Editor AI readiness accepts locally paired OAIY even when no cloud-linked desktop is online.
+    const { __setAiPreferencesFetcherForTests, getAiReadiness } = await import('./aiDefault');
+    __setAiPreferencesFetcherForTests(async () => ({
+      ok: true,
+      data: prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' }),
+    }));
+    const editorReady = await getAiReadiness({ fresh: true, editor: true, oaiyAvailable: () => true });
+    expect(editorReady).toMatchObject({ ready: true });
+    __setAiPreferencesFetcherForTests(null);
+
     const customFetch = vi.fn(async () =>
       jsonResponse({
         choices: [{ message: { content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"index.html"}' } }] }, finish_reason: 'tool_calls' }],

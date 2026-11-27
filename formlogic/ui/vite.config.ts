@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { resolve as resolvePath, sep as pathSep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { defineConfig, loadEnv } from 'vite'
@@ -100,8 +101,26 @@ export default defineConfig(({ mode }) => {
   plugins: [
     react(),
     { name: 'hosted-runtime-cors', configureServer(server) {
+      const publicDir = resolvePath(fileURLToPath(new URL('./public', import.meta.url)));
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/hosted-runtime/')) res.setHeader('Access-Control-Allow-Origin', '*');
+        const pathname = req.url?.split('?')[0] ?? '';
+        if (pathname.startsWith('/hosted-runtime/')) res.setHeader('Access-Control-Allow-Origin', '*');
+        // Mirror production .htaccess: missing files under /hosted-runtime/ or /app-editors/
+        // must answer 404 rather than falling through to Vite's SPA index.html (which makes
+        // missing .wasm/.glue.js files fail with cryptic WebAssembly magic-word or CSP errors).
+        if (pathname.startsWith('/hosted-runtime/') || pathname.startsWith('/app-editors/')) {
+          let decoded = '';
+          try { decoded = decodeURIComponent(pathname.slice(1)); } catch { res.statusCode = 400; res.end('Bad Request'); return; }
+          const candidate = resolvePath(publicDir, decoded.endsWith('/') ? `${decoded}index.html` : decoded);
+          if (!candidate.startsWith(publicDir + pathSep)) { res.statusCode = 403; res.end('Forbidden'); return; }
+          const exists = existsSync(candidate) && (statSync(candidate).isFile() || existsSync(resolvePath(candidate, 'index.html')));
+          if (!exists) {
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.end(`Not Found: ${pathname}`);
+            return;
+          }
+        }
         next();
       });
       // The site's ZIPP folder, as a build publishes it (scripts/publish-zipp.mjs), from the installed

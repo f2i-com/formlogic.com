@@ -414,7 +414,9 @@ const DESKTOP_FRESH_MS = 120_000;
  * (Dashboard CreateBand) agree with what execution will accept. Lives in this module
  * so the checks can never drift from runCustomSource / the desktop lane.
  */
-export async function getAiReadiness(options: { fresh?: boolean } = {}): Promise<AiReadiness> {
+export async function getAiReadiness(
+  options: { fresh?: boolean; editor?: boolean; oaiyAvailable?: () => boolean } = {},
+): Promise<AiReadiness> {
   const res = await getAiPreferences(options);
   if (!res.ok) return { ready: false, reason: res.error.message };
   const prefs = res.data;
@@ -428,6 +430,12 @@ export async function getAiReadiness(options: { fresh?: boolean } = {}): Promise
           prefs,
           reason: 'FormLogic Desktop is the default AI but no Desktop provider is chosen — pick one in Settings → AI.',
         };
+      }
+      // Embedded AI Studio surfaces talk directly to local paired OAIY when available
+      // (matching resolveDefaultLlmTools / resolveDefaultLlm({ editor: true })), so a
+      // paired local OAIY Desktop counts as ready even without a cloud-linked desktop.
+      if (options.editor && (await ensureLocalOaiyReady(options.oaiyAvailable))) {
+        return { ready: true, prefs };
       }
       // Liveness is best-effort: a definitive "no desktop has been seen recently"
       // is a real not-ready; a failed connections lookup stays configuration-only

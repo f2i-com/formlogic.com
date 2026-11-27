@@ -65,7 +65,7 @@ function HostingEditor({
 }) {
   const [pkg, setPkg] = useState<HostedPackage>(() => hostedStarter(app.name));
   const [editor, setEditor] = useState<{kind: AppEditorKind; bundle: Uint8Array} | null>(null);
-  const ai = useAiReady({ withRecheck: true });
+  const ai = useAiReady({ withRecheck: true, editor: true });
   const aiReady = ai.ready;
   const [deployment, setDeployment] = useState<HostedDeployment | null>(null);
   const [admission, setAdmission] = useState<HostedAdmission | null>(null);

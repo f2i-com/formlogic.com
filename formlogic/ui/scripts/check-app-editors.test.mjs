@@ -105,3 +105,17 @@ test('the prebuild checks name the fetch when the generated engine tree is missi
     assert.match(stderr, /build is local, not release/, script);
   }
 });
+
+test('refuses app-editors whose shared container-runtime digest is missing from hosted-runtime', async t => {
+  const { ui, checks } = await prebuildRoot(t);
+  await writeFile(resolve(ui, 'public/app-editors/studio/assets/app.js'), 'const rt = "/hosted-runtime/assets/container-runtime/4788dac5a55f/";');
+  await writeRuntimeManifest(resolve(ui, 'public/app-editors/studio'), expected);
+  const [, mismatch] = checks();
+  assert.notEqual(mismatch.status, 0, 'check-app-editors.mjs accepted a missing shared container runtime digest');
+  assert.match(mismatch.stderr, /shared container runtime 4788dac5a55f/);
+
+  await mkdir(resolve(ui, 'public/hosted-runtime/assets/container-runtime/4788dac5a55f'), { recursive: true });
+  await writeFile(resolve(ui, 'public/hosted-runtime/assets/container-runtime/4788dac5a55f/container-worker.js'), '// worker');
+  await writeRuntimeManifest(resolve(ui, 'public/hosted-runtime'), expected);
+  for (const { script, status, stderr } of checks()) assert.equal(status, 0, `${script} refused matching shared container runtime: ${stderr}`);
+});

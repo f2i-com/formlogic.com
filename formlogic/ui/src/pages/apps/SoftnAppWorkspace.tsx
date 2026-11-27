@@ -143,7 +143,7 @@ function Workspace({ app }: { app: App }) {
     setSiteProblems([]);
     setConsoleLogs([]);
   }
-  const ai = useAiReady({ withRecheck: true });
+  const ai = useAiReady({ withRecheck: true, editor: true });
   // The section, and what is open inside it, come from the address: /softn/data/<table>/<view>.
   const location = useLocation();
   const parts = addressParts(useParams()['*'] ?? '');

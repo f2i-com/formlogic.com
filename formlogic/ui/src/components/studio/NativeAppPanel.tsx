@@ -71,7 +71,7 @@ export function NativeEditorView({ app, onClose, draft, initialTab = 'project', 
   const [sourceFile, setSourceFile] = useState('');
   // A file is being held over the place it is dropped to bring an app in.
   const [dropping, setDropping] = useState(false);
-  const ai = useAiReady({ withRecheck: true });
+  const ai = useAiReady({ withRecheck: true, editor: true });
   const aiReady = ai.ready;
   const input = useRef<HTMLInputElement>(null);
   // The dialog's content, to bring its top back into view when another tab is opened.
