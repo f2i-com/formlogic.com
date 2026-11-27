@@ -109,7 +109,7 @@ export default defineConfig(({ mode }) => {
         // must answer 404 rather than falling through to Vite's SPA index.html (which makes
         // missing .wasm/.glue.js files fail with cryptic WebAssembly magic-word or CSP errors).
         if (pathname.startsWith('/hosted-runtime/') || pathname.startsWith('/app-editors/')) {
-          let decoded = '';
+          let decoded: string;
           try { decoded = decodeURIComponent(pathname.slice(1)); } catch { res.statusCode = 400; res.end('Bad Request'); return; }
           const candidate = resolvePath(publicDir, decoded.endsWith('/') ? `${decoded}index.html` : decoded);
           if (!candidate.startsWith(publicDir + pathSep)) { res.statusCode = 403; res.end('Forbidden'); return; }

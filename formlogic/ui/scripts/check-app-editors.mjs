@@ -7,10 +7,10 @@ import { EDITOR_BRIDGE_PROTOCOL } from './softn-protocol.mjs';
 const SHARED_CONTAINER_RUNTIME_RE = /\/hosted-runtime\/assets\/container-runtime\/([0-9a-f]{12})\//g;
 
 /** The fetcher validates promoted trees with this while its promotion journal exists, so the journal check belongs to the CLI below. */
-export async function checkAppEditors(directory, expected) {
+export async function checkAppEditors(directory, expected, options = {}) {
   const metadata = JSON.parse(await readFile(resolve(directory, 'manifest.json'), 'utf8'));
   if (metadata.protocol !== EDITOR_BRIDGE_PROTOCOL || JSON.stringify(metadata.editors) !== JSON.stringify(['builder', 'studio'])) throw new Error('Unsupported app editor bridge protocol.');
-  const hostedRuntimeDir = resolve(dirname(directory), 'hosted-runtime');
+  const hostedRuntimeDir = options.hostedRuntimeDir ?? resolve(dirname(directory), 'hosted-runtime');
   const hasHostedRuntime = await access(resolve(hostedRuntimeDir, 'runtime-manifest.json')).then(() => true, () => false);
   for (const editor of metadata.editors) {
     const editorDir = resolve(directory, editor);

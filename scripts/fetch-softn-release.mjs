@@ -800,11 +800,11 @@ function generationTrees(paths, expected, releaseInfo, hostedRuntime = null, { r
     },
     {
       name: 'app-editors', prefix: 'app-editors/', destination: paths.appEditors, stagePrefix: '.app-editors-',
-      validate: async (dir) => {
+      validate: async (dir, dirs) => {
         // Per-editor manifests are required (checkAppEditors); a manifest over
         // the whole folder is checked when the release carries one.
         if (existsSync(resolve(dir, 'runtime-manifest.json'))) await checkTreeManifest(dir, expected);
-        await checkAppEditors(dir, expected);
+        await checkAppEditors(dir, expected, { hostedRuntimeDir: dirs?.['hosted-runtime'] ?? paths.hostedRuntime });
         try { await checkTorchCopies(dir, releaseInfo.zipp?.packages?.torch ?? null, ['builder/assets/core-runtime/zipp_torch.wasm', 'studio/assets/core-runtime/zipp_torch.wasm']); }
         catch (error) { throw new ReleaseError(`app-editors: ${error.message}`); }
       },
@@ -970,7 +970,7 @@ export async function installGeneration(entries, expected, paths, record, { fail
       staged[tree.name] = dir;
       await extractTree(entries, tree.prefix, dir);
       if (tree.prepare) await tree.prepare(dir);
-      await tree.validate(dir);
+      await tree.validate(dir, staged);
     }
     // The archive's provenance.json is the one file the install transforms;
     // the record says exactly how, so --check can hold the installed copy to

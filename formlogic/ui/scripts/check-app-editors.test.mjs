@@ -118,4 +118,21 @@ test('refuses app-editors whose shared container-runtime digest is missing from 
   await writeFile(resolve(ui, 'public/hosted-runtime/assets/container-runtime/4788dac5a55f/container-worker.js'), '// worker');
   await writeRuntimeManifest(resolve(ui, 'public/hosted-runtime'), expected);
   for (const { script, status, stderr } of checks()) assert.equal(status, 0, `${script} refused matching shared container runtime: ${stderr}`);
+
+  // When fetch-softn-release validates staged trees during an upgrade to a new SoftN release,
+  // public/hosted-runtime still holds the previous digest while the new digest is in the staged sibling.
+  const stagedEditors = await fixture(t);
+  await writeFile(resolve(stagedEditors, 'studio/assets/app.js'), 'const rt = "/hosted-runtime/assets/container-runtime/8146b195b55b/";');
+  await writeRuntimeManifest(resolve(stagedEditors, 'studio'), expected);
+  const stagedHosted = await mkdtemp(resolve(dirname(stagedEditors), '.hosted-runtime-test-'));
+  t.after(() => rm(stagedHosted, { recursive: true, force: true }));
+  await mkdir(resolve(stagedHosted, 'assets/container-runtime/8146b195b55b'), { recursive: true });
+  await writeFile(resolve(stagedHosted, 'index.html'), '<!doctype html>');
+  await writeFile(resolve(stagedHosted, 'assets/container-runtime/8146b195b55b/container-worker.js'), '// new worker');
+  await writeRuntimeManifest(stagedHosted, expected);
+  await checkAppEditors(stagedEditors, expected, { hostedRuntimeDir: stagedHosted });
+  await assert.rejects(
+    checkAppEditors(stagedEditors, expected, { hostedRuntimeDir: resolve(ui, 'public/hosted-runtime') }),
+    /shared container runtime 8146b195b55b/,
+  );
 });
