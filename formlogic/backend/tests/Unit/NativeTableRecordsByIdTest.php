@@ -87,8 +87,16 @@ final class NativeTableRecordsByIdTest extends TestCase
         self::assertSame('Job 1', $found[599]['answers']['f_title']);
         self::assertSame(str_pad('1', 500, '0', STR_PAD_LEFT), $found[599]['answers']['f_notes'], 'each value whole');
         self::assertSame(1, $this->opened, 'one read of the table');
-        // As one record is read.
-        self::assertSame($responses->getResponse('form-1', '42'), $found[558]);
+        // As one record is read. These rows have no time of their own, so each read stamps its
+        // records with the time it was made, and the two reads here can fall in different seconds.
+        $one = $responses->getResponse('form-1', '42');
+        self::assertIsArray($one);
+        $many = $found[558];
+        foreach (['submittedAt', 'updatedAt'] as $readTime) {
+            self::assertIsString($one[$readTime] ?? null, $readTime);
+            unset($one[$readTime], $many[$readTime]);
+        }
+        self::assertSame($one, $many);
     }
 
     public function testAnIdTwiceIsOneRecordAndAnIdOfNoRowIsNone(): void
