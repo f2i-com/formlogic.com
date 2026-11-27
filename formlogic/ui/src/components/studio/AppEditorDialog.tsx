@@ -117,15 +117,48 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, p
             if (!disposed) channel.port1.postMessage({ kind: 'ai-response', id: data.id, ok, ...(ok ? { value } : { error: value, ...(code ? { code } : {}) }) });
           };
           const structured = data.aiTools !== undefined;
+          const bridgeErrorCode = (code: string | undefined): string | undefined => {
+            switch (code) {
+              case TOOLS_UNSUPPORTED:
+                return TOOLS_UNSUPPORTED;
+              case 'reasoning_only':
+                return 'reasoning-only';
+              case 'output_limit':
+                return 'output-truncated';
+              case 'content_refused':
+                return 'refused';
+              case 'transport':
+              case 'desktop_offline':
+              case 'connector_unavailable':
+              case 'uncertain':
+              case 'connector_uncertain':
+                return 'network';
+              case 'expired':
+              case 'timeout':
+                return 'timeout';
+              case 'rate_limited':
+                return 'rate-limited';
+              default:
+                return undefined;
+            }
+          };
           let ask: (signal: AbortSignal) => Promise<void>;
           if (!structured) {
-            // The text request every editor version sends: unchanged.
+            // The text request every editor version sends (with optional maxOutputTokens).
             if (kind !== 'studio' || aiRequests.size || !Array.isArray(data.messages) || data.messages.length > EDITOR_AI_LIMITS.maxMessages || !data.messages.every((m: { role?: unknown; content?: unknown }) => ['system', 'user', 'assistant'].includes(String(m?.role)) && typeof m?.content === 'string') || JSON.stringify(data.messages).length > 1000000) {
               reply(false, 'AI is busy or the request is too large.'); return;
             }
-            ask = signal => resolveDefaultLlm({ messages: data.messages, signal, editor: true }).then(result => {
+            const maxOutputTokens =
+              typeof data.maxOutputTokens === 'number' &&
+              Number.isInteger(data.maxOutputTokens) &&
+              data.maxOutputTokens >= 1 &&
+              data.maxOutputTokens <= EDITOR_AI_LIMITS.maxOutputTokens
+                ? data.maxOutputTokens
+                : undefined;
+            ask = signal => resolveDefaultLlm({ messages: data.messages, signal, editor: true, ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}) }).then(result => {
               if (signal.aborted) return;
-              if (result.ok) reply(true, result.data.content); else reply(false, result.error.message);
+              if (result.ok) reply(true, result.data.content);
+              else reply(false, result.error.message, bridgeErrorCode(result.error.code));
             });
           } else {
             if (kind !== 'studio' || aiRequests.size) { reply(false, 'AI is busy or the request is too large.'); return; }
@@ -137,7 +170,7 @@ export function AppEditorDialog({ kind, name, bundle, onApply, onClose, brief, p
               if (result.ok) {
                 const { text, toolCalls, stopReason, usage } = result.data;
                 reply(true, { text, toolCalls, stopReason, ...(usage ? { usage } : {}) });
-              } else reply(false, result.error.message, result.error.code === TOOLS_UNSUPPORTED ? TOOLS_UNSUPPORTED : undefined);
+              } else reply(false, result.error.message, bridgeErrorCode(result.error.code));
             });
           }
           const controller = new AbortController(); aiRequests.set(data.id, controller); setAiPending(true);

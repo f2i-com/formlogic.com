@@ -37,6 +37,7 @@ import {
   type ResolvedAiProvider,
 } from './aiProviders';
 import {
+  EDITOR_AI_LIMITS,
   EDITOR_AI_TOOLS_VERSION,
   editorToolCall,
   editorUsage,
@@ -81,6 +82,9 @@ export type AiDefaultErrorCode =
   | 'auth_required'
   | 'transport'
   | 'request_failed'
+  | 'output_limit'
+  | 'content_refused'
+  | 'reasoning_only'
   | (string & {});
 
 export interface AiDefaultError {
@@ -542,6 +546,34 @@ export interface ResolveDefaultLlmOptions {
    * editor's size and output bounds (`editor: 1`) rather than the chat's.
    */
   editor?: boolean;
+  /** Optional output token cap requested by the embedded editor (falls back to 16,384 when omitted). */
+  maxOutputTokens?: number;
+}
+
+function editorMaxTokens(opts: ResolveDefaultLlmOptions): number {
+  const n = opts.maxOutputTokens;
+  if (typeof n === 'number' && Number.isInteger(n) && n >= 1) {
+    return Math.min(n, EDITOR_AI_LIMITS.maxOutputTokens);
+  }
+  return 16_384;
+}
+
+function withEmptyReplyStopReason(reply: EditorAiReply, payload: unknown): EditorAiReply {
+  if (reply.text.trim() !== '' || reply.toolCalls.length > 0) return reply;
+  const diag = extractOpenAiChatDiagnostics(payload);
+  if (diag.refusal.trim() !== '' && reply.stopReason !== 'content_filter' && reply.stopReason !== 'refusal') {
+    return { ...reply, stopReason: 'refusal' };
+  }
+  if (
+    reply.stopReason !== 'length' &&
+    reply.stopReason !== 'max_tokens' &&
+    reply.stopReason !== 'content_filter' &&
+    reply.stopReason !== 'refusal' &&
+    diag.reasoning.trim() !== ''
+  ) {
+    return { ...reply, stopReason: 'reasoning_only' };
+  }
+  return reply;
 }
 
 /** Injectable seams (tests + runtimes with their own wiring); production uses the defaults. */
@@ -667,11 +699,12 @@ async function runCustomSource(
   const system = messages.find((m) => m.role === 'system')?.content;
   const prompt = [...messages].reverse().find((m) => m.role === 'user')?.content;
   const standardOpenAi = !provider.requestTemplate && (provider.responsePath ?? OPENAI_CHAT_RESPONSE_PATH) === OPENAI_CHAT_RESPONSE_PATH;
+  const outputCapValue = editorMaxTokens(opts);
   const editorOutputCap =
     opts.editor && standardOpenAi
       ? provider.kind === 'openai'
-        ? { max_completion_tokens: 16_384 }
-        : { max_tokens: 16_384 }
+        ? { max_completion_tokens: outputCapValue }
+        : { max_tokens: outputCapValue }
       : {};
   const requestBody = provider.requestTemplate
     ? renderRequestTemplate(provider.requestTemplate, {
@@ -732,7 +765,7 @@ async function runCustomSource(
       if (!content.trim()) {
         if (reply.stopReason === 'length') {
           return failure({
-            code: 'request_failed',
+            code: 'output_limit',
             message: `Default AI service '${provider.name}' reached its output limit before writing a reply.`,
             status: res.status,
           });
@@ -740,14 +773,14 @@ async function runCustomSource(
         const diag = extractOpenAiChatDiagnostics(payload);
         if (diag.refusal.trim() !== '' || reply.stopReason === 'content_filter') {
           return failure({
-            code: 'request_failed',
+            code: 'content_refused',
             message: diag.refusal.trim() || `Default AI service '${provider.name}' refused to answer this request.`,
             status: res.status,
           });
         }
         if (diag.reasoning.trim() !== '') {
           return failure({
-            code: 'request_failed',
+            code: 'reasoning_only',
             message: `Default AI service '${provider.name}' finished reasoning without writing a reply. Check its context/output budget or try another model.`,
             status: res.status,
           });
@@ -810,6 +843,7 @@ export async function resolveDefaultLlm(
         });
       }
       const model = prefs.desktopModel?.trim() || undefined;
+      const desktopMaxTokens = editorMaxTokens(opts);
       // For the embedded AI Studio text protocol, prefer local paired OAIY directly when
       // reachable so multi-step edits never hit the 256 KiB relay envelope ceiling.
       if (opts.editor && (await ensureLocalOaiyReady(deps.oaiyAvailable))) {
@@ -817,7 +851,7 @@ export async function resolveDefaultLlm(
         const body: Record<string, unknown> = {
           ...(model && providerId !== 'oaiy-engine' ? { model } : {}),
           messages: opts.messages,
-          max_tokens: 16_384,
+          max_tokens: desktopMaxTokens,
           stream: false,
         };
         const localRes = await doOaiyChat(providerId, body, { signal: opts.signal, timeoutMs: 10 * 60_000 });
@@ -835,7 +869,7 @@ export async function resolveDefaultLlm(
             }
             if (!content.trim() && reply.stopReason === 'length') {
               return failure({
-                code: 'request_failed',
+                code: 'output_limit',
                 message: 'The AI reached its output limit before writing a reply. Try a smaller change or raise the model output limit in OAIY.',
               });
             }
@@ -843,13 +877,13 @@ export async function resolveDefaultLlm(
               const diag = extractOpenAiChatDiagnostics(localRes.data);
               if (diag.refusal.trim() !== '' || reply.stopReason === 'content_filter') {
                 return failure({
-                  code: 'request_failed',
+                  code: 'content_refused',
                   message: diag.refusal.trim() || 'The AI refused to answer this request.',
                 });
               }
               if (diag.reasoning.trim() !== '') {
                 return failure({
-                  code: 'request_failed',
+                  code: 'reasoning_only',
                   message: 'The AI finished reasoning without writing a reply. Check the model\'s context/output budget or try another model in OAIY.',
                 });
               }
@@ -867,7 +901,7 @@ export async function resolveDefaultLlm(
         providerId,
         model,
         messages: opts.messages,
-        ...(opts.editor ? { maxTokens: 16_384 } : {}),
+        ...(opts.editor ? { maxTokens: desktopMaxTokens } : {}),
         signal: opts.signal,
         onDelta: opts.onDelta,
         onState: opts.onState,
@@ -1044,7 +1078,7 @@ async function runCustomSourceTools(
   if (!reply) {
     return failure({ code: 'request_failed', message: `Default AI service '${provider.name}' returned no message.`, status: res.status });
   }
-  return { ok: true, data: { source: 'custom', ...reply } };
+  return { ok: true, data: { source: 'custom', ...withEmptyReplyStopReason(reply, payload) } };
 }
 
 /**
@@ -1122,7 +1156,7 @@ export async function resolveDefaultLlmTools(
           if (dataErr) return failure({ code: 'request_failed', message: dataErr });
           const reply = fromOpenAiChatCompletion(res.data);
           if (reply) {
-            return { ok: true, data: { source: 'desktop', ...reply } };
+            return { ok: true, data: { source: 'desktop', ...withEmptyReplyStopReason(reply, res.data) } };
           }
           return failure({ code: 'request_failed', message: `OAIY provider '${providerId}' returned no message.` });
         }

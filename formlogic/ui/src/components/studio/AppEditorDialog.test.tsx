@@ -236,6 +236,23 @@ describe('AppEditorDialog AI requests (the bridge capability aiTools)', () => {
     expect(responses(sent)).toEqual([{ kind: 'ai-response', id: 'ai-3', ok: false, error: 'Used up.' }]);
   });
 
+  it('maps recoverable bridge error codes and forwards optional maxOutputTokens on text requests', async () => {
+    vi.mocked(resolveDefaultLlm)
+      .mockResolvedValueOnce({ ok: false, error: { code: 'reasoning_only', message: 'The AI finished reasoning without writing a reply.' } })
+      .mockResolvedValueOnce({ ok: false, error: { code: 'output_limit', message: 'The AI reached its output limit before writing a reply.' } })
+      .mockResolvedValueOnce({ ok: false, error: { code: 'desktop_offline', message: 'OAIY Desktop is offline.' } });
+    const { sent, editorSays } = await mount(vi.fn(async () => {}), 'studio', NEW_STUDIO);
+    await editorSays({ kind: 'ai-request', id: 'txt-1', messages: [{ role: 'user', content: 'Hi' }], maxOutputTokens: 32768 });
+    await editorSays({ kind: 'ai-request', id: 'txt-2', messages: [{ role: 'user', content: 'Hi' }] });
+    await editorSays({ kind: 'ai-request', id: 'txt-3', messages: [{ role: 'user', content: 'Hi' }] });
+    expect(vi.mocked(resolveDefaultLlm).mock.calls[0][0]).toMatchObject({ editor: true, maxOutputTokens: 32768 });
+    expect(responses(sent)).toEqual([
+      { kind: 'ai-response', id: 'txt-1', ok: false, error: 'The AI finished reasoning without writing a reply.', code: 'reasoning-only' },
+      { kind: 'ai-response', id: 'txt-2', ok: false, error: 'The AI reached its output limit before writing a reply.', code: 'output-truncated' },
+      { kind: 'ai-response', id: 'txt-3', ok: false, error: 'OAIY Desktop is offline.', code: 'network' },
+    ]);
+  });
+
   it('refuses invalid structured shapes before asking any provider', async () => {
     const { sent, editorSays } = await mount(vi.fn(async () => {}), 'studio', NEW_STUDIO);
     const bad = [

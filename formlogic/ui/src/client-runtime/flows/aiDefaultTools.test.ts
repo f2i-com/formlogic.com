@@ -349,7 +349,45 @@ describe('resolveDefaultLlmTools — Desktop', () => {
       },
     );
     expect(oaiyRes.ok).toBe(false);
-    if (!oaiyRes.ok) expect(oaiyRes.error.message).toMatch(/finished reasoning without writing a reply/i);
+    if (!oaiyRes.ok) {
+      expect(oaiyRes.error.code).toBe('reasoning_only');
+      expect(oaiyRes.error.message).toMatch(/finished reasoning without writing a reply/i);
+    }
+
+    // Structured local OAIY tool round preserves reasoning_only stopReason when content & tool_calls are empty.
+    const { resolveDefaultLlmTools } = await import('./aiDefault');
+    const oaiyToolsRes = await resolveDefaultLlmTools(
+      { messages: [{ role: 'user', content: 'Edit the page' }], tools: [] },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' }) }),
+        oaiyAvailable: () => true,
+        listOaiySources: vi.fn(async () => []),
+        oaiyChat: vi.fn(async () => ({
+          ok: true as const,
+          data: { choices: [{ message: { content: '', reasoning_content: 'Thinking only...' }, finish_reason: 'stop' }] },
+        })),
+      },
+    );
+    expect(oaiyToolsRes).toEqual({
+      ok: true,
+      data: { source: 'desktop', text: '', toolCalls: [], stopReason: 'reasoning_only' },
+    });
+
+    // Optional maxOutputTokens from the editor overrides the 16,384 default on local OAIY text turns.
+    const cappedOaiyChat = vi.fn(async () => ({
+      ok: true as const,
+      data: { choices: [{ message: { content: 'Done.' }, finish_reason: 'stop' }] },
+    }));
+    const cappedRes = await resolveDefaultLlm(
+      { messages: [{ role: 'user', content: 'Edit the page' }], editor: true, maxOutputTokens: 32_768 },
+      {
+        fetchPreferences: async () => ({ ok: true, data: prefs({ aiSource: 'desktop', desktopProviderId: 'oaiy-engine' }) }),
+        oaiyAvailable: () => true,
+        oaiyChat: cappedOaiyChat,
+      },
+    );
+    expect(cappedRes.ok).toBe(true);
+    expect((cappedOaiyChat.mock.calls[0] as unknown as [string, Record<string, unknown>])[1].max_tokens).toBe(32_768);
 
     const customFetch = vi.fn(async () =>
       jsonResponse({

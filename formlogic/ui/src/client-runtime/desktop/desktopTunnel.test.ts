@@ -1301,6 +1301,7 @@ describe('postInput', () => {
     });
     expect(truncated.ok).toBe(false);
     if (!truncated.ok) {
+      expect(truncated.error.code).toBe('output_limit');
       expect(truncated.error.message).toMatch(/output limit/i);
     }
 
@@ -1338,6 +1339,7 @@ describe('postInput', () => {
     });
     expect(reasoningOnly.ok).toBe(false);
     if (!reasoningOnly.ok) {
+      expect(reasoningOnly.error.code).toBe('reasoning_only');
       expect(reasoningOnly.error.message).toMatch(/finished reasoning without writing a reply/i);
     }
 

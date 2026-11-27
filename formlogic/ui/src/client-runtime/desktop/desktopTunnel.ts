@@ -868,19 +868,19 @@ async function executeTunnelRequest(params: TunnelRunParams): Promise<DesktopTun
         }
         if (finalText.trim() === '' && accum.finishReason === 'length') {
           return fail({
-            code: 'upstream_error',
+            code: 'output_limit',
             message: 'The AI reached its output limit before writing a reply. Try a smaller change or raise the model output limit in OAIY.',
           });
         }
         if (finalText.trim() === '' && (accum.refusal.trim() !== '' || accum.finishReason === 'content_filter')) {
           return fail({
-            code: 'upstream_error',
+            code: 'content_refused',
             message: accum.refusal.trim() || 'The AI refused to answer this request.',
           });
         }
         if (finalText.trim() === '' && accum.reasoning.trim() !== '') {
           return fail({
-            code: 'upstream_error',
+            code: 'reasoning_only',
             message: 'The AI finished reasoning without writing a reply. Check the model\'s context/output budget or try another model in OAIY.',
           });
         }
